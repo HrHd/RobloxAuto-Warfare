@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin:0; height:100%; background:transparent; overflow:hidden;
+               font-family: Consolas, "Courier New", monospace; }
+  #bg   { position:fixed; inset:0; background:#000; display:none; }
+  #wrap { position:fixed; inset:0; color:#8cff9c; display:none; }
+  #log  { position:absolute; left:56px; top:64px; font-size:30px; line-height:44px; white-space:pre; }
+  .ok   { color:#5aff78; }
+  .bad  { color:#ff5050; }
+  #bar  { position:absolute; left:56px; bottom:150px; width:900px; height:34px;
+          border:2px solid #8cff9c; }
+  #fill { height:100%; width:0%; background:#5aff78; transition:width .12s linear; }
+  #plabel { position:absolute; left:56px; bottom:100px; font-size:30px; }
+  #home { position:absolute; right:56px; bottom:60px; font-size:36px; font-weight:bold;
+          color:#8cff9c; text-shadow:0 0 8px #000; display:none; }
+  #noise { position:fixed; inset:0; width:100%; height:100%; display:none;
+           image-rendering: pixelated; pointer-events:none; }
+</style>
+</head>
+<body>
+  <canvas id="noise"></canvas>
+  <div id="bg"></div>
+  <div id="wrap">
+    <div id="log"></div>
+    <div id="bar"><div id="fill"></div></div>
+    <div id="plabel"></div>
+  </div>
+  <div id="home"></div>
+
+<script>
+var nc = document.getElementById('noise');
+nc.width = 480; nc.height = 270;
+var nctx = nc.getContext('2d');
+
+function drawNoise() {
+  if (nc.style.display === 'none') return;
+  var img = nctx.createImageData(480, 270);
+  var d = img.data;
+  for (var i = 0; i < d.length; i += 4) {
+    var v = (Math.random() * 255) | 0;
+    d[i] = v; d[i+1] = v; d[i+2] = v; d[i+3] = 255;
+  }
+  nctx.putImageData(img, 0, 0);
+}
+setInterval(drawNoise, 70);
+
+function tick() {
+  fetch('http://localhost:8730/state').then(function(r){ return r.json(); }).then(function(s){
+    var wrap = document.getElementById('wrap');
+    var bg   = document.getElementById('bg');
+    var home = document.getElementById('home');
+    wrap.style.display = s.active ? 'block' : 'none';
+    bg.style.display   = s.active ? 'block' : 'none';
+
+    var h = '';
+    for (var i = 0; i < s.lines.length; i++) {
+      var l = s.lines[i];
+      var cls = l[1] === 'OK' ? 'ok' : (l[1] === 'BAD' ? 'bad' : '');
+      h += '<div>' + l[0] + ' <span class="' + cls + '">' + (l[1] ? '[' + l[1] + ']' : '') + '</span></div>';
+    }
+    document.getElementById('log').innerHTML = h;
+    document.getElementById('fill').style.width = Math.round(s.progress * 100) + '%';
+    document.getElementById('plabel').textContent = Math.round(s.progress * 100) + '%   ' + s.label;
+
+    // RF static while flying: intensity comes from time since deploy
+    nc.style.display = s.flight ? 'block' : 'none';
+    nc.style.opacity = s.flight ? (s.level || 0) : 0;
+
+    if (s.home) { home.style.display = 'block'; home.textContent = 'HOME ' + s.home; }
+    else        { home.style.display = 'none'; }
+  }).catch(function(){});
+}
+setInterval(tick, 250);
+tick();
+</script>
+</body>
+</html>

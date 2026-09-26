@@ -1,0 +1,12 @@
+# runtime / personal state
+settings.ini
+auto.log
+debug_*.png
+
+# superseded builds
+_old/
+
+# build leftovers
+bin/
+obj/
+*.pdb
