@@ -4091,25 +4091,22 @@ class RobloxAuto : Form
         // it to the rate meant holding throttle walked the horizon clean off the screen.
         float leftPitch = -_padLy * _hudLeftPx;
 
-        // Complementary filter: the STICK is the fast rate input, the CAMERA is the slow absolute
-        // reference - so the correction runs ALWAYS, not only when centred (gating it meant that
-        // during flight, when a stick is nearly always held, the roll was pure stick drift and
-        // never levelled onto the real horizon). Slow tau while flying so it does not fight the
-        // stick, quicker once centred. A fix older than 1.5s is not trusted.
+        // The ROLL is driven DIRECTLY by the right stick (integrated above) - the camera is NOT
+        // allowed to pull it back any more. That pull was flattening the ladder to level while the
+        // drone was clearly banked, so right-stick X never turned the lines diagonal. The camera
+        // only corrects PITCH now. When the stick is centred the roll eases back to level, so a
+        // banked turn still self-levels like a real drone in angle mode.
         bool det = _hudDetValid && (now - _hudDetAt) < 1500;
         if (det)
         {
-            float tau = (sx == 0f && sy == 0f) ? _hudLockTau : _hudFlyTau;
-            float a = 1f - (float)Math.Pow(0.5, dt / tau);
-            _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
+            float a = 1f - (float)Math.Pow(0.5, dt / _hudFlyTau);
             _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
         }
-        else if (sx == 0f && sy == 0f)
+        if (sx == 0f)
         {
-            // no camera fix and hands off: level the roll back AND ease the pitch toward centre so
-            // a run of failed detections can't leave the horizon stuck way high or low
+            // hands off the roll stick: ease back to level (no camera roll reference)
             _hudFRoll += (0f - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 0.6));
-            _hudFPitch += (0f - _hudFPitch) * (1f - (float)Math.Pow(0.5, dt / 1.5));
+            if (!det) _hudFPitch += (0f - _hudFPitch) * (1f - (float)Math.Pow(0.5, dt / 1.5));
         }
 
         if (_hudFRoll > 180f) _hudFRoll = 180f;
