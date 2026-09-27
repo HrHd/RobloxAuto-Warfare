@@ -2534,7 +2534,16 @@ class RobloxAuto : Form
                 Thread.Sleep(200);
                 continue;
             }
-            if (CellIsGreen(cells[slot].X, cells[slot].Y))
+            // Which slot is the green SELECTED one? Compare ALL the cells, not just ours - the
+            // translucent panel lets green terrain show through, so a single "is our cell green?"
+            // test false-positives over grass and the step wrongly concludes the warhead is
+            // already equipped, leaving the default in place.
+            int gW, gH; int[] gpx = Grab(out gW, out gH);
+            int cur = GreenSlot(gpx, gW, gH, cells, count);
+            Log("   warhead slots: green now = " +
+                (cur < 0 ? "none" : cur + " (" + BombsFor(_drone)[cur + 1] + ")") +
+                ", want slot " + slot + " (" + _bomb + ")");
+            if (cur == slot)
             {
                 Log("   " + _bomb + " already equipped (green box)");
                 return true;
@@ -2571,9 +2580,11 @@ class RobloxAuto : Form
             MoveToDeployAsDrone();
             InvalidateGrab();
             Thread.Sleep(80);
+            int aW, aH; int[] apx = Grab(out aW, out aH);
+            int cur2 = GreenSlot(apx, aW, aH, cells, count);   // did the green box move onto our slot?
             int[] after = CellSample(cells[slot].X, cells[slot].Y);
             int diff = Math.Abs(after[0] - before[0]) + Math.Abs(after[1] - before[1]) + Math.Abs(after[2] - before[2]);
-            bool green = diff >= 40 && CellIsGreen(cells[slot].X, cells[slot].Y);
+            bool green = cur2 == slot || (diff >= 40 && CellIsGreen(cells[slot].X, cells[slot].Y));
             if (green)
             {
                 // Trust the grid + green box: we already know how many warheads the drone has and
@@ -2590,7 +2601,7 @@ class RobloxAuto : Form
                 Log("   " + _bomb + " is green but the cell reads \"" + cellLabel + "\" - retrying");
                 continue;
             }
-            Log("   " + _bomb + " not confirmed (green=" + green + " diff=" + diff + ") - retrying");
+            Log("   " + _bomb + " not confirmed (green slot now=" + cur2 + " diff=" + diff + ") - retrying");
         }
         Log("   " + _bomb + " is NOT green - leaving the flow here so we do not deploy the wrong loadout");
         return false;
@@ -2902,6 +2913,41 @@ class RobloxAuto : Form
             if ((double)area / (bw * bh) < 0.55) continue;
             outCells.Add(new Point((x0 + x1) / 2, (y0 + y1) / 2));
         }
+    }
+
+    // How green is a cell, as the mean of (green - the stronger of red/blue). The selected
+    // warhead is a green overlay; terrain showing through is green-ish too, so we never trust an
+    // absolute value - we compare the cells against each other.
+    float CellGreen(int[] px, int W, int H, int cx, int cy)
+    {
+        float sum = 0; int n = 0;
+        int[] dxs = new int[] { -34, 0, 34 };
+        int[] dys = new int[] { -14, 0, 14 };
+        foreach (int dy in dys)
+            foreach (int dx in dxs)
+            {
+                int x = cx + dx, y = cy + dy;
+                if (x < 0 || y < 0 || x >= W || y >= H) continue;
+                int v = px[y * W + x];
+                int b = v & 0xFF, g = (v >> 8) & 0xFF, r = (v >> 16) & 0xFF;
+                sum += (g - Math.Max(r, b)); n++;
+            }
+        return n > 0 ? sum / n : 0f;
+    }
+
+    // Which warhead slot is the green selected one? Returns the slot index, or -1 when no single
+    // cell clearly stands out (so the caller clicks and verifies instead of assuming).
+    int GreenSlot(int[] px, int W, int H, List<Point> cells, int count)
+    {
+        float best = -9999f, second = -9999f; int bi = -1;
+        for (int i = 0; i < count && i < cells.Count; i++)
+        {
+            float v = CellGreen(px, W, H, cells[i].X, cells[i].Y);
+            if (v > best) { second = best; best = v; bi = i; }
+            else if (v > second) second = v;
+        }
+        if (bi >= 0 && best >= 14f && (best - second) >= 10f) return bi;
+        return -1;
     }
 
     // The equipped warhead box is drawn green. Sample a 3x3 of points inside the cell so a
