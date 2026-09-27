@@ -2635,6 +2635,15 @@ class RobloxAuto : Form
         int slot = idx - 1;                       // 0-based grid position
         int count = BombsFor(_drone).Length - 1;  // number of warheads on the panel
 
+        // If the panel is showing the OTHER drone's warheads the slot positions mean nothing, so
+        // clicking would equip a wrong-by-position bomb (that is the "default stays / wrong bomb"
+        // case). Refuse and let the flow go back to LOADOUT to fix the drone first.
+        if (!BasePanelIsDrone(_drone))
+        {
+            Log("   TEAM BASE shows the other drone's warheads - not clicking (the loadout drone is wrong)");
+            return false;
+        }
+
         Thread.Sleep(250);   // let the TEAM BASE panel finish laying out before measuring the grid
 
         // If the anchored grid is a few px off (different game height), the first click lands just
@@ -2871,40 +2880,43 @@ class RobloxAuto : Form
         }
 
         int colStep = (int)(106 * sc), rowStep = (int)(52 * sc);
-        int col0 = ax - colStep;
 
-        // Auto-fit the vertical offset: the cells are dark boxes (the selected one is green), so
-        // slide the grid down and keep the offset that lands on the most cell-coloured patches.
-        // This absorbs whatever the game's panel spacing really is at this resolution, instead of
-        // trusting a single hard-coded number.
+        // Auto-fit BOTH axes. The cells are dark boxes (the selected one is green), so slide the
+        // whole grid left/right and up/down and keep the position that lands on the most
+        // cell-coloured patches. This absorbs whatever the panel spacing/offset really is at this
+        // resolution. The HORIZONTAL fit matters because the cards are not centred exactly under
+        // the "Deploy As Drone" button - a fixed column origin clicked ~70px left of the real
+        // cells, nothing turned green, and the DEFAULT warhead stayed equipped.
         int W, H; int[] px = Grab(out W, out H);
         int baseOff = 85 + _whRowNudge;
-        int bestOff = baseOff, bestHits = -1;
-        // Wide range on purpose: the grid can start anywhere from ~15px to ~150px below the
-        // anchor text, and if we only searched the lower part we locked onto the SECOND row and
-        // everything was off by one slot (that is what left the default warhead in place).
-        for (int off = 15; off <= 150; off += 5)
+        int bestOff = baseOff, bestDx = -colStep, bestHits = -1;
+        for (int dx = -140; dx <= 60; dx += 6)
         {
-            int hits = 0;
-            for (int r = 0; r < 2; r++)
-                for (int c = 0; c < 3; c++)
-                {
-                    if (r * 3 + c >= count) continue;
-                    int cx = col0 + c * colStep;
-                    int cy = ay + (int)((off + r * 52) * sc);
-                    if (LooksLikeCell(px, W, H, cx, cy)) hits++;
-                }
-            if (hits > bestHits || (hits == bestHits && Math.Abs(off - baseOff) < Math.Abs(bestOff - baseOff)))
-            { bestHits = hits; bestOff = off; }
+            for (int off = 15; off <= 150; off += 5)
+            {
+                int hits = 0;
+                for (int r = 0; r < 2; r++)
+                    for (int c = 0; c < 3; c++)
+                    {
+                        if (r * 3 + c >= count) continue;
+                        int cx = ax + dx + c * colStep;
+                        int cy = ay + (int)((off + r * 52) * sc);
+                        if (LooksLikeCell(px, W, H, cx, cy)) hits++;
+                    }
+                if (hits > bestHits || (hits == bestHits && Math.Abs(off - baseOff) < Math.Abs(bestOff - baseOff)))
+                { bestHits = hits; bestOff = off; bestDx = dx; }
+            }
         }
+        int col0 = ax + bestDx;
         int row0 = ay + (int)(bestOff * sc);
 
         List<Point> grid = new List<Point>();
         for (int r = 0; grid.Count < count && r < 8; r++)
             for (int c = 0; c < 3 && grid.Count < count; c++)
                 grid.Add(new Point(col0 + c * colStep, row0 + r * rowStep));
-        Log("   warhead grid under Deploy As Drone (" + ax + "," + ay + "): fitted offset " + bestOff +
-            " (cell hits " + bestHits + "/" + count + "), col0 " + col0 + ", step " + colStep + "x" + rowStep);
+        Log("   warhead grid under Deploy As Drone (" + ax + "," + ay + "): fitted dx " + bestDx +
+            " offset " + bestOff + " (cell hits " + bestHits + "/" + count + "), col0 " + col0 +
+            ", step " + colStep + "x" + rowStep);
         return grid;
     }
 
