@@ -1502,6 +1502,21 @@ class RobloxAuto : Form
         bool mapUp = PhraseIn("POINT", ws0) || PhraseIn("Base", ws0);
         bool panelUp = PhraseIn("TEAM BASE", ws0);
 
+        // Already FLYING? Then there is nothing to deploy - just bring the RF feed / HUD back up.
+        // Pressing AUTO while already in the drone used to sit in step 1 for 120s waiting for a
+        // menu that never arrives (the drone OSD reads as "unknown"), so the HUD never came back.
+        if (!MenuOnScreen() && (ReadFlightSecs() >= 0 || CornerLinked() || DroneKeyword()))
+        {
+            Log("AUTO: already in the drone view - bringing the RF feed / HUD back up");
+            AddBlackProgress(1.0f, "drone online");
+            AddBlackLine("drone online", "OK");
+            HideBlack();
+            _hudStyleUav = MavicBomb(_bomb);
+            _autoDeployed = true;
+            if ((_watchHome || _hudOn) && _asDrone) StartRfWatch();
+            return;
+        }
+
         // 1 - get out of loading and into the game UI
         if (!GoOn(g)) return;
         if (state == "loading" || state == "unknown")
