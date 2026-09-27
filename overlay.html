@@ -193,16 +193,18 @@ function drawHud(s, glitching) {
     return [cx + dx * Math.cos(rad) - dy * Math.sin(rad), cy + dx * Math.sin(rad) + dy * Math.cos(rad)];
   }
 
-  // artificial horizon + pitch ladder: 10 deg = 8px, horizon line longest and capped at both ends.
-  // Flat (level) when the drone is level, and the lines ROTATE to diagonal as it banks with the
-  // right stick X. No fanning/spread.
+  // artificial horizon + pitch ladder. Flat/level at neutral and ROTATED to diagonal as it banks
+  // (right stick X), and the rungs FAN OUT from the centre - close in the middle, wider apart at
+  // the ends - so it reads like a real drone HUD.
   hctx.font = font;
+  var tilt = Math.min(1, Math.abs(s.pit || 0) / 900 + Math.abs(s.roll || 0) / 180);
+  var spread = 1 + 1.1 * tilt;
   for (var d = -90; d <= 90; d += 10) {
-    var yy = pit + d * 8 * sc;
+    var yy = pit + d * 8 * sc * spread;
     var dist = Math.abs(yy);
     var af = dist <= 200 * sc ? 1 : 1 - (dist - 200 * sc) / (320 * sc);   // fade 200px -> 520px
     if (af <= 0.02) continue;
-    var half = (d === 0 ? 150 : 70) * sc;
+    var half = (d === 0 ? 150 : 70) * sc * (1 + 0.4 * tilt);
     var a = R(cx - half, cy + yy), b = R(cx + half, cy + yy);
     hctx.globalAlpha = af;
     hctx.strokeStyle = d === 0 ? col : thin;
