@@ -299,8 +299,11 @@ function tick() {
     // clock-driven blink: recomputed each frame, so it can never freeze when the log re-renders
     var cursor = '<span style="visibility:' + ((now % 1000) < 500 ? 'visible' : 'hidden') + '">_</span>';
 
+    // only show as many lines as fit above the progress bar, so the terminal never overflows
+    var maxLines = Math.max(6, Math.floor((hc.height - 66 - 240) / 38));
+    var first = Math.max(0, lines.length - maxLines);
     var h = '';
-    for (var i = 0; i < lines.length; i++) {
+    for (var i = first; i < lines.length; i++) {
       var l = lines[i];
       var cls = l[1] === 'OK' ? 'ok' : (l[1] === 'BAD' ? 'bad' : '');
       var t = (i === lines.length - 1 && typing) ? l[0].substring(0, reveal) : l[0];

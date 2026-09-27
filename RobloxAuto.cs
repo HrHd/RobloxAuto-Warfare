@@ -1358,6 +1358,7 @@ class RobloxAuto : Form
         if (!GoOn(g)) return;
         if (state == "loading" || state == "unknown")
         {
+            AddBlackProgress(0.08f, "loading");
             Log("1) waiting for the game UI...");
             int w = 0;
             while (Alive(g) && w < 120000
@@ -1371,22 +1372,25 @@ class RobloxAuto : Form
             Log("   now at \"" + state + "\" after " + (w / 1000.0).ToString("0.0") + "s");
         }
         else Log("1) skipped - already at \"" + state + "\"");
+        AddBlackProgress(0.12f, "terrain db");
 
         // 2 - team. The number in "PLAYERS IN TEAM 17" is only the player COUNT and changes
         //     every match, so pick by COLOUR. Only runs if the team screen is really up.
         if (!GoOn(g)) return;
+        AddBlackProgress(0.18f, "team select");
         if (_stepTeam && PhraseOnScreen("PLAYERS IN TEAM"))
         {
             Log("2) selecting the " + _team + " team by colour...");
             if (ClickBlobUntil("PLAYERS IN TEAM", _team != "Red", 4, g)) Log("   team selected - lobby is up");
             else Log("   could not confirm the team - continuing");
-            AddBlackProgress(0.20f, "team locked");   // drone link starts coming up
         }
         else Log("2) team step skipped (" + (state == "lobby" || state == "loadout" ? "already on a team" : "team screen not up") + ")");
+        AddBlackProgress(0.30f, "team locked");
 
         // 3 - drone. FPV is the game's default, so ONLY a MAVIC run needs the LOADOUT switch.
         //     Never runs once the map or the base panel is up - that part already happened.
         if (!GoOn(g)) return;
+        AddBlackProgress(0.40f, "loadout");
         // Applies to BOTH drones - it used to run only for MAVIC ("only MAVIC needs it"), so
         // choosing FPV left whatever was equipped (often MAVIC) and you deployed the wrong drone.
         if (_stepDrone && (_drone == "MAVIC" || _drone == "FPV") && !mapUp && !panelUp)
@@ -1422,6 +1426,7 @@ class RobloxAuto : Form
             else Log("   SELECT DRONE panel did not open");
         }
         else Log("3) drone step skipped (" + (!_stepDrone ? "step off" : "map already open") + ")");
+        AddBlackProgress(0.50f, "airframe set");
 
         // 4 - DEPLOY from the nav bar opens the map
         if (!GoOn(g)) return;
@@ -1431,7 +1436,7 @@ class RobloxAuto : Form
             ClickPhraseVerified("DEPLOY", "AS", g);
             if (WaitPhrase("POINT", 15000, g)) { Log("   map is up"); mapUp = true; }
             else Log("   map did not appear");
-            AddBlackProgress(0.45f, "entering combat zone");
+            AddBlackProgress(0.55f, "combat zone");
         }
         else Log("4) deploy step skipped (" + (mapUp || panelUp ? "map already open" : "step off") + ")");
 
@@ -1556,12 +1561,12 @@ class RobloxAuto : Form
         //     green highlight, rather than trusting the tiny label text.
         if (!GoOn(g)) return;
         bool warheadOk = true;
+        AddBlackProgress(0.62f, "payload");
         if (_stepBomb && _bomb != "(none)" && TeamBaseUp(panelUp))
         {
             Log("6) selecting warhead " + _bomb + "...");
             warheadOk = ClickWarhead(g);
             if (!warheadOk) Log("   " + _bomb + " is not equipped");
-            AddBlackLine("arming " + _bomb, warheadOk ? "OK" : "BAD");
             AddBlackProgress(0.75f, "warhead armed");
         }
         else Log("6) bomb step skipped (" + (_bomb == "(none)" || !_stepBomb ? "step off" : "TEAM BASE not open") + ")");
@@ -1575,13 +1580,14 @@ class RobloxAuto : Form
             // Wrong bombs / wrong loadout - do NOT deploy. Back out to the LOADOUT screen so the
             // drone + warhead can be re-selected, then stop this run.
             Log("7) wrong loadout (" + _bomb + " not equipped) - returning to LOADOUT, not deploying");
-            AddBlackLine("wrong loadout - back to loadout", "BAD");
+            AddBlackError("0x13", "payload mismatch - aborting to loadout");
             ClickPhraseVerified("LOADOUT", g);
             HideBlack();
             return;
         }
         if (TeamBaseUp(panelUp))
         {
+            AddBlackProgress(0.84f, "arm");
             if (_asDrone)
             {
                 Log("7) clicking Deploy As Drone...");
@@ -5626,16 +5632,18 @@ class RobloxAuto : Form
             {
                 AddBlackLine("BF-DRONE LINK  v3.2.1   [rf uplink]", "");
                 // startup prompt: type a login like a real console, then sit at a standby prompt
-                Boot("> login operator " + (_serverId == "" ? "" : _serverId.Substring(0, 8)), "", 0.01f, "login", 620);
-                Boot("authenticating operator key", "OK", 0.02f, "auth", 360);
+                AddBlackLine("> login operator " + (_serverId == "" ? "guest" : _serverId.Substring(0, 8)), "");
+                Thread.Sleep(620);
+                AddBlackLine("authenticating operator key", "OK");
+                Thread.Sleep(340);
                 AddBlackLine("session established - console ready", "OK");
                 AddBlackLine("standby - awaiting command", "");
                 OverlayHub.I.SetProgress(_flowPct, "standby");
 
-                // hold at the standby prompt until the flow is actually started (or 30s), so the
+                // hold at the standby prompt until the flow is actually started (or 20s), so the
                 // viewers see the idle console blink, then the connect command is typed live
                 int w0 = 0;
-                while (_blackWatch && !_running && w0 < 30000) { Thread.Sleep(150); w0 += 150; }
+                while (_blackWatch && !_running && !IsLinked() && w0 < 20000) { Thread.Sleep(150); w0 += 150; }
 
                 string ip = RandIp();
                 AddBlackLine("> connect " + ip + ":47320", "");
@@ -5647,23 +5655,20 @@ class RobloxAuto : Form
                     AddBlackLine("   recovery protocol engaged", "OK");
                     Thread.Sleep(240);
                 }
-                Boot("resolving ground station " + ip, "OK", 0.05f, "resolve", 340);
-                Boot("loading terrain database", "OK", 0.10f, "terrain db", 540);
-                Boot("calibrating inertial nav (imu)", "OK", 0.16f, "imu cal", 440);
-                Boot("spooling gyro stabiliser", "OK", 0.22f, "gyro", 380);
-                Boot("opening encrypted uplink", "OK", 0.29f, "uplink", 470);
-                Boot("authenticating operator key", "OK", 0.36f, "auth", 520);
-                Boot("handshake with ground station", "OK", 0.43f, "handshake", 560);
-                Boot("syncing telemetry stream", "OK", 0.50f, "telemetry", 620);
-                Boot("mapping combat grid", "OK", 0.57f, "grid", 560);
-                Boot("requesting team assignment", "OK", 0.64f, "team", 520);
-                Boot("selecting airframe  [" + _drone + "]", "OK", 0.71f, "airframe", 540);
-                Boot("mounting warhead payload", "OK", 0.78f, "payload", 560);
-                Boot("running pre-flight checks", "OK", 0.84f, "preflight", 480);
-                Boot("arming flight controller", "OK", 0.89f, "arm", 420);
-                Boot("signal check - uplink degraded", "BAD", 0.91f, "degraded", 420);
-                Boot("re-establishing uplink", "OK", 0.94f, "relink", 420);
-                Boot("ground station acquired", "OK", 0.96f, "standby", 300);
+                AddBlackLine("resolving ground station " + ip, "OK");
+                // each line waits for the REAL flow to reach its milestone (BootWait), so the
+                // terminal narrates what is happening instead of racing ahead on a fixed timer
+                BootWait("opening encrypted uplink", "OK", 0.08f, "uplink", 12000);
+                BootWait("syncing telemetry stream", "OK", 0.12f, "telemetry", 12000);
+                BootWait("opening battle-net relay", "OK", 0.15f, "relay", 12000);
+                BootWait("requesting team assignment", "OK", 0.18f, "team", 40000);
+                BootWait("team locked", "OK", 0.30f, "team locked", 40000);
+                BootWait("selecting airframe  [" + _drone + "]", "OK", 0.40f, "airframe", 40000);
+                BootWait("checking warhead rack", "OK", 0.62f, "payload", 40000);
+                BootWait("running pre-flight checks", "OK", 0.75f, "preflight", 40000);
+                BootWait("arming flight controller", "OK", 0.84f, "arm", 40000);
+                BootWait("signal check - uplink degraded", "BAD", 0.88f, "degraded", 40000);
+                BootWait("re-establishing uplink", "OK", 0.90f, "connecting to drone", 60000);
                 AddBlackLine("awaiting drone telemetry...", "");
 
                 // stay up through the reconnect AND the whole deploy sequence, until the drone
@@ -5741,12 +5746,15 @@ class RobloxAuto : Form
         AddBlackLine("   resuming uplink at " + ((int)(_flowPct * 100)) + "%", "");
     }
 
-    // one milsim boot line + progress step + a beat before the next
-    void Boot(string text, string status, float pct, string label, int ms)
+    // A boot line that waits (bounded) for the real flow to reach its milestone before printing,
+    // so the terminal follows the actual progress instead of racing on a fixed timer. When no AUTO
+    // run is in flight it does not wait at all.
+    void BootWait(string text, string status, float waitPct, string label, int maxMs)
     {
+        int w = 0;
+        while (_blackWatch && _running && _flowPct < waitPct && w < maxMs) { Thread.Sleep(100); w += 100; }
         AddBlackLine(text, status);
-        AddBlackProgress(pct, label);
-        Thread.Sleep(ms);
+        if (label != null) OverlayHub.I.SetProgress(_flowPct, label);
     }
 
     readonly Random _rand = new Random();
