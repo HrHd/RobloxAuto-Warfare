@@ -519,6 +519,31 @@ class RobloxAuto : Form
         Controls.Add(title);
         y += 34;
 
+        // ---- HUD tuning dials, at the very top so they are easy to reach and see ----
+        var lblTune = new Label();
+        lblTune.Text = "HUD TUNING  (arrows / PgUp PgDn / Home End = nudge live)";
+        lblTune.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        lblTune.ForeColor = Color.FromArgb(120, 200, 255);
+        lblTune.SetBounds(x, y, w, 18);
+        Controls.Add(lblTune);
+        y += 22;
+
+        numPitch = MkTune(x, y, "pitch px/s", (decimal)_hudPitchRate, 80m, 4000m, 40m, 0);
+        numRoll = MkTune(x + 168, y, "roll deg/s", (decimal)_hudRollRate, 20m, 900m, 10m, 0);
+        numPitch.ValueChanged += delegate { _hudPitchRate = (float)numPitch.Value; SaveCfg(); };
+        numRoll.ValueChanged += delegate { _hudRollRate = (float)numRoll.Value; SaveCfg(); };
+        y += 28;
+
+        numLock = MkTune(x, y, "lock s", (decimal)_hudLockTau, 0.05m, 2.0m, 0.05m, 2);
+        numFly = MkTune(x + 168, y, "drift s", (decimal)_hudFlyTau, 0.10m, 3.0m, 0.1m, 2);
+        numLock.ValueChanged += delegate { _hudLockTau = (float)numLock.Value; SaveCfg(); };
+        numFly.ValueChanged += delegate { _hudFlyTau = (float)numFly.Value; SaveCfg(); };
+        y += 28;
+
+        numBias = MkTune(x, y, "bias px", (decimal)_hudBias, -120m, 120m, 2m, 0);
+        numBias.ValueChanged += delegate { _hudBias = (float)numBias.Value; SaveCfg(); };
+        y += 32;
+
         var l1 = new Label();
         l1.Text = "Server (from the Roblox logs):";
         l1.SetBounds(x, y, w, 18);
@@ -1039,29 +1064,6 @@ class RobloxAuto : Form
         };
         Controls.Add(btnOpenLog);
         y += 32;
-
-        var lblTune = new Label();
-        lblTune.Text = "HUD tuning  (arrows / PgUp PgDn / Home End = nudge live)";
-        lblTune.ForeColor = Color.Gainsboro;
-        lblTune.SetBounds(x, y, w, 16);
-        Controls.Add(lblTune);
-        y += 20;
-
-        numPitch = MkTune(x, y, "pitch px/s", (decimal)_hudPitchRate, 80m, 4000m, 40m, 0);
-        numRoll = MkTune(x + 168, y, "roll deg/s", (decimal)_hudRollRate, 20m, 900m, 10m, 0);
-        numPitch.ValueChanged += delegate { _hudPitchRate = (float)numPitch.Value; SaveCfg(); };
-        numRoll.ValueChanged += delegate { _hudRollRate = (float)numRoll.Value; SaveCfg(); };
-        y += 28;
-
-        numLock = MkTune(x, y, "lock s", (decimal)_hudLockTau, 0.05m, 2.0m, 0.05m, 2);
-        numFly = MkTune(x + 168, y, "drift s", (decimal)_hudFlyTau, 0.10m, 3.0m, 0.1m, 2);
-        numLock.ValueChanged += delegate { _hudLockTau = (float)numLock.Value; SaveCfg(); };
-        numFly.ValueChanged += delegate { _hudFlyTau = (float)numFly.Value; SaveCfg(); };
-        y += 28;
-
-        numBias = MkTune(x, y, "bias px", (decimal)_hudBias, -120m, 120m, 2m, 0);
-        numBias.ValueChanged += delegate { _hudBias = (float)numBias.Value; SaveCfg(); };
-        y += 30;
 
         var lblLogHead = new Label();
         lblLogHead.Text = "what it is doing";
