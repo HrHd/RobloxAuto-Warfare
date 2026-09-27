@@ -6331,7 +6331,7 @@ class RobloxAuto : Form
             int maxPts = W / 4 + 4;
             float[] pxs = new float[maxPts], pys = new float[maxPts];
             int n = 0;
-            bool gOk = false; float slope = 0f, icept = 0f; float conf = 0f;
+            bool gOk = false; float slope = 0f, icept = 0f; float conf = 0f; float detSky = -1f;
 
             // --- PRIMARY: BLURRED sky/ground transition (the "blur then find the medium in the centre"
             // idea). Block-averaging the frame is a heavy blur that erases local detail - trees, roads,
@@ -6494,6 +6494,22 @@ class RobloxAuto : Form
                     {
                         slope = fm; icept = fb; gOk = true; conf = Math.Min(1f, bestGrad / 12f);
                         _hudTrkM = fm; _hudTrkB = fb; _hudTrkAt = Environment.TickCount;   // remember for tracking
+                        // TEXTURE-VERIFIED SKY FRACTION: the region ABOVE the line must be SMOOTHER than the
+                        // region BELOW (real sky over ground). A lock on a terrain edge has busy ground on
+                        // BOTH sides, so this collapses toward 0 and the CONTROLLER takes over - exactly what
+                        // we want when the view is mostly ground. Everything is a smoothstep, so no popping.
+                        float aT = 0f, bT = 0f; int ac = 0, bc = 0;
+                        for (int gx = gx0; gx < gx1; gx++)
+                        {
+                            int yb = (int)((fm * (gx * B + B / 2f) + fb) / B);
+                            if (yb - 4 < 0 || yb + 5 >= gh) continue;
+                            for (int k = 1; k <= 3; k++) { aT += imT[(yb - k) * gw + gx]; ac++; bT += imT[(yb + k) * gw + gx]; bc++; }
+                        }
+                        aT = ac > 0 ? aT / ac : 0f; bT = bc > 0 ? bT / bc : 0f;
+                        float texConf = Smooth01(bT - aT, 2f, 16f);   // below busier than above => real sky/ground
+                        float hf = (fm * (W / 2f) + fb) / H;
+                        if (hf < 0f) hf = 0f; if (hf > 1f) hf = 1f;
+                        detSky = hf * texConf;
                     }
                 }
             }
@@ -6706,7 +6722,10 @@ class RobloxAuto : Form
             _hudDetRoll = _hudSmRoll;
             _hudDetPitch = _hudSmPitch;
             _hudDetConf = conf;
-            float skyFrac = (slope * (W / 2f) + icept) / H;      // how much of the frame sits above the line
+            // Sky fraction trusted for the gyro/image blend. Prefer the TEXTURE-verified value from the
+            // primary lock (which zeroes out when the "horizon" is really just a terrain edge, so the
+            // controller takes over); fall back to the plain height fraction if the primary path did not run.
+            float skyFrac = detSky >= 0f ? detSky : (slope * (W / 2f) + icept) / H;
             if (skyFrac < 0f) skyFrac = 0f; if (skyFrac > 1f) skyFrac = 1f;
             _hudDetSky = skyFrac;
             _hudTrkM = slope; _hudTrkB = icept; _hudTrkAt = Environment.TickCount;   // guide the next frame
@@ -6715,7 +6734,7 @@ class RobloxAuto : Form
             if (Environment.TickCount - _hudLogAt >= 2000)
             {
                 _hudLogAt = Environment.TickCount;
-                Log("horizon det: " + (gOk ? "global" : n + " pts") + ", roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px");
+                Log("horizon det: " + (gOk ? "global" : n + " pts") + ", roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px, sky " + (_hudDetSky * 100f).ToString("0") + "% trust " + (_hudDetConf * 100f).ToString("0") + "%");
             }
         }
         catch { }
