@@ -3421,7 +3421,7 @@ class RobloxAuto : Form
     {
         // the blob search and the loading-screen check both grab the whole screen and
         // usually run back to back - reuse a capture that is at most 250ms old
-        if (_grabCache != null && (DateTime.Now - _grabTime).TotalMilliseconds < 250)
+        if (_grabCache != null && (DateTime.Now - _grabTime).TotalMilliseconds < 100)
         {
             w = _grabW; h = _grabH;
             return _grabCache;
@@ -5430,7 +5430,7 @@ class RobloxAuto : Form
 
                     // ---- horizon measurement (~3x/s) + spawn lock. The smooth 50fps fusion runs
                     // in HudTick on the UI thread so it can drive the layered repaint. ----
-                    if (shown && Environment.TickCount - lastDet >= 250)
+                    if (shown && Environment.TickCount - lastDet >= 100)
                     {
                         lastDet = Environment.TickCount;
                         DetectHorizon();
@@ -6371,13 +6371,13 @@ class RobloxAuto : Form
             float pitch = (slope * (W / 2f) + icept) - H / 2f;
             pitch += _hudBias;   // tunable downward bias (dial "bias px")
             if (pitch > H / 4f) pitch = H / 4f; if (pitch < -H / 4f) pitch = -H / 4f;
-            // smooth across measurements (measurements are only ~3/s, so a single noisy fit would
-            // make the lock twitch) - seeded on the first good fix so it is not biased to 0
+            // smooth across measurements - now that we measure ~10x/s the smoothing can track fast
+            // (it used to be 0.55/0.45 at ~3/s, which felt laggy); seeded on the first good fix
             if (!_hudSmSeeded) { _hudSmRoll = roll; _hudSmPitch = pitch; _hudSmSeeded = true; }
             else
             {
-                _hudSmRoll = _hudSmRoll * 0.55f + roll * 0.45f;
-                _hudSmPitch = _hudSmPitch * 0.55f + pitch * 0.45f;
+                _hudSmRoll = _hudSmRoll * 0.30f + roll * 0.70f;
+                _hudSmPitch = _hudSmPitch * 0.30f + pitch * 0.70f;
             }
             _hudDetRoll = _hudSmRoll;
             _hudDetPitch = _hudSmPitch;
