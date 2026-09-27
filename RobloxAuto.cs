@@ -56,6 +56,7 @@ class RobloxAuto : Form
 
     // ================= runtime =================
     volatile bool _running = false;
+    volatile bool _autoDeployed = false;   // set once the flow actually reaches Deploy As Drone
     volatile int _autoGen = 0;      // bumped to cancel/restart a run
     DateTime _lastRejoin = DateTime.MinValue;
     string _lastRejoinServerId = "";
@@ -1406,6 +1407,7 @@ class RobloxAuto : Form
         // whatever run is in progress and a fresh one takes over.
         int g = ++_autoGen;
         _running = true;
+        _autoDeployed = false;          // cleared so the self-heal retry knows if we got there
         _halted = false;                // starting again re-arms the auto-reconnect
         StopRfWatch();                  // clear any feed from the previous run
         _hoverMs = _hoverBase;          // start each run snappy; BumpHover raises it if needed
@@ -1419,8 +1421,21 @@ class RobloxAuto : Form
 
         Thread t = new Thread(delegate ()
         {
-            try { AutoSteps(g); }
-            catch (Exception ex) { Log("AUTO error: " + ex.Message); }
+            // Self-healing: if the run stops before the drone is actually deployed, back out with
+            // the red Return and re-run. AutoSteps is resume-aware, so it re-reads the screen and
+            // picks up from wherever we ended up - a failed base/warhead step re-plans instead of
+            // leaving the run dead in a menu.
+            for (int attempt = 1; attempt <= 2; attempt++)
+            {
+                try { AutoSteps(g); }
+                catch (Exception ex) { Log("AUTO error: " + ex.Message); }
+                if (!Alive(g) || _autoDeployed) break;
+                Log("AUTO: stopped before deploy - back out with Return and re-plan (" + attempt + "/2)");
+                AddBlackError("0x2C", "deploy sequence incomplete - re-planning");
+                try { ClickRedReturn(); } catch { }
+                Thread.Sleep(700);
+                InvalidateOcr();
+            }
             if (g == _autoGen)
             {
                 _running = false;
@@ -1750,11 +1765,13 @@ class RobloxAuto : Form
                 bool ok = ClickPhrasePersistent("Deploy As Drone", 20000, g);
                 if (!ok) Log("   Deploy As Drone did not react");
                 AddBlackLine("  uplink established", ok ? "OK" : "BAD");
+                _autoDeployed = ok;      // only a real click counts - otherwise the flow re-plans
             }
             else
             {
                 Log("7) clicking Deploy...");
-                if (!ClickPhraseVerified("Deploy", "As", g)) Log("   Deploy did not react");
+                if (ClickPhraseVerified("Deploy", "As", g)) _autoDeployed = true;
+                else Log("   Deploy did not react");
             }
         }
         else Log("7) deploy skipped - the TEAM BASE panel is not open");
@@ -4872,7 +4889,6 @@ class RobloxAuto : Form
                 float lastSet = -1f;
                 string lastTxt = null;
                 bool lastOk = false;
-                long lastHud = 0;
                 long lastDet = 0;      // horizon measurement cadence (faster than the slow path)
                 int inHits = 0, outHits = 0;   // debounce so one bad OCR frame cannot flap the feed
 
