@@ -1335,30 +1335,33 @@ class RobloxAuto : Form
         // 3 - drone. FPV is the game's default, so ONLY a MAVIC run needs the LOADOUT switch.
         //     Never runs once the map or the base panel is up - that part already happened.
         if (!GoOn(g)) return;
-        if (_stepDrone && _drone == "MAVIC" && !mapUp && !panelUp)
+        // Applies to BOTH drones - it used to run only for MAVIC ("only MAVIC needs it"), so
+        // choosing FPV left whatever was equipped (often MAVIC) and you deployed the wrong drone.
+        if (_stepDrone && (_drone == "MAVIC" || _drone == "FPV") && !mapUp && !panelUp)
         {
-            Log("3) switching drone to MAVIC (LOADOUT)...");
+            Log("3) switching drone to " + _drone + " (LOADOUT)...");
             ClickPhraseVerified("LOADOUT", g);
             if (WaitPhrase("SELECT DRONE", 6000, g))
             {
                 InvalidateOcr();
-                if (DroneIs("MAVIC"))
+                if (DroneIs(_drone))
                 {
-                    Log("   MAVIC already selected");
+                    Log("   " + _drone + " already selected");
                 }
                 else
                 {
-                    // default is FPV, so a single click on the ">" arrow flips it to MAVIC
-                    Log("   drone is " + (DroneIs("FPV") ? "FPV" : "unknown") + " -> clicking the right arrow");
-                    ClickDroneArrow(true, g);
+                    bool wantMavic = _drone == "MAVIC";
+                    string cur = DroneIs("FPV") ? "FPV" : (DroneIs("MAVIC") ? "MAVIC" : "unknown");
+                    Log("   drone is " + cur + " -> clicking the " + (wantMavic ? "right" : "left") + " arrow");
+                    ClickDroneArrow(wantMavic, g);       // right = MAVIC, left = FPV
                     Thread.Sleep(350);
                     InvalidateOcr();
-                    Log(DroneIs("MAVIC") ? "   MAVIC selected" : "   could not confirm MAVIC (continuing)");
+                    Log(DroneIs(_drone) ? "   " + _drone + " selected" : "   could not confirm " + _drone + " (continuing)");
                 }
             }
             else Log("   SELECT DRONE panel did not open");
         }
-        else Log("3) drone step skipped (" + (_drone != "MAVIC" || !_stepDrone ? "only MAVIC needs it" : "map already open") + ")");
+        else Log("3) drone step skipped (" + (!_stepDrone ? "step off" : "map already open") + ")");
 
         // 4 - DEPLOY from the nav bar opens the map
         if (!GoOn(g)) return;
