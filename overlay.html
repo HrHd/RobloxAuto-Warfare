@@ -130,44 +130,28 @@ function drawMavic(s, W, H) {
   hctx.fillText('REC', W - 128, H / 2 - 46);
 }
 
-// ---- analog glitch state (FPV only) ----
-var glUntil = 0, glNext = 0, glDrop = false;
+// ---- analog glitch state (FPV only): a brief whole-HUD horizontal jitter plus a scan bar.
+// Non-destructive - nothing is ever blanked, so the overlay never disappears from OBS. ----
+var glUntil = 0, glNext = 0, glShift = 0, glBars = 0;
 function glitchState(now) {
   if (now > glNext) {
-    glUntil = now + 60 + Math.random() * 220;
-    glDrop = Math.random() < 0.3;                 // occasional momentary feed loss
-    glNext = glUntil + 1200 + Math.random() * 5000;
+    glUntil = now + 40 + Math.random() * 130;
+    glNext = glUntil + 6000 + Math.random() * 14000;   // every ~6-20s, easy on the eyes
+    glShift = Math.round((Math.random() * 2 - 1) * (6 + Math.random() * 34));
+    glBars = 1 + ((Math.random() * 2) | 0);
   }
   return now < glUntil;
 }
 
-// horizontal tears + bright scan bars, like an analog video feed breaking up
-function glitchFrame(W, H) {
-  var bands = 2 + ((Math.random() * 5) | 0);
-  for (var i = 0; i < bands; i++) {
-    var y = (Math.random() * H) | 0;
-    var bh = 2 + ((Math.random() * 28) | 0);
-    if (y + bh > H) bh = H - y;
-    if (bh <= 0) continue;
-    var dx = Math.round((Math.random() * 2 - 1) * (8 + Math.random() * 70));
-    hctx.drawImage(hc, 0, y, W, bh, dx, y, W, bh);
-  }
-  var bars = (Math.random() * 4) | 0;
-  for (var b = 0; b < bars; b++) {
-    var by = (Math.random() * H) | 0;
-    hctx.fillStyle = 'rgba(255,255,255,' + (0.08 + Math.random() * 0.3).toFixed(2) + ')';
-    hctx.fillRect(0, by, W, 1 + ((Math.random() * 3) | 0));
-  }
-}
-
-function drawHud(s, glitching, drop) {
-  var W = hc.width, H = hc.height, cx = W / 2, cy = H / 2;
+function drawHud(s, glitching) {
+  var W = hc.width, H = hc.height;
+  var cx = W / 2 + (glitching ? glShift : 0);   // whole HUD jitters sideways during a glitch
+  var cy = H / 2;
   hctx.clearRect(0, 0, W, H);
   if (!s.hud) { hc.style.display = 'none'; return; }
   hc.style.display = 'block';
 
   if (s.uav) { drawMavic(s, W, H); return; }   // DJI-Fly style for the MAVIC - clean HD, no glitch
-  if (drop) return;                             // momentary feed loss: static covers the HUD
 
   // The monitor FpvHudForm is authored on a 1920x1080 frame, so scale everything by H/1080 and
   // the two renders stay pixel-for-pixel the same at any OBS browser-source size.
@@ -278,7 +262,12 @@ function drawHud(s, glitching, drop) {
   ladder(false, s.agl);
   // no centre HOME and no fly timer - the monitor FPV HUD leaves those to the game
 
-  if (glitching) glitchFrame(W, H);
+  // a few faint scan lines during a glitch - additive only, never erases the HUD
+  for (var b = 0; b < glBars && glitching; b++) {
+    var by = (Math.random() * H) | 0;
+    hctx.fillStyle = 'rgba(255,255,255,' + (0.05 + Math.random() * 0.12).toFixed(2) + ')';
+    hctx.fillRect(0, by, W, 1 + ((Math.random() * 2) | 0));
+  }
 }
 
 function tick() {
@@ -299,17 +288,17 @@ function tick() {
     document.getElementById('fill').style.width = Math.round(s.progress * 100) + '%';
     document.getElementById('plabel').textContent = Math.round(s.progress * 100) + '%   ' + s.label;
 
-    // FPV RF static: doubled strength now (lvl*1.04, capped at 1), plus a burst on glitches.
-    // MAVIC sends level 0 and never glitches, so it stays a clean HD feed.
+    // FPV RF static: eased back from the doubled setting so it is not harsh to watch, with only
+    // a small lift during a glitch. MAVIC sends level 0 and never glitches - clean HD feed.
     var now = Date.now();
     var gl = glitchState(now);
     var lvl = s.level || 0;
-    var op = gl ? Math.min(1, 0.55 + Math.random() * 0.4) : Math.min(1, lvl * 1.04);
+    var op = gl ? Math.min(1, 0.30 + Math.random() * 0.22) : Math.min(0.42, lvl * 0.42);
     var showStatic = (s.flight || s.hud) && (op > 0.01);
     nc.style.display = showStatic ? 'block' : 'none';
     nc.style.opacity = showStatic ? op : 0;
 
-    drawHud(s, gl, glDrop && !s.uav);
+    drawHud(s, gl);
 
     home.style.display = 'none';   // no big bottom-right HOME readout anymore
   }).catch(function(){});
