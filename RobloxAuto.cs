@@ -129,6 +129,7 @@ class RobloxAuto : Form
     CheckBox chkBlack;
     OverlayForm _land = null;           // the LAND NOW alert, tracked so STOP can close it
     volatile int _stopGen = 0;          // bumped by STOP to cancel pending delayed actions
+    volatile bool _halted = false;      // STOP pressed: suppress ALL auto-reconnect until next AUTO
     TextBox txtClickKey;
     string _clickKeyText = "0";
     bool _topMost = true;
@@ -1280,6 +1281,7 @@ class RobloxAuto : Form
         // whatever run is in progress and a fresh one takes over.
         int g = ++_autoGen;
         _running = true;
+        _halted = false;                // starting again re-arms the auto-reconnect
         StopRfWatch();                  // clear any feed from the previous run
         _hoverMs = _hoverBase;          // start each run snappy; BumpHover raises it if needed
         // Restart mid-flow keeps the CLI progress and shows a milsim fault, so OBS viewers see a
@@ -1311,6 +1313,7 @@ class RobloxAuto : Form
     {
         _autoGen++;          // invalidates the running run
         _stopGen++;          // cancels any pending auto-after-rejoin launch too
+        _halted = true;      // stop the log/OCR auto-reconnect too (it used to restart the flow)
         _running = false;
         StopRfWatch();
         HideBlack();
@@ -3594,7 +3597,7 @@ class RobloxAuto : Form
 
     void LogTick(object sender, EventArgs e)
     {
-        if (!_autoRecon || _running) return;   // never fight an AUTO run in progress
+        if (!_autoRecon || _running || _halted) return;   // never fight an AUTO run, honour STOP
         try
         {
             string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Roblox", "logs");
@@ -3652,7 +3655,7 @@ class RobloxAuto : Form
 
     void OcrTick(object sender, EventArgs e)
     {
-        if (!_ocrWatch || _running) return;
+        if (!_ocrWatch || _running || _halted) return;
         string want = (_watchWords == null ? "" : _watchWords.Trim());
         if (want == "") return;
 
@@ -5607,7 +5610,7 @@ class RobloxAuto : Form
     {
         try
         {
-            if (!_blackScreen) return;
+            if (!_blackScreen || _halted) return;
             if (InvokeRequired) { BeginInvoke((MethodInvoker)delegate { ShowBlack(); }); return; }
             if (_black != null) return;
 
