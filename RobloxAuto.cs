@@ -2513,8 +2513,13 @@ class RobloxAuto : Form
 
         Thread.Sleep(250);   // let the TEAM BASE panel finish laying out before measuring the grid
 
+        // If the anchored grid is a few px off (different game height), the first click lands just
+        // outside the cell and nothing turns green. Retry while sliding the grid vertically, so
+        // the step self-calibrates instead of clicking the same wrong spot four times.
+        int[] nudges = new int[] { 0, -14, 14, -28 };
         for (int t = 1; t <= 4 && Alive(g); t++)
         {
+            _whRowNudge = nudges[t - 1];
             // Hovering a cell animates/scales it, which nudges the whole grid, so measure with
             // the pointer OFF the panel. On the first try the previous step already left the
             // pointer off the grid, so only move on a retry (when it is sitting on the cell).
@@ -2711,12 +2716,57 @@ class RobloxAuto : Form
         return hit;
     }
 
-    // Warhead cells are uniform grey rounded rectangles about 2:1. Find the grey ones, work
-    // out the column and row spacing from them, and expand that into the full grid in
-    // row-major order. The equipped (green) cell is simply the grid slot with no grey cell,
-    // so it does not need to be found by colour (its green merges with the green terrain
-    // showing through the translucent panel).
+    // The TEAM BASE panel ALWAYS stacks its buttons above the warhead grid:
+    //   TEAM BASE / Deploy / Return / "Deploy As Drone" / WARHEAD line / the warhead grid.
+    // So the "Deploy As Drone" button is a dependable anchor - once we can SEE it, we know the
+    // cells sit directly under it, left-to-right then wrapping, at a fixed pixel size. That is
+    // deterministic and does not care what terrain shows through the translucent cells (which is
+    // exactly what made the old grey-box hunt come back with 0 cells, or the wrong column, over
+    // green ground). Colour is then only used to tell WHICH slot is the selected (green) one.
     List<Point> FindWarheadCells(int count)
+    {
+        float sc = Screen.PrimaryScreen.Bounds.Height / 1080f;
+        if (sc <= 0f) sc = 1f;
+
+        int ax, ay;
+        if (!WarheadAnchor(out ax, out ay))
+        {
+            Log("   no 'Deploy As Drone' anchor on screen - falling back to the colour hunt");
+            return FindWarheadCellsByColour(count);
+        }
+
+        int colStep = (int)(106 * sc), rowStep = (int)(52 * sc);
+        int col0 = ax - colStep;
+        int row0 = ay + (int)((85 + _whRowNudge) * sc);
+        List<Point> grid = new List<Point>();
+        for (int r = 0; grid.Count < count && r < 8; r++)
+            for (int c = 0; c < 3 && grid.Count < count; c++)
+                grid.Add(new Point(col0 + c * colStep, row0 + r * rowStep));
+        Log("   warhead grid anchored to Deploy As Drone (" + ax + "," + ay + "): first cell (" +
+            col0 + "," + row0 + "), step " + colStep + "x" + rowStep + ", nudge " + _whRowNudge);
+        return grid;
+    }
+
+    // Find the "Deploy As Drone" button (the lowest match, so the nav-bar DEPLOY is ignored) and
+    // return its centre - the anchor the whole warhead grid hangs off.
+    bool WarheadAnchor(out int ax, out int ay)
+    {
+        ax = 0; ay = 0;
+        List<Hit> h = FindPhraseAll("Deploy As Drone", null, OcrWords());
+        if (h.Count == 0) h = FindPhraseAll("Deploy As Drone", null, OcrWordsWhiten());
+        if (h.Count == 0) h = FindPhraseAll("Deploy As", null, OcrWords());
+        if (h.Count == 0) h = FindPhraseAll("Deploy As", null, OcrWordsWhiten());
+        if (h.Count == 0) h = FindPhraseAll("Drone", null, OcrWords());
+        if (h.Count == 0) return false;
+        int best = 0;
+        for (int i = 1; i < h.Count; i++) if (h[i].Y > h[best].Y) best = i;   // lowest = the button
+        ax = h[best].X; ay = h[best].Y;
+        return true;
+    }
+
+    static int _whRowNudge = 0;   // per-run y calibration (px @1080); nudged when a click misses
+
+    List<Point> FindWarheadCellsByColour(int count)
     {
         int W, H; int[] px = Grab(out W, out H);
         bool[] grey = new bool[W * H];
