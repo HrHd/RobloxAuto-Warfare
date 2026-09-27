@@ -101,18 +101,31 @@ function drawMavic(s, W, H) {
   hctx.font = 'bold 22px "Segoe UI", Arial, sans-serif';
   hctx.fillText('N Mode', 30, 76);          // under the game's phone icons
 
-  // top-right, under the game's "RC LIVE": signal bars + a battery pill with a nub
+  // top-right, under the game's "RC LIVE": battery + signal bars
   var rEdge = W - 26;
+  // battery drains with the flight timer: 100% at launch, 50% at 5 min, empty at 15 min
+  var fsecs = s.secs || 0;
+  var bat = fsecs <= 300 ? 100 - Math.round(fsecs * 50 / 300) : 50 - Math.round((fsecs - 300) * 50 / 600);
+  if (bat < 0) bat = 0; if (bat > 100) bat = 100;
+  var batCol = bat <= 30 ? 'rgba(235,60,60,0.95)' : col;
+  hctx.fillStyle = batCol;
   hctx.font = '17px "Segoe UI", Arial, sans-serif';
-  var pw = hctx.measureText('96%').width;
+  var ptxt = bat + '%';
+  var pw = hctx.measureText(ptxt).width;
   hctx.strokeStyle = 'rgba(255,255,255,0.6)'; hctx.lineWidth = 1;
   hctx.strokeRect(rEdge - 48, 70, 44, 20);
-  hctx.fillRect(rEdge - 45, 73, 32, 14);
+  var bfw = Math.round(32 * bat / 100);
+  if (bfw > 0) hctx.fillRect(rEdge - 45, 73, bfw, 14);
   hctx.fillRect(rEdge - 4, 76, 4, 8);
-  hctx.fillText('96%', rEdge - 56 - pw, 74);
-  for (var b = 0; b < 4; b++)
+  hctx.fillText(ptxt, rEdge - 56 - pw, 74);
+  // signal bars track the distance to HOME (4 close -> 1 far)
+  var dm = jmetres(s.home || '');
+  var bars = 4 - Math.floor(dm / 300);
+  if (bars < 1) bars = 1; if (bars > 4) bars = 4;
+  for (var b = 0; b < 4; b++) {
+    hctx.fillStyle = b < bars ? col : 'rgba(235,235,235,0.35)';
     hctx.fillRect(rEdge - 64 - Math.round(pw) - 40 + b * 8, 84 - b * 4, 5, 6 + b * 4);
-  // (no ALT readout - the game already prints the height bottom-left)
+  }
 
   // bottom-centre (free): resolution + recording time
   var secs = s.secs || 0, mm = Math.floor(secs / 60), ss = secs % 60;

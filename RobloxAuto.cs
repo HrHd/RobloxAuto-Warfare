@@ -3721,6 +3721,7 @@ class RobloxAuto : Form
             _hudForm.PitchPx = _hudPitch;
             _hudForm.Uav = _hudStyleUav;
             _hudForm.Timer = string.Format("{0:00}:{1:00}", _hudSecs / 60, _hudSecs % 60);
+            _hudForm.Secs = _hudSecs;
             _hudForm.Invalidate();
         }
     }
@@ -4350,6 +4351,7 @@ class RobloxAuto : Form
     class FpvHudForm : Form
     {
         public string Home = "----", Spd = "", Alt = "", Agl = "", Hdg = "", Timer = "00:00";
+        public int Secs = 0;   // flight seconds - drives the draining battery readout
         public float Roll = 0f, PitchPx = 0f;
         public bool Uav = false;
         readonly Font _f = new Font("Consolas", 12F, FontStyle.Bold);
@@ -4392,6 +4394,13 @@ class RobloxAuto : Form
             return new PointF(cx + dx * cs - dy * sn, cy + dx * sn + dy * cs);
         }
 
+        float DistMetres()
+        {
+            float v = Num(Home);
+            if ((Home ?? "").ToUpperInvariant().IndexOf("KM") >= 0) v *= 1000f;
+            return v;
+        }
+
         static float Num(string s)
         {
             if (string.IsNullOrEmpty(s)) return 0f;
@@ -4430,16 +4439,26 @@ class RobloxAuto : Form
             // top-left under the game's phone icons
             g.DrawString("N Mode", _fm, white, 30, 76);
 
-            // top-right, under the game's "RC LIVE": battery pill + nub, "96%", signal bars, all
-            // on one tidy band
+            // top-right, under the game's "RC LIVE": battery pill + nub, %, signal bars
             int rEdge = W - 26;
-            SizeF pct = g.MeasureString("96%", _fs);
+            // battery drains with the flight timer: 100% at launch, 50% at 5 min, empty at 15 min
+            int bat = Secs <= 300 ? 100 - (int)(Secs * 50f / 300f) : 50 - (int)((Secs - 300) * 50f / 600f);
+            if (bat < 0) bat = 0; if (bat > 100) bat = 100;
+            bool low = bat <= 30;
+            SolidBrush batB = low ? new SolidBrush(Color.FromArgb(235, 235, 60, 60)) : white;
+            string pctTxt = bat + "%";
+            SizeF pct = g.MeasureString(pctTxt, _fs);
             g.DrawRectangle(thin, rEdge - 48, 70, 44, 20);
-            g.FillRectangle(white, rEdge - 45, 73, 32, 14);   // ~86% fill
-            g.FillRectangle(white, rEdge - 4, 76, 4, 8);      // nub
-            g.DrawString("96%", _fs, white, rEdge - 56 - pct.Width, 74);
+            int fw = (int)(32 * bat / 100f);
+            if (fw > 0) g.FillRectangle(batB, rEdge - 45, 73, fw, 14);
+            g.FillRectangle(batB, rEdge - 4, 76, 4, 8);      // nub
+            g.DrawString(pctTxt, _fs, batB, rEdge - 56 - pct.Width, 74);
+            // signal bars track the distance to HOME (4 close -> 1 far), like a real RC link
+            float dm = DistMetres();
+            int bars = 4 - (int)(dm / 300f);
+            if (bars < 1) bars = 1; if (bars > 4) bars = 4;
             for (int i = 0; i < 4; i++)
-                g.FillRectangle(white, rEdge - 64 - (int)pct.Width - 40 + i * 8, 84 - i * 4, 5, 6 + i * 4);
+                g.FillRectangle(i < bars ? white : dim, rEdge - 64 - (int)pct.Width - 40 + i * 8, 84 - i * 4, 5, 6 + i * 4);
             // (no ALT readout - the game already prints the height bottom-left)
 
             // bottom-centre (free): resolution + recording time
