@@ -3421,7 +3421,7 @@ class RobloxAuto : Form
     {
         // the blob search and the loading-screen check both grab the whole screen and
         // usually run back to back - reuse a capture that is at most 250ms old
-        if (_grabCache != null && (DateTime.Now - _grabTime).TotalMilliseconds < 100)
+        if (_grabCache != null && (DateTime.Now - _grabTime).TotalMilliseconds < 45)
         {
             w = _grabW; h = _grabH;
             return _grabCache;
@@ -5433,7 +5433,7 @@ class RobloxAuto : Form
 
                     // ---- horizon measurement (~3x/s) + spawn lock. The smooth 50fps fusion runs
                     // in HudTick on the UI thread so it can drive the layered repaint. ----
-                    if (shown && Environment.TickCount - lastDet >= 100)
+                    if (shown && Environment.TickCount - lastDet >= 45)
                     {
                         lastDet = Environment.TickCount;
                         DetectHorizon();
@@ -5455,7 +5455,7 @@ class RobloxAuto : Form
                     _hudSecs = secs;
                     }
                     catch (Exception ex) { Log("RF loop error: " + ex.Message); }
-                    Thread.Sleep(120);
+                    Thread.Sleep(45);   // loop fast so the horizon can re-measure ~20x/s
                 }
             });
             t.IsBackground = true;
