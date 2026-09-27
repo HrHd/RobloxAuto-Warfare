@@ -157,9 +157,14 @@ function drawHud(s) {
 
   // artificial horizon + pitch ladder: 10 deg = 8px, horizon line longest and capped at both ends
   hctx.font = font;
-  for (var d = -30; d <= 30; d += 10) {
-    var yy = pit + d * 8 * sc, half = (d === 0 ? 150 : 70) * sc;
+  for (var d = -90; d <= 90; d += 10) {
+    var yy = pit + d * 8 * sc;
+    var dist = Math.abs(yy);
+    var af = dist <= 200 * sc ? 1 : 1 - (dist - 200 * sc) / (320 * sc);   // fade 200px -> 520px
+    if (af <= 0.02) continue;
+    var half = (d === 0 ? 150 : 70) * sc;
     var a = R(cx - half, cy + yy), b = R(cx + half, cy + yy);
+    hctx.globalAlpha = af;
     hctx.strokeStyle = d === 0 ? col : thin;
     hctx.lineWidth = (d === 0 ? 2 : 1) * sc;
     hctx.beginPath(); hctx.moveTo(a[0], a[1]); hctx.lineTo(b[0], b[1]); hctx.stroke();
@@ -174,6 +179,7 @@ function drawHud(s) {
       hctx.fillStyle = col;
       hctx.fillText((d > 0 ? '+' : '') + d, t[0], t[1]);
     }
+    hctx.globalAlpha = 1;
   }
 
   // bank indicator: fixed tick at the top, marker swings with the bank
@@ -260,9 +266,12 @@ function tick() {
     document.getElementById('fill').style.width = Math.round(s.progress * 100) + '%';
     document.getElementById('plabel').textContent = Math.round(s.progress * 100) + '%   ' + s.label;
 
-    // RF static while flying: intensity follows the HOME distance (fullest at 1.20 km)
-    nc.style.display = s.flight ? 'block' : 'none';
-    nc.style.opacity = s.flight ? Math.min(0.35, (s.level || 0) * 0.35) : 0;
+    // FPV RF static: shown whenever the FPV HUD is up (MAVIC sends level 0 so it stays clean),
+    // strength 1.5x the old value for a livelier picture
+    var lvl = s.level || 0;
+    var showStatic = (s.flight || s.hud) && lvl > 0;
+    nc.style.display = showStatic ? 'block' : 'none';
+    nc.style.opacity = showStatic ? Math.min(0.52, lvl * 0.52) : 0;
 
     drawHud(s);
 

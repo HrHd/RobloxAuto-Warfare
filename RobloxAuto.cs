@@ -3518,10 +3518,10 @@ class RobloxAuto : Form
             _hudFRoll += (0f - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 0.6));
         }
 
-        if (_hudFRoll > 85f) _hudFRoll = 85f;
-        if (_hudFRoll < -85f) _hudFRoll = -85f;
-        if (_hudFPitch > 280f) _hudFPitch = 280f;
-        if (_hudFPitch < -280f) _hudFPitch = -280f;
+        if (_hudFRoll > 180f) _hudFRoll = 180f;
+        if (_hudFRoll < -180f) _hudFRoll = -180f;
+        if (_hudFPitch > 900f) _hudFPitch = 900f;    // was +-280px (~35deg) - it ran out of travel
+        if (_hudFPitch < -900f) _hudFPitch = -900f;
 
         _hudRoll = _hudFRoll;
         _hudPitch = _hudFPitch;
@@ -4227,12 +4227,19 @@ class RobloxAuto : Form
             if (Uav) { DrawMavic(g, W, H); base.OnPaint(e); return; }   // DJI-Fly style
 
             // artificial horizon + pitch ladder - every endpoint is rotated about the centre by
-            // the bank, so the whole ladder rolls with the controller input
-            for (int d = -30; d <= 30; d += 10)
+            // the bank, so the whole ladder rolls with the controller input. Runs out to +-90 deg
+            // and fades with distance from the centre so it never hard-stops or clutters the view.
+            for (int d = -90; d <= 90; d += 10)
             {
                 float yy = PitchPx + d * 8f;                 // 10 deg = 8px
+                float dist = Math.Abs(yy);
+                float af = dist <= 200f ? 1f : 1f - (dist - 200f) / 320f;   // fade 200px -> 520px
+                if (af <= 0.02f) continue;
                 float half = d == 0 ? 150f : 70f;
-                Pen pen = d == 0 ? _p : _pt;
+                int aMain = (int)(230 * af), aThin = (int)(165 * af), aTxt = (int)(235 * af);
+                Pen pen = d == 0
+                    ? new Pen(Color.FromArgb(aMain, 255, 255, 255), 2)
+                    : new Pen(Color.FromArgb(aThin, 230, 230, 230), 1);
                 PointF a = R(cx - half, cy + yy, cx, cy, rad), b = R(cx + half, cy + yy, cx, cy, rad);
                 g.DrawLine(pen, a, b);
                 if (d == 0)
@@ -4241,7 +4248,11 @@ class RobloxAuto : Form
                     g.DrawLine(pen, b, R(cx + half, cy + yy + 12, cx, cy, rad));
                 }
                 else
-                    g.DrawString((d > 0 ? "+" : "") + d, _f, _g, R(cx + half + 6, cy + yy - 8, cx, cy, rad));
+                {
+                    using (SolidBrush lb = new SolidBrush(Color.FromArgb(aTxt, 255, 255, 255)))
+                        g.DrawString((d > 0 ? "+" : "") + d, _f, lb, R(cx + half + 6, cy + yy - 8, cx, cy, rad));
+                }
+                pen.Dispose();
             }
 
             // bank indicator: fixed tick at the top, marker swings with the roll
