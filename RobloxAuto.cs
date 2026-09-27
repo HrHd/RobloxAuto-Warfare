@@ -151,8 +151,9 @@ class RobloxAuto : Form
     float _hudRollOff = 0f;                         // manual roll offset, degrees (dial "roll off")
     float _hudPitOff = 0f;                          // manual pitch offset, px (dial "pitch off")
     float _hudLeftPx = 0f;                         // px - max horizon offset from the LEFT stick (dial "thr pitch"); 0 = off
-    float _hudPitStick = 150f;                      // px - DIRECT horizon offset from the RIGHT stick Y (dial "stick pitch")
+    float _hudPitStick = 280f;                      // px - DIRECT horizon offset from the RIGHT stick Y (dial "stick pitch")
                                                     //      push forward = line UP, pull back = line DOWN (signed: set - to invert)
+    float _hudPitStickSm = 0f;                      // smoothed stick-pitch offset (glides, never jumps)
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
     NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
@@ -4237,7 +4238,11 @@ class RobloxAuto : Form
         // RIGHT stick Y as a DIRECT horizon lift: push FORWARD -> the line RAISES (smaller px = up),
         // pull BACK -> it drops. Bounded (not integrated) so holding the stick holds the offset and
         // releasing returns it - the pilot's pitch input visibly drives the horizon.
-        float stickPitch = -sy * _hudPitStick;
+        // SMOOTHED so the line glides to the new height instead of snapping when the stick moves.
+        float stickPitchTarget = -sy * _hudPitStick;
+        float pv = 1f - (float)Math.Pow(0.5, dt / 0.22f);      // ~0.22s glide
+        _hudPitStickSm += (stickPitchTarget - _hudPitStickSm) * pv;
+        float stickPitch = _hudPitStickSm;
 
         if (_hudFRoll > 180f) _hudFRoll = 180f;
         if (_hudFRoll < -180f) _hudFRoll = -180f;
@@ -5350,7 +5355,7 @@ class RobloxAuto : Form
             _rfHomeText = "----";
             _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
             _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
-            _hudPitchVel = 0f; _hudRollVel = 0f;   // start each flight with no carried velocity
+            _hudPitchVel = 0f; _hudRollVel = 0f; _hudPitStickSm = 0f;   // start each flight clean
             OverlayHub.I.SetFlight(true, 0.18f, 0);
 
             Thread t = new Thread(delegate ()
