@@ -1041,7 +1041,7 @@ class RobloxAuto : Form
         y += 32;
 
         var lblTune = new Label();
-        lblTune.Text = "HUD tuning  (Ctrl+Alt+Arrows / O P K L to nudge live)";
+        lblTune.Text = "HUD tuning  (arrows / PgUp PgDn / Home End = nudge live)";
         lblTune.ForeColor = Color.Gainsboro;
         lblTune.SetBounds(x, y, w, 16);
         Controls.Add(lblTune);
@@ -3915,14 +3915,15 @@ class RobloxAuto : Form
         UnregisterHotKey(Handle, HK_TUN_RU); UnregisterHotKey(Handle, HK_TUN_RD);
         UnregisterHotKey(Handle, HK_TUN_BU); UnregisterHotKey(Handle, HK_TUN_BD);
         UnregisterHotKey(Handle, HK_TUN_LU); UnregisterHotKey(Handle, HK_TUN_LD);
-        RegisterHotKey(Handle, HK_TUN_PU, MOD_CA, VK_UP);
-        RegisterHotKey(Handle, HK_TUN_PD, MOD_CA, VK_DOWN);
-        RegisterHotKey(Handle, HK_TUN_RU, MOD_CA, VK_RIGHT);
-        RegisterHotKey(Handle, HK_TUN_RD, MOD_CA, VK_LEFT);
-        RegisterHotKey(Handle, HK_TUN_BU, MOD_CA, 0x4F);   // O
-        RegisterHotKey(Handle, HK_TUN_BD, MOD_CA, 0x50);   // P
-        RegisterHotKey(Handle, HK_TUN_LU, MOD_CA, 0x4B);   // K
-        RegisterHotKey(Handle, HK_TUN_LD, MOD_CA, 0x4C);   // L
+        // plain single keys, no modifier - easy to hit mid-flight (controller does the flying)
+        RegisterHotKey(Handle, HK_TUN_PU, 0, VK_UP);       // Up    pitch +
+        RegisterHotKey(Handle, HK_TUN_PD, 0, VK_DOWN);     // Down  pitch -
+        RegisterHotKey(Handle, HK_TUN_RU, 0, VK_RIGHT);    // Right roll +
+        RegisterHotKey(Handle, HK_TUN_RD, 0, VK_LEFT);     // Left  roll -
+        RegisterHotKey(Handle, HK_TUN_BU, 0, 0x21);        // PageUp   bias +
+        RegisterHotKey(Handle, HK_TUN_BD, 0, 0x22);        // PageDown bias -
+        RegisterHotKey(Handle, HK_TUN_LU, 0, 0x24);        // Home  lock snappier
+        RegisterHotKey(Handle, HK_TUN_LD, 0, 0x23);        // End   lock smoother
     }
 
     // nudge a HUD dial by d, clamp, sync the spinner and the config
