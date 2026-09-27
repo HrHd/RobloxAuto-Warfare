@@ -1049,6 +1049,39 @@ class RobloxAuto : Form
         int maxH = Screen.PrimaryScreen.WorkingArea.Height - 40;
         if (wantH > maxH) { wantH = maxH; AutoScroll = true; }
         ClientSize = new Size(ClientSize.Width, wantH);
+
+        WireEditables(this);   // so every text box can be typed into despite WS_EX_NOACTIVATE
+    }
+
+    // A WS_EX_NOACTIVATE window never becomes the active window, so Windows never delivers keys to
+    // its children - which is why the settings text boxes could not be edited. Drop the flag and
+    // activate only while a text box is focused, then restore it on leave.
+    void WireEditables(Control root)
+    {
+        foreach (Control c in root.Controls)
+        {
+            TextBox tb = c as TextBox;
+            if (tb != null && !tb.ReadOnly)
+            {
+                tb.Enter += delegate { BeginEdit(tb); };
+                tb.MouseDown += delegate { BeginEdit(tb); };
+                tb.Leave += delegate { ApplyNoActivate(); };
+            }
+            if (c.Controls.Count > 0) WireEditables(c);
+        }
+    }
+
+    void BeginEdit(Control c)
+    {
+        try
+        {
+            int ex = GetWindowLong(Handle, GWL_EXSTYLE);
+            SetWindowLong(Handle, GWL_EXSTYLE, ex & ~WS_EX_NOACTIVATE);
+            Activate();
+            Focus();
+            if (c != null) c.Focus();
+        }
+        catch { }
     }
 
     CheckBox MkChk(Control parent, string text, int cx, int cy, bool val)
