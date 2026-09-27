@@ -148,9 +148,9 @@ class RobloxAuto : Form
     float _hudImgGain = 1f;                         // how hard the image horizon corrects the gyro (complementary)
     float _hudRollOff = 0f;                         // manual roll offset, degrees (dial "roll off")
     float _hudPitOff = 0f;                          // manual pitch offset, px (dial "pitch off")
-    float _hudLeftPx = 50f;                        // px - max horizon offset from the LEFT stick (bounded)
+    float _hudLeftPx = 0f;                         // px - max horizon offset from the LEFT stick (dial "thr pitch"); 0 = off
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff;
+    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
@@ -605,6 +605,10 @@ class RobloxAuto : Form
         numPitOff = MkTune(x + 168, y, "pitch off", (decimal)_hudPitOff, -400m, 400m, 5m, 0);
         numRollOff.ValueChanged += delegate { _hudRollOff = (float)numRollOff.Value; SaveCfg(); };
         numPitOff.ValueChanged += delegate { _hudPitOff = (float)numPitOff.Value; SaveCfg(); };
+        y += 28;
+
+        numThr = MkTune(x, y, "thr pitch", (decimal)_hudLeftPx, 0m, 120m, 2m, 0);
+        numThr.ValueChanged += delegate { _hudLeftPx = (float)numThr.Value; SaveCfg(); };
         y += 32;
 
         var l1 = new Label();
@@ -4734,6 +4738,7 @@ class RobloxAuto : Form
             else if (k == "hudImg") _hudImgGain = ParseF(v);
             else if (k == "hudRollOff") _hudRollOff = ParseF(v);
             else if (k == "hudPitOff") _hudPitOff = ParseF(v);
+            else if (k == "hudThr") _hudLeftPx = ParseF(v);
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -4800,6 +4805,7 @@ class RobloxAuto : Form
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudThr=" + _hudLeftPx.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "uav=" + (_hudStyleUav ? "1" : "0"),
             "night=" + (_nightVision ? "1" : "0"),
             "nightKey=" + _hkNightKey,
