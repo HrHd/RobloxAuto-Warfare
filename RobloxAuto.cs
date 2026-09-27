@@ -103,6 +103,7 @@ class RobloxAuto : Form
     float _hudDetRoll = 0f, _hudDetPitch = 0f;    // what DetectHorizon last measured (image-based)
     float _hudSmRoll = 0f, _hudSmPitch = 0f;      // smoothed across measurements
     bool _hudSmSeeded = false;
+    int _hudDetCount = 0;                         // door for periodic global re-acquire
     float _padLx = 0f, _padLy = 0f, _padRx = 0f, _padRy = 0f;   // sticks, -1..1, dead-zoned
     float _hudLockRoll = 0f, _hudLockPitch = 0f;  // base horizon (image-derived, corrected over time)
     float _hudCtrlRoll = 0f, _hudCtrlPitch = 0f;  // stick rotation integrated on top of the base
@@ -3489,7 +3490,7 @@ class RobloxAuto : Form
         float sy = _padRy;
 
         // controller priority: integrate the stick every frame (rate -> angle)
-        _hudFRoll += -sx * 300f * dt;   // doubled - it lagged behind the stick input
+        _hudFRoll += -sx * 220f * dt;   // came back down from 300 - it overshot the stick input
         _hudFPitch -= sy * 660f * dt;   // inverted on purpose: pitching up must move the horizon
                                         // DOWN (against the input), not with it; doubled for speed
 
@@ -4904,28 +4905,84 @@ class RobloxAuto : Form
         try
         {
             int W, H; int[] px = Grab(out W, out H);
-            int yTop = H / 10, yBot = H * 70 / 100;
+            int yTop = H / 12, yBot = H * 80 / 100;
+
+            // Sky reference = mean colour of the TOP BAND of the current frame. Sampling it per
+            // frame is what makes this survive map changes: hazy, dusk, snow and night maps all
+            // get their own reference instead of relying on a hard-coded brightness step.
+            int sr = 0, sg = 0, sb = 0, sn = 0;
+            for (int y = 4; y < H / 14; y += 2)
+                for (int x = W / 10; x < W * 9 / 10; x += 8)
+                {
+                    int c = px[y * W + x];
+                    sr += (c >> 16) & 0xFF; sg += (c >> 8) & 0xFF; sb += c & 0xFF; sn++;
+                }
+            if (sn == 0) { _hudDetValid = false; return; }
+            sr /= sn; sg /= sn; sb /= sn;
+
+            // Temporal prior: search near the last horizon, but fully re-acquire every 4th pass so
+            // a teleport/rotation/map change is picked up quickly instead of locking onto nothing.
+            _hudDetCount++;
+            bool global = (_hudDetCount % 4) == 0;
+            bool havePrior = _hudDetValid && _hudSmSeeded && !global;
+            float pm = havePrior ? (float)Math.Tan(_hudSmRoll * Math.PI / 180.0) : 0f;
+            float pb = havePrior ? (H / 2f + _hudSmPitch - 12f) - pm * (W / 2f) : 0f;
 
             int maxPts = W / 4 + 4;
             float[] pxs = new float[maxPts], pys = new float[maxPts];
             int n = 0;
-            for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)   // dense columns = accurate
+
+            // --- method A: colour boundary against the sky reference ---
+            // Walk down each column and take the first row where the next ~24px have stopped
+            // looking like sky for a sustained stretch. Requiring a RUN rejects thin trees and
+            // speckle, which is exactly what grabs the old single-edge detector.
+            for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)
             {
-                // signed step: sky is ABOVE the horizon and brighter, so look for the strongest
-                // downward brightness drop, not any edge - an arbitrary terrain edge used to win
-                // and drag the line far below the real horizon.
-                int bestY = -1, bestG = 45;
-                for (int y = yTop; y < yBot; y += 2)
+                int lo = yTop, hi = yBot;
+                if (havePrior)
                 {
-                    int c1 = px[(y - 4) * W + x], c2 = px[(y + 4) * W + x];
-                    int g1 = ((c1 >> 8) & 0xFF) + (c1 & 0xFF) + ((c1 >> 16) & 0xFF);
-                    int g2 = ((c2 >> 8) & 0xFF) + (c2 & 0xFF) + ((c2 >> 16) & 0xFF);
-                    int d = g1 - g2;
-                    if (d > bestG) { bestG = d; bestY = y; }
+                    int py = (int)(pm * x + pb);
+                    lo = Math.Max(yTop, py - 60);
+                    hi = Math.Min(yBot, py + 60);
+                    if (hi - lo < 30) { lo = yTop; hi = yBot; }   // prior too tight -> go global
+                }
+                int bestY = -1;
+                for (int y = lo; y + 24 < hi; y++)
+                {
+                    int dep = 0;
+                    for (int yy = y; yy < y + 24; yy += 3)
+                    {
+                        int c = px[yy * W + x];
+                        int dr = ((c >> 16) & 0xFF) - sr; if (dr < 0) dr = -dr;
+                        int dg = ((c >> 8) & 0xFF) - sg; if (dg < 0) dg = -dg;
+                        int db = (c & 0xFF) - sb; if (db < 0) db = -db;
+                        if (dr + dg + db > 50) dep++;
+                    }
+                    if (dep >= 6) { bestY = y; break; }
                 }
                 if (bestY >= 0) { pxs[n] = x; pys[n] = bestY; n++; }
             }
-            if (n < 60) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
+
+            // --- method B: signed brightness step - fallback when there is no usable sky (looking
+            //     straight down) or the colour split is too subtle ---
+            if (n < 40)
+            {
+                n = 0;
+                for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)
+                {
+                    int bestY = -1, bestG = 32;
+                    for (int y = yTop; y < yBot; y += 2)
+                    {
+                        int c1 = px[(y - 4) * W + x], c2 = px[(y + 4) * W + x];
+                        int g1 = ((c1 >> 8) & 0xFF) + (c1 & 0xFF) + ((c1 >> 16) & 0xFF);
+                        int g2 = ((c2 >> 8) & 0xFF) + (c2 & 0xFF) + ((c2 >> 16) & 0xFF);
+                        int d = g1 - g2;
+                        if (d > bestG) { bestG = d; bestY = y; }
+                    }
+                    if (bestY >= 0) { pxs[n] = x; pys[n] = bestY; n++; }
+                }
+            }
+            if (n < 30) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
 
             // RANSAC: a horizon is near-horizontal, so reject steep candidate lines outright
             Random rng = new Random();
@@ -4941,16 +4998,16 @@ class RobloxAuto : Form
                 float b = y1 - m * x1;
                 int inl = 0;
                 for (int i = 0; i < n; i++)
-                    if (Math.Abs(pys[i] - (m * pxs[i] + b)) < 6f) inl++;   // tighter inlier band
+                    if (Math.Abs(pys[i] - (m * pxs[i] + b)) < 8f) inl++;   // slightly looser: noisy maps
                 if (inl > bestIn) { bestIn = inl; bs = m; bi = b; }
             }
-            if (bestIn < n * 45 / 100) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
+            if (bestIn < n * 40 / 100) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
 
             // least-squares refit on the RANSAC inliers only
             float sx = 0, sy = 0, sxy = 0, sxx = 0; int k = 0;
             for (int i = 0; i < n; i++)
             {
-                if (Math.Abs(pys[i] - (bs * pxs[i] + bi)) >= 6f) continue;
+                if (Math.Abs(pys[i] - (bs * pxs[i] + bi)) >= 8f) continue;
                 sx += pxs[i]; sy += pys[i]; sxy += pxs[i] * pys[i]; sxx += pxs[i] * pxs[i]; k++;
             }
             float den = k * sxx - sx * sx;
@@ -4960,8 +5017,8 @@ class RobloxAuto : Form
             float roll = (float)(Math.Atan(slope) * 180.0 / Math.PI);
             if (roll > 45f) roll = 45f; if (roll < -45f) roll = -45f;
             float pitch = (slope * (W / 2f) + icept) - H / 2f;
-            pitch += 22f;   // bias down a touch: the strongest step is often the treetops, not the
-                            // true ground line, so sit just below them
+            pitch += 12f;   // small downward bias; the sustained-run method already sits at the
+                            // ground line rather than the treetops
             if (pitch > H / 4f) pitch = H / 4f; if (pitch < -H / 4f) pitch = -H / 4f;
             // smooth across measurements (measurements are only ~3/s, so a single noisy fit would
             // make the lock twitch) - seeded on the first good fix so it is not biased to 0
