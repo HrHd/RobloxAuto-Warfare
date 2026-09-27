@@ -4078,26 +4078,27 @@ class RobloxAuto : Form
         if (sx > -0.05f && sx < 0.05f) sx = 0f;
         if (sy > -0.05f && sy < 0.05f) sy = 0f;
 
-        // ACRO. The roll INTEGRATES the stick rate and HOLDS - letting go does NOT level the ladder
-        // back out, it stays banked exactly where you left it, like an acro drone. Centred stick
-        // simply means "no more rotation", not "return to level".
-        float vTargetRoll = -sx * _hudRollRate;    // deg/s (bank RATE)
-        float vTargetPitch = -sy * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
-        float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
-        _hudRollVel += (vTargetRoll - _hudRollVel) * av;
-        _hudPitchVel += (vTargetPitch - _hudPitchVel) * av;
-        _hudFRoll += _hudRollVel * dt;
-        _hudFPitch += _hudPitchVel * dt;
-
-        // HORIZON LOCK. The camera measurement is the absolute reference: it keeps the ladder flat on
-        // the REAL horizon (level line) and tilted to its real angle (diagonal when the ground is
-        // tilted) - the only source that works when the stick is not being moved. The stick stays the
-        // fast input; the camera is the slow truth. A fix older than 1.5s is not trusted.
-        bool det = _hudDetValid && (now - _hudDetAt) < 1500;
+        // The DETECTED horizon (gradient detector) is the reference: the ladder SMOOTHLY TRAVELS TO IT,
+        // so it reads flat when the ground line is flat and diagonal when the ground line tilts. When
+        // there is no confident fix we fall back to integrating the controller so it still moves.
+        bool det = _hudDetValid && (now - _hudDetAt) < 2000;
         if (det)
         {
-            float a = 1f - (float)Math.Pow(0.5, dt / _hudFlyTau);
-            _hudFPitch += (_hudDetPitch - _hudFPitch) * a;   // PITCH only - roll is acro (holds)
+            float tau = _hudStyleUav ? 0.25f : 0.45f;
+            float a = 1f - (float)Math.Pow(0.5, dt / tau);
+            _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
+            _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
+            _hudRollVel = 0f; _hudPitchVel = 0f;
+        }
+        else
+        {
+            float vTargetRoll = -sx * _hudRollRate;    // deg/s (bank RATE)
+            float vTargetPitch = -sy * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
+            float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
+            _hudRollVel += (vTargetRoll - _hudRollVel) * av;
+            _hudPitchVel += (vTargetPitch - _hudPitchVel) * av;
+            _hudFRoll += _hudRollVel * dt;
+            _hudFPitch += _hudPitchVel * dt;
         }
 
         // The LEFT stick (throttle) is a small, BOUNDED proportional nudge, NOT integrated. Adding
@@ -6062,64 +6063,59 @@ class RobloxAuto : Form
             int n = 0;
             bool gOk = false; float slope = 0f, icept = 0f;
 
-            // --- primary: GLOBAL line search. Score every candidate near-horizontal line by how
-            // much "sky" (close to the top-band reference) sits above it and "ground" (far from it)
-            // sits below, averaged across the whole width. Unlike a per-column threshold this stays
-            // put at low altitude, where the ground fills the view and the haze horizon is faint.
-            // Coarse sweep, then a fine sweep around the winner. ---
+            // --- primary: GLOBAL line search on the VERTICAL GRADIENT. The horizon is the strongest
+            // near-horizontal edge in the view, so we score candidate lines by the mean vertical
+            // gradient along them. This is what survives fog, where the sky and ground colours are
+            // nearly identical and the old colour-match approach just latched onto "flat" (roll 0).
+            // Coarse sweep over slope+intercept, then a fine sweep around the winner. ---
             {
-                float bestScore = 0f; int bm10 = 0, bb = 0;
-                for (int m10 = -30; m10 <= 30; m10 += 5)
+                float bestScore = 0f; float bm = 0f; int bb = H / 2;
+                for (int m100 = -70; m100 <= 70; m100 += 4)
                 {
-                    float m = m10 / 100f;
-                    for (int b = 40; b <= H - 40; b += 20)
+                    float m = m100 / 100f;
+                    for (int b = (int)(H * 0.18f); b <= (int)(H * 0.82f); b += 6)
                     {
                         float tot = 0f; int cnt = 0;
-                        for (int x = W / 12; x < W * 11 / 12; x += 40)
+                        for (int x = W / 6; x < W * 5 / 6; x += 5)
                         {
                             int yl = (int)(m * x + b);
-                            if (yl - 14 < 0 || yl + 14 >= H) continue;
-                            int above = 0, below = 0;
-                            for (int kk = 1; kk <= 14; kk++)
-                            {
-                                int c1 = px[(yl - kk) * W + x];
-                                above += Math.Abs(((c1 >> 16) & 0xFF) - sr) + Math.Abs(((c1 >> 8) & 0xFF) - sg) + Math.Abs((c1 & 0xFF) - sb);
-                                int c2 = px[(yl + kk) * W + x];
-                                below += Math.Abs(((c2 >> 16) & 0xFF) - sr) + Math.Abs(((c2 >> 8) & 0xFF) - sg) + Math.Abs((c2 & 0xFF) - sb);
-                            }
-                            tot += below - above - (above >> 2); cnt++;   // sky above weighted 1.25x (was 1.5 - locked too high)
+                            if (yl < 3 || yl >= H - 3) continue;
+                            int a = px[(yl - 2) * W + x], c = px[(yl + 2) * W + x];
+                            int gy = Math.Abs(((a >> 16) & 0xFF) - ((c >> 16) & 0xFF))
+                                   + Math.Abs(((a >> 8) & 0xFF) - ((c >> 8) & 0xFF))
+                                   + Math.Abs((a & 0xFF) - (c & 0xFF));
+                            tot += gy; cnt++;
                         }
-                        if (cnt >= 12) { float s2 = tot / cnt; if (s2 > bestScore) { bestScore = s2; bm10 = m10; bb = b; } }
+                        if (cnt < 10) continue;
+                        float s2 = tot / cnt;
+                        if (s2 > bestScore) { bestScore = s2; bm = m; bb = b; }
                     }
                 }
-                if (bestScore > 22f)
+                if (bestScore > 7f)
                 {
-                    float fm = bm10 / 100f;
-                    for (int m10 = bm10 - 4; m10 <= bm10 + 4; m10++)
+                    for (int m100 = (int)(bm * 100f) - 4; m100 <= (int)(bm * 100f) + 4; m100++)
                     {
-                        float m = m10 / 100f;
-                        for (int b = bb - 20; b <= bb + 20; b += 2)
+                        float m = m100 / 100f;
+                        for (int b = bb - 6; b <= bb + 6; b += 1)
                         {
-                            if (b < 40 || b > H - 40) continue;
+                            if (b < 3 || b > H - 3) continue;
                             float tot = 0f; int cnt = 0;
-                            for (int x = W / 12; x < W * 11 / 12; x += 16)
+                            for (int x = W / 6; x < W * 5 / 6; x += 2)
                             {
                                 int yl = (int)(m * x + b);
-                                if (yl - 14 < 0 || yl + 14 >= H) continue;
-                                int above = 0, below = 0;
-                                for (int kk = 1; kk <= 14; kk++)
-                                {
-                                    int c1 = px[(yl - kk) * W + x];
-                                    above += Math.Abs(((c1 >> 16) & 0xFF) - sr) + Math.Abs(((c1 >> 8) & 0xFF) - sg) + Math.Abs((c1 & 0xFF) - sb);
-                                    int c2 = px[(yl + kk) * W + x];
-                                    below += Math.Abs(((c2 >> 16) & 0xFF) - sr) + Math.Abs(((c2 >> 8) & 0xFF) - sg) + Math.Abs((c2 & 0xFF) - sb);
-                                }
-                                tot += below - above - (above >> 2); cnt++;   // sky above weighted 1.25x (was 1.5 - locked too high)
+                                if (yl < 3 || yl >= H - 3) continue;
+                                int a = px[(yl - 2) * W + x], c = px[(yl + 2) * W + x];
+                                int gy = Math.Abs(((a >> 16) & 0xFF) - ((c >> 16) & 0xFF))
+                                       + Math.Abs(((a >> 8) & 0xFF) - ((c >> 8) & 0xFF))
+                                       + Math.Abs((a & 0xFF) - (c & 0xFF));
+                                tot += gy; cnt++;
                             }
-                            if (cnt >= 12) { float s2 = tot / cnt; if (s2 > bestScore) { bestScore = s2; slope = m; icept = b; gOk = true; } }
+                            if (cnt < 10) continue;
+                            float s2 = tot / cnt;
+                            if (s2 > bestScore) { bestScore = s2; slope = m; icept = b; gOk = true; }
                         }
                     }
-                    if (!gOk) { slope = fm; icept = bb; gOk = true; }
+                    if (!gOk) { slope = bm; icept = bb; gOk = true; }
                 }
             }
 
