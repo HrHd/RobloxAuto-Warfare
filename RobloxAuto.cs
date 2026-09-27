@@ -4811,20 +4811,8 @@ class RobloxAuto : Form
             g.DrawLine(_p, cx, cy + 12, cx, cy + 42);
             g.DrawEllipse(_pt, cx - 3, cy - 3, 6, 6);
 
-            // compass tape, top-centre
-            int hdg;
-            if (int.TryParse(Hdg, out hdg))
-            {
-                float pxDeg = 6f;
-                for (int d = -60; d <= 60; d += 10)
-                {
-                    int deg = ((hdg + d) % 360 + 360) % 360;
-                    float x = cx + d * pxDeg;
-                    if (d == 0) { g.FillRectangle(_gb, x - 24, 18, 48, 26); g.DrawRectangle(_pt, x - 24, 18, 48, 26); }
-                    else { g.DrawLine(_pt, x, 26, x, 40); if (deg % 30 == 0) g.DrawString(deg.ToString(), _f, _g, x - 14, 44); }
-                }
-                g.DrawString(hdg + "Â°", _f, _g, cx - 18, 22);
-            }
+            // No compass tape any more - the pitch ladder's roll (the whole ladder spins about the
+            // centre from the right-stick X) is the attitude cue now.
 
             DrawLadder(g, W, cy, true, Spd);                       // speed on the left
             DrawLadder(g, W, cy, false, Alt != "" ? Alt : Agl);     // ALT on the right

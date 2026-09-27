@@ -238,25 +238,8 @@ function drawHud(s, glitching) {
   hctx.strokeStyle = thin; hctx.lineWidth = 1 * sc;
   hctx.beginPath(); hctx.arc(cx, cy, 3 * sc, 0, Math.PI * 2); hctx.stroke();
 
-  // compass tape, top-centre (current heading sits in the monitor's black box)
-  var h = parseInt(s.hdg, 10);
-  if (!isNaN(h)) {
-    for (var d2 = -60; d2 <= 60; d2 += 10) {
-      var deg = ((h + d2) % 360 + 360) % 360, x = cx + d2 * 6 * sc;
-      if (d2 === 0) {
-        hctx.fillStyle = box;
-        hctx.fillRect(x - 24 * sc, 18 * sc, 48 * sc, 26 * sc);
-        hctx.strokeStyle = thin; hctx.lineWidth = 1 * sc;
-        hctx.strokeRect(x - 24 * sc, 18 * sc, 48 * sc, 26 * sc);
-        hctx.fillStyle = col;
-        hctx.fillText(h + '\u00b0', cx - 18 * sc, 38 * sc);
-      } else {
-        hctx.strokeStyle = thin; hctx.lineWidth = 1 * sc;
-        hctx.beginPath(); hctx.moveTo(x, 26 * sc); hctx.lineTo(x, 40 * sc); hctx.stroke();
-        if (deg % 30 === 0) { hctx.fillStyle = col; hctx.fillText(deg, x - 14 * sc, 56 * sc); }
-      }
-    }
-  }
+  // No compass tape any more - the pitch ladder's roll (the whole ladder spins about the centre
+  // from the right-stick X) is the heading/attitude cue now.
 
   // speed (left) and altitude (right) ladders with a backed readout box
   function ladder(left, val) {
