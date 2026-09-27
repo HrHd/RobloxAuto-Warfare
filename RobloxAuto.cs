@@ -94,6 +94,8 @@ class RobloxAuto : Form
     string _hudHome = "----", _hudSpd = "", _hudAlt = "", _hudAgl = "", _hudHdg = "";
     float _hudRoll = 0f, _hudRollTarget = 0f;     // horizon bank, degrees (eased)
     float _hudPitch = 0f, _hudPitchTarget = 0f;   // horizon vertical offset, px (eased)
+    float _hudDetRoll = 0f, _hudDetPitch = 0f;    // what DetectHorizon last measured (image-based)
+    float _padLx = 0f, _padLy = 0f, _padRx = 0f, _padRy = 0f;   // sticks, -1..1, dead-zoned
     bool _hudStyleUav = false;                     // MAVIC gets the UAV-style layout
     FpvHudForm _hudForm = null;
     CheckBox chkHud, chkNight;
@@ -3472,6 +3474,15 @@ class RobloxAuto : Form
         }
     }
 
+    // thumbstick -> -1..1 with a dead-zone, so a resting stick is exactly 0
+    static float NormStick(short v)
+    {
+        float f = v / 32767f;
+        if (f > 1f) f = 1f; if (f < -1f) f = -1f;
+        if (Math.Abs(f) < 0.12f) return 0f;
+        return f;
+    }
+
     static bool TryPad(int idx, out XINPUT_STATE st)
     {
         st = new XINPUT_STATE();
@@ -3486,7 +3497,15 @@ class RobloxAuto : Form
         for (int i = 0; i < 4; i++)
         {
             XINPUT_STATE st;
-            if (TryPad(i, out st)) { conn = true; buttons = st.Gamepad.wButtons; break; }
+            if (TryPad(i, out st))
+            {
+                conn = true; buttons = st.Gamepad.wButtons;
+                _padLx = NormStick(st.Gamepad.lx);
+                _padLy = NormStick(st.Gamepad.ly);
+                _padRx = NormStick(st.Gamepad.rx);
+                _padRy = NormStick(st.Gamepad.ry);
+                break;
+            }
         }
 
         if (!conn)
@@ -3775,22 +3794,26 @@ class RobloxAuto : Form
         catch { }
     }
 
-    // Semi-fake RF video feed: a faint green tint with horizontal scanlines and a HOME distance
-    // readout, drawn over the game. Click-through and never focused.
+    // Fake RF video feed: TRANSLUCENT grayscale static over the game. It has to be a per-pixel
+    // alpha layered window (UpdateLayeredWindow) - a normal Form paints its own background
+    // opaque, which is exactly why the old version buried the game under near-black noise.
+    // Palette is black/white only, like a real analog feed.
     class RFOverlayForm : Form
     {
         public string Readout = "RF LINK   HOME  ----";
         public int Phase = 0;
-        public float Static = 1f;          // static level: 0.08 near HOME, 1 = full at 1.20 km
-        readonly Font _f = new Font("Consolas", 24F, FontStyle.Bold);
-        Bitmap[] _framesHi, _framesLo;
-        int _fw, _fh;
+        public float Static = 0.2f;         // 0.05 = barely any grain, 1 = heavy
+        readonly Font _f = new Font("Consolas", 22F, FontStyle.Bold);
+        Bitmap[] _frames;
+        float _baked = -1f;
+        int _bw, _bh;
 
         public RFOverlayForm()
         {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
-            DoubleBuffered = true;
-            Opacity = 0.99;   // a layered window only paints once its attributes are set
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.Manual;
+            TopMost = true;
         }
         protected override bool ShowWithoutActivation { get { return true; } }
         protected override CreateParams CreateParams
@@ -3805,67 +3828,118 @@ class RobloxAuto : Form
             }
         }
 
-        // Bake the whole look (tint + scanlines + a noise field + a rolling band) into a few
-        // full-screen frames ONCE. Each repaint is then a single unscaled blit rather than
-        // scaling a noise bitmap with a ColorMatrix and drawing hundreds of scanlines - which
-        // was the main cause of the lag. Two sets: full and degraded (no HOME).
-        Bitmap[] BuildFrames(float st)
+        // Bake 4 premultiplied grayscale noise frames. Grain alpha stays low so the game shows
+        // through; the readout and signal block are white.
+        void BuildFrames(float lvl)
         {
             int w = Width, h = Height;
+            if (w <= 0 || h <= 0) return;
             Random r = new Random();
-            int a = (int)(22 * st); if (a < 1) a = 1;
+            int aMax = (int)(8 + 46 * lvl);         // the whole point: keep this LOW
+            if (aMax < 4) aMax = 4;
             Bitmap[] fr = new Bitmap[4];
             for (int f = 0; f < 4; f++)
             {
-                Bitmap b = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                Bitmap b = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+                int[] buf = new int[w * h];
+                for (int y = 0; y < h; y++)
+                {
+                    bool scan = ((y + f) & 1) == 1;             // fine interlace lines
+                    for (int x = 0; x < w; x++)
+                    {
+                        int v = r.Next(0, 256);
+                        int a = (v * aMax) / 255;
+                        int pv = (v * a) / 255;                 // premultiplied
+                        int px = (a << 24) | (pv << 16) | (pv << 8) | pv;
+                        if (scan) px = (12 << 24);              // faint dark line
+                        buf[y * w + x] = px;
+                    }
+                }
+                System.Drawing.Imaging.BitmapData bd = b.LockBits(new Rectangle(0, 0, w, h),
+                    System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+                Marshal.Copy(buf, 0, bd.Scan0, buf.Length);
+                b.UnlockBits(bd);
+
                 using (Graphics g = Graphics.FromImage(b))
                 {
-                    g.Clear(Color.FromArgb(5, 9, 5));
-                    using (SolidBrush tb = new SolidBrush(Color.FromArgb(34, 12, 34, 16)))
-                        g.FillRectangle(tb, 0, 0, w, h);
-                    using (Pen p = new Pen(Color.FromArgb(42, 0, 0, 0), 1))
-                        for (int y = f; y < h; y += 4) g.DrawLine(p, 0, y, w, y);
-                    using (Bitmap n = new Bitmap(240, 135, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
-                    {
-                        System.Drawing.Imaging.BitmapData bd = n.LockBits(new Rectangle(0, 0, 240, 135),
-                            System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-                        int[] buf = new int[240 * 135];
-                        for (int i = 0; i < buf.Length; i++)
-                        {
-                            uint v = (uint)r.Next(0, 256);
-                            buf[i] = (int)(((uint)a << 24) | (v << 16) | (v << 8) | v);
-                        }
-                        Marshal.Copy(buf, 0, bd.Scan0, buf.Length);
-                        n.UnlockBits(bd);
-                        g.DrawImage(n, new Rectangle(0, 0, w, h), 0, 0, 240, 135, GraphicsUnit.Pixel);
-                    }
-                    using (SolidBrush bb = new SolidBrush(Color.FromArgb(30, 200, 255, 200)))
-                        g.FillRectangle(bb, 0, f * (h / 4), w, 90);
+                    SizeF sz = g.MeasureString(Readout, _f);
+                    float rx = (w - sz.Width) / 2f, ry = h - 90;
+                    using (SolidBrush fb = new SolidBrush(Color.FromArgb(235, 255, 255, 255)))
+                        g.DrawString(Readout, _f, fb, rx, ry);
+                    int bl = 210 - (f % 3) * 60;
+                    using (SolidBrush sb = new SolidBrush(Color.FromArgb(bl, 255, 255, 255)))
+                        g.FillRectangle(sb, rx + sz.Width + 16, ry + 12, 24, 24);
                 }
                 fr[f] = b;
             }
-            return fr;
+            _frames = fr;
+            _baked = lvl; _bw = w; _bh = h;
         }
 
-        protected override void OnPaint(PaintEventArgs e)
+        [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
+        [StructLayout(LayoutKind.Sequential)] struct SIZE { public int cx, cy; }
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
+        [StructLayout(LayoutKind.Sequential)] struct BMIH
         {
-            if (_fw != Width || _fh != Height) { _framesHi = _framesLo = null; _fw = Width; _fh = Height; }
-            bool hi = Static > 0.5f;
-            if (hi) { if (_framesHi == null) _framesHi = BuildFrames(1f); }
-            else { if (_framesLo == null) _framesLo = BuildFrames(0.2f); }
+            public int biSize, biWidth, biHeight;
+            public short biPlanes, biBitCount;
+            public int biCompression, biSizeImage, biXPelsPerMeter, biYPelsPerMeter, biClrUsed, biClrImportant;
+        }
+        [StructLayout(LayoutKind.Sequential)] struct BMI { public BMIH h; public int colors; }
 
-            Graphics g = e.Graphics;
-            g.DrawImage((hi ? _framesHi : _framesLo)[Phase & 3], 0, 0);
+        [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
+        [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
+        [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+        [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr o);
+        [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+        [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr o);
+        [DllImport("gdi32.dll")] static extern IntPtr CreateDIBSection(IntPtr dc, ref BMI bi, uint usage, out IntPtr bits, IntPtr sect, uint off);
+        [DllImport("user32.dll")] static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr dst, ref POINT ptDst, ref SIZE sz, IntPtr src, ref POINT ptSrc, int key, ref BLENDFUNCTION blend, int flags);
 
-            // readout + signal bar, kept out of the game's own bottom-left HUD
-            SizeF sz = g.MeasureString(Readout, _f);
-            float rx = (Width - sz.Width) / 2f, ry = Height - 96;
-            using (SolidBrush fb = new SolidBrush(Color.FromArgb(235, 170, 255, 130)))
-                g.DrawString(Readout, _f, fb, rx, ry);
-            using (SolidBrush sb = new SolidBrush(Color.FromArgb(190 - (Phase % 3) * 45, 130, 255, 140)))
-                g.FillRectangle(sb, rx + sz.Width + 18, ry + 12, 26, 26);
+        public void Render()
+        {
+            try
+            {
+                if (Width <= 0 || Height <= 0) return;
+                float bucket = (float)Math.Round(Static * 4.0) / 4f;   // only 5 strength levels, so
+                if (_frames == null || _bw != Width || _bh != Height       // we rarely re-bake
+                    || Math.Abs(_baked - bucket) > 0.01f)
+                    BuildFrames(bucket);
+                if (_frames == null) return;
+                Bitmap bmp = _frames[Phase & 3];
 
-            base.OnPaint(e);
+                IntPtr screen = GetDC(IntPtr.Zero);
+                IntPtr mem = CreateCompatibleDC(screen);
+                BMI bi = new BMI();
+                bi.h.biSize = Marshal.SizeOf(typeof(BMIH));
+                bi.h.biWidth = bmp.Width;
+                bi.h.biHeight = -bmp.Height;
+                bi.h.biPlanes = 1;
+                bi.h.biBitCount = 32;
+                IntPtr bits;
+                IntPtr dib = CreateDIBSection(mem, ref bi, 0, out bits, IntPtr.Zero, 0);
+                System.Drawing.Imaging.BitmapData bd = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height),
+                    System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+                int n = bmp.Width * bmp.Height * 4;
+                byte[] tmp = new byte[n];
+                Marshal.Copy(bd.Scan0, tmp, 0, n);
+                bmp.UnlockBits(bd);
+                Marshal.Copy(tmp, 0, bits, n);
+
+                IntPtr old = SelectObject(mem, dib);
+                POINT dst = new POINT { X = Left, Y = Top };
+                POINT src = new POINT { X = 0, Y = 0 };
+                SIZE sz = new SIZE { cx = bmp.Width, cy = bmp.Height };
+                BLENDFUNCTION blend = new BLENDFUNCTION { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = 255, AlphaFormat = 1 };
+                UpdateLayeredWindow(Handle, screen, ref dst, ref sz, mem, ref src, 0, ref blend, 2);
+
+                SelectObject(mem, old);
+                DeleteObject(dib);
+                DeleteDC(mem);
+                ReleaseDC(IntPtr.Zero, screen);
+            }
+            catch { }
         }
     }
 
@@ -3878,10 +3952,11 @@ class RobloxAuto : Form
         public bool Uav = false;
         readonly Font _f = new Font("Consolas", 12F, FontStyle.Bold);
         readonly Font _fb = new Font("Consolas", 15F, FontStyle.Bold);
-        readonly SolidBrush _g = new SolidBrush(Color.FromArgb(230, 150, 255, 170));
-        readonly SolidBrush _gb = new SolidBrush(Color.FromArgb(210, 0, 0, 0));
-        readonly Pen _p = new Pen(Color.FromArgb(215, 150, 255, 170), 2);
-        readonly Pen _pt = new Pen(Color.FromArgb(150, 150, 255, 170), 1);
+        // black/white only, like a real monochrome FPV OSD (no green tint)
+        readonly SolidBrush _g = new SolidBrush(Color.FromArgb(235, 255, 255, 255));
+        readonly SolidBrush _gb = new SolidBrush(Color.FromArgb(205, 0, 0, 0));
+        readonly Pen _p = new Pen(Color.FromArgb(230, 255, 255, 255), 2);
+        readonly Pen _pt = new Pen(Color.FromArgb(165, 230, 230, 230), 1);
 
         public FpvHudForm()
         {
@@ -4125,6 +4200,19 @@ class RobloxAuto : Form
                     if (Environment.TickCount - lastHud >= 160)
                     {
                         lastHud = Environment.TickCount;
+                        // Horizon comes from the controller: the drone OSD carries no attitude, so
+                        // bank/pitch the artificial horizon from the left stick (math), and fall
+                        // back to the image-detected horizon when the stick is centred.
+                        if (_padLx != 0f || _padLy != 0f)
+                        {
+                            _hudRollTarget = -_padLx * 35f;
+                            _hudPitchTarget = _padLy * 90f;
+                        }
+                        else
+                        {
+                            _hudRollTarget = _hudDetRoll;
+                            _hudPitchTarget = _hudDetPitch;
+                        }
                         _hudRoll += (_hudRollTarget - _hudRoll) * 0.14f;
                         _hudPitch += (_hudPitchTarget - _hudPitch) * 0.14f;
                         bool wantHud = shown && _hudOn;
@@ -4167,7 +4255,7 @@ class RobloxAuto : Form
 
             _rfBlink = new System.Windows.Forms.Timer();
             _rfBlink.Interval = 180;   // slower flicker = much less full-screen compositing
-            _rfBlink.Tick += delegate { if (_rfForm != null) { _rfForm.Phase++; _rfForm.Invalidate(); } };
+            _rfBlink.Tick += delegate { if (_rfForm != null) { _rfForm.Phase++; _rfForm.Render(); } };
             _rfBlink.Start();
             Log("RF watch started (HOME distance)");
         }
@@ -4345,8 +4433,10 @@ class RobloxAuto : Form
     string ReadHomeHud()
     {
         int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
-        List<string[]> ws = OcrMaskedRegion(30 * W / 1920, H - 120 * H / 1080,
-                                           240 * W / 1920, H - 4 * H / 1080, 3);
+        // start at the very left: the labels ("SPD"/"ALT"/"HOME") begin at the screen edge, and
+        // cropping at x=30 chopped the H of HOME off so the label never matched
+        List<string[]> ws = OcrMaskedRegion(6 * W / 1920, H - 120 * H / 1080,
+                                           260 * W / 1920, H - 4 * H / 1080, 4);
         if (ws == null) return null;
         return HomeFromHud(ws, 1);
     }
@@ -4358,8 +4448,8 @@ class RobloxAuto : Form
         try
         {
             int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
-            List<string[]> bot = OcrMaskedRegion(30 * W / 1920, H - 120 * H / 1080,
-                                                 240 * W / 1920, H - 4 * H / 1080, 3);
+            List<string[]> bot = OcrMaskedRegion(6 * W / 1920, H - 120 * H / 1080,
+                                                 260 * W / 1920, H - 4 * H / 1080, 4);
             string home = bot != null ? HomeFromHud(bot, 1) : null;
             _hudHome = home != null ? home : "----";
             if (bot != null)
@@ -4445,7 +4535,7 @@ class RobloxAuto : Form
                 }
                 if (bestY >= 0) { sx += x; sy += bestY; sxy += (float)x * bestY; sxx += (float)x * x; n++; sumG += bestG; }
             }
-            if (n < 30 || sumG / n < 90) { _hudRollTarget = 0f; _hudPitchTarget = 0f; return; }
+            if (n < 30 || sumG / n < 90) { _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
             float denom = n * sxx - sx * sx;
             if (Math.Abs(denom) < 1f) return;
             float slope = (n * sxy - sx * sy) / denom;
@@ -4454,8 +4544,8 @@ class RobloxAuto : Form
             if (roll > 40f) roll = 40f; if (roll < -40f) roll = -40f;
             float pitch = (slope * (W / 2f) + icept) - H / 2f;
             if (pitch > H / 5f) pitch = H / 5f; if (pitch < -H / 5f) pitch = -H / 5f;
-            _hudRollTarget = roll;
-            _hudPitchTarget = pitch;
+            _hudDetRoll = roll;
+            _hudDetPitch = pitch;
         }
         catch { }
     }
@@ -4511,15 +4601,15 @@ class RobloxAuto : Form
         }
         if (hx < 0)
         {
-            // the HOME word was not read - fall back to its fixed row (3rd of SPD/ALT/HOME/V-S)
-            List<int> ys = new List<int>();
-            foreach (string[] w in ws) { int wy; try { wy = int.Parse(w[1]); } catch { continue; } ys.Add(wy); }
-            ys.Sort();
-            List<int> rows = new List<int>();
-            foreach (int ry in ys)
-                if (rows.Count == 0 || ry - rows[rows.Count - 1] > 10 * scale) rows.Add(ry);
-            if (rows.Count < 3) return null;
-            hy = rows[2];
+            // The HOME word was missed. Do NOT just take "the 3rd row" - if the rows are grouped
+            // wrongly that is the ALT or SPD number, which is exactly the long-range false-flag.
+            // Instead locate HOME as the line BETWEEN the ALT and V/S labels; without both of
+            // those we refuse to guess at all.
+            int altY = LabelY(ws, "ALT");
+            int vsY = LabelY(ws, "V/S");
+            if (vsY == 0) vsY = LabelY(ws, "VS");
+            if (altY <= 0 || vsY <= altY) { Log("   HOME: no label and no ALT/V-S anchors - skipping"); return null; }
+            hy = (altY + vsY) / 2;
             hx = 0;
         }
 
@@ -4536,7 +4626,27 @@ class RobloxAuto : Form
             best = n;
             if (t.IndexOf('.') >= 0) break;
         }
-        return best == null ? null : best + " m";
+        if (best == null) return null;
+
+        // sanity: HOME is a small non-negative distance. A big or negative number means we grabbed
+        // something else on the screen, so drop it rather than show a false distance.
+        float v;
+        if (!float.TryParse(best, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out v)) return null;
+        if (v < 0f || v > 3000f) { Log("   HOME: rejected implausible value " + best); return null; }
+        return best + " m";
+    }
+
+    // y of the first word matching a label ("ALT", "V/S", ...), or 0 when it is not on screen
+    static int LabelY(List<string[]> ws, string label)
+    {
+        foreach (string[] w in ws)
+        {
+            string t = (w[4] ?? "").ToUpperInvariant();
+            if (t.IndexOf(label) >= 0 || SimPct(t, label) >= 65)
+            { try { return int.Parse(w[1]); } catch { } }
+        }
+        return 0;
     }
 
     string FindHomeIn(List<string[]> ws)
@@ -4958,6 +5068,7 @@ class RobloxAuto : Form
         Application.Run(new RobloxAuto());
     }
 }
+
 
 
 

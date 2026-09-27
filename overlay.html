@@ -18,7 +18,7 @@
   #fill { height:100%; width:0%; background:#5aff78; transition:width .12s linear; }
   #plabel { position:absolute; left:56px; bottom:100px; font-size:30px; }
   #home { position:absolute; right:56px; bottom:60px; font-size:36px; font-weight:bold;
-          color:#8cff9c; text-shadow:0 0 8px #000; display:none; }
+          color:#fff; text-shadow:0 0 8px #000; display:none; }
 </style>
 </head>
 <body>
@@ -62,7 +62,7 @@ function drawHud(s) {
   if (!s.hud) { hc.style.display = 'none'; return; }
   hc.style.display = 'block';
 
-  var col = 'rgba(150,255,170,0.92)';
+  var col = 'rgba(255,255,255,0.92)';
   hctx.strokeStyle = col;
   hctx.fillStyle = col;
   hctx.lineWidth = 2;
@@ -116,7 +116,7 @@ function drawHud(s) {
       var bx = left ? lx - w + 18 : lx - 18;
       hctx.fillStyle = 'rgba(0,0,0,0.55)';
       hctx.fillRect(bx, cy - 13, w, 26);
-      hctx.strokeStyle = 'rgba(150,255,170,0.6)';
+      hctx.strokeStyle = 'rgba(255,255,255,0.6)';
       hctx.strokeRect(bx, cy - 13, w, 26);
       hctx.fillStyle = col;
       hctx.fillText(val, bx + 9, cy + 6);
@@ -153,7 +153,7 @@ function tick() {
 
     // RF static while flying: intensity follows the HOME distance (fullest at 1.20 km)
     nc.style.display = s.flight ? 'block' : 'none';
-    nc.style.opacity = s.flight ? (s.level || 0) : 0;
+    nc.style.opacity = s.flight ? Math.min(0.35, (s.level || 0) * 0.35) : 0;
 
     drawHud(s);
 
@@ -166,3 +166,5 @@ tick();
 </script>
 </body>
 </html>
+
+
