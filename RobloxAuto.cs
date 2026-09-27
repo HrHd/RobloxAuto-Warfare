@@ -4939,39 +4939,67 @@ class RobloxAuto : Form
             float[] pxs = new float[maxPts], pys = new float[maxPts];
             int n = 0;
 
-            // --- method A: colour boundary against the sky reference ---
-            // Walk down each column and take the first row where the next ~24px have stopped
-            // looking like sky for a sustained stretch. Requiring a RUN rejects thin trees and
-            // speckle, which is exactly what grabs the old single-edge detector.
+            // --- method 1 (primary): GREEN dominance step ---
+            // Ground is always greener than sky, even through haze, so track (G-B): walk each column
+            // down and take the TOPMOST row where the band below is clearly greener than the band
+            // above. Topmost = the real sky/ground line, so a field boundary further down can never
+            // win. This is what fixes the "line sits too low / tilted" case on grassy maps.
             for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)
             {
-                int lo = yTop, hi = yBot;
+                int lo = yTop + 8, hi = yBot;
                 if (havePrior)
                 {
                     int py = (int)(pm * x + pb);
-                    lo = Math.Max(yTop, py - 60);
+                    lo = Math.Max(yTop + 8, py - 60);
                     hi = Math.Min(yBot, py + 60);
-                    if (hi - lo < 30) { lo = yTop; hi = yBot; }   // prior too tight -> go global
+                    if (hi - lo < 30) { lo = yTop + 8; hi = yBot; }
                 }
-                int bestY = -1;
-                for (int y = lo; y + 24 < hi; y++)
+                for (int y = lo; y + 24 < hi; y += 2)
                 {
-                    int dep = 0;
-                    for (int yy = y; yy < y + 24; yy += 3)
-                    {
-                        int c = px[yy * W + x];
-                        int dr = ((c >> 16) & 0xFF) - sr; if (dr < 0) dr = -dr;
-                        int dg = ((c >> 8) & 0xFF) - sg; if (dg < 0) dg = -dg;
-                        int db = (c & 0xFF) - sb; if (db < 0) db = -db;
-                        if (dr + dg + db > 50) dep++;
-                    }
-                    if (dep >= 6) { bestY = y; break; }
+                    int above = 0, below = 0;
+                    for (int k = 1; k <= 8; k++) { int c = px[(y - k) * W + x]; above += ((c >> 8) & 0xFF) - (c & 0xFF); }
+                    for (int k = 0; k < 8; k++) { int c = px[(y + k) * W + x]; below += ((c >> 8) & 0xFF) - (c & 0xFF); }
+                    if (below - above > 100) { pxs[n] = x; pys[n] = y; n++; break; }
                 }
-                if (bestY >= 0) { pxs[n] = x; pys[n] = bestY; n++; }
             }
 
-            // --- method B: signed brightness step - fallback when there is no usable sky (looking
-            //     straight down) or the colour split is too subtle ---
+            // --- method A (fallback): colour boundary against the sampled sky reference ---
+            // Walk down each column and take the first row where the next ~24px have stopped
+            // looking like sky for a sustained stretch. Requiring a RUN rejects thin trees and
+            // speckle, which is exactly what grabs the old single-edge detector.
+            if (n < 40)
+            {
+                n = 0;
+                for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)
+                {
+                    int lo = yTop, hi = yBot;
+                    if (havePrior)
+                    {
+                        int py = (int)(pm * x + pb);
+                        lo = Math.Max(yTop, py - 60);
+                        hi = Math.Min(yBot, py + 60);
+                        if (hi - lo < 30) { lo = yTop; hi = yBot; }   // prior too tight -> go global
+                    }
+                    int bestY = -1;
+                    for (int y = lo; y + 24 < hi; y++)
+                    {
+                        int dep = 0;
+                        for (int yy = y; yy < y + 24; yy += 3)
+                        {
+                            int c = px[yy * W + x];
+                            int dr = ((c >> 16) & 0xFF) - sr; if (dr < 0) dr = -dr;
+                            int dg = ((c >> 8) & 0xFF) - sg; if (dg < 0) dg = -dg;
+                            int db = (c & 0xFF) - sb; if (db < 0) db = -db;
+                            if (dr + dg + db > 50) dep++;
+                        }
+                        if (dep >= 6) { bestY = y; break; }
+                    }
+                    if (bestY >= 0) { pxs[n] = x; pys[n] = bestY; n++; }
+                }
+            }
+
+            // --- method B (fallback): signed brightness step - no usable sky (looking straight
+            //     down) or the colour split is too subtle ---
             if (n < 40)
             {
                 n = 0;
@@ -5021,21 +5049,49 @@ class RobloxAuto : Form
             }
 
             // least-squares refit on the RANSAC inliers only
-            float sx = 0, sy = 0, sxy = 0, sxx = 0; int k = 0;
+            float sx = 0, sy = 0, sxy = 0, sxx = 0; int ck = 0;
             for (int i = 0; i < n; i++)
             {
                 if (Math.Abs(pys[i] - (bs * pxs[i] + bi)) >= 8f) continue;
-                sx += pxs[i]; sy += pys[i]; sxy += pxs[i] * pys[i]; sxx += pxs[i] * pxs[i]; k++;
+                sx += pxs[i]; sy += pys[i]; sxy += pxs[i] * pys[i]; sxx += pxs[i] * pxs[i]; ck++;
             }
-            float den = k * sxx - sx * sx;
-            if (k < 20 || Math.Abs(den) < 1f) { _hudDetValid = false; return; }
-            float slope = (k * sxy - sx * sy) / den;
-            float icept = (sy - slope * sx) / k;
+            float den = ck * sxx - sx * sx;
+            if (ck < 20 || Math.Abs(den) < 1f) { _hudDetValid = false; return; }
+            float slope = (ck * sxy - sx * sy) / den;
+            float icept = (sy - slope * sx) / ck;
+
+            // --- refinement: re-find each column's edge within +-20px of that first fit at 1px
+            //     resolution and refit. The coarse pass used 2px rows and a 100-point threshold,
+            //     which biases the line; this tightens it onto the actual edge. ---
+            float rsx = 0, rsy = 0, rsxy = 0, rsxx = 0; int rk = 0;
+            for (int x = W / 12; x < W * 11 / 12; x += 2)
+            {
+                int cy = (int)(slope * x + icept);
+                int lo = cy - 20, hi = cy + 20;
+                if (lo < yTop + 8) lo = yTop + 8;
+                if (hi > yBot - 24) hi = yBot - 24;
+                for (int y = lo; y <= hi; y++)
+                {
+                    int above = 0, below = 0;
+                    for (int kk = 1; kk <= 8; kk++) { int c = px[(y - kk) * W + x]; above += ((c >> 8) & 0xFF) - (c & 0xFF); }
+                    for (int kk = 0; kk < 8; kk++) { int c = px[(y + kk) * W + x]; below += ((c >> 8) & 0xFF) - (c & 0xFF); }
+                    if (below - above > 100) { rsx += x; rsy += y; rsxy += x * y; rsxx += x * x; rk++; break; }
+                }
+            }
+            if (rk >= 40)
+            {
+                float rden = rk * rsxx - rsx * rsx;
+                if (Math.Abs(rden) > 1f)
+                {
+                    slope = (rk * rsxy - rsx * rsy) / rden;
+                    icept = (rsy - slope * rsx) / rk;
+                }
+            }
+
             float roll = (float)(Math.Atan(slope) * 180.0 / Math.PI);
             if (roll > 45f) roll = 45f; if (roll < -45f) roll = -45f;
             float pitch = (slope * (W / 2f) + icept) - H / 2f;
-            pitch += 12f;   // small downward bias; the sustained-run method already sits at the
-                            // ground line rather than the treetops
+            pitch += 6f;   // small downward bias only; the green step sits on the true horizon
             if (pitch > H / 4f) pitch = H / 4f; if (pitch < -H / 4f) pitch = -H / 4f;
             // smooth across measurements (measurements are only ~3/s, so a single noisy fit would
             // make the lock twitch) - seeded on the first good fix so it is not biased to 0
