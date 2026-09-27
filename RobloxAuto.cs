@@ -2737,14 +2737,61 @@ class RobloxAuto : Form
 
         int colStep = (int)(106 * sc), rowStep = (int)(52 * sc);
         int col0 = ax - colStep;
-        int row0 = ay + (int)((85 + _whRowNudge) * sc);
+
+        // Auto-fit the vertical offset: the cells are dark boxes (the selected one is green), so
+        // slide the grid down and keep the offset that lands on the most cell-coloured patches.
+        // This absorbs whatever the game's panel spacing really is at this resolution, instead of
+        // trusting a single hard-coded number.
+        int W, H; int[] px = Grab(out W, out H);
+        int baseOff = 85 + _whRowNudge;
+        int bestOff = baseOff, bestHits = -1;
+        for (int off = 55; off <= 140; off += 5)
+        {
+            int hits = 0;
+            for (int r = 0; r < 2; r++)
+                for (int c = 0; c < 3; c++)
+                {
+                    if (r * 3 + c >= count) continue;
+                    int cx = col0 + c * colStep;
+                    int cy = ay + (int)((off + r * 52) * sc);
+                    if (LooksLikeCell(px, W, H, cx, cy)) hits++;
+                }
+            if (hits > bestHits || (hits == bestHits && Math.Abs(off - baseOff) < Math.Abs(bestOff - baseOff)))
+            { bestHits = hits; bestOff = off; }
+        }
+        int row0 = ay + (int)(bestOff * sc);
+
         List<Point> grid = new List<Point>();
         for (int r = 0; grid.Count < count && r < 8; r++)
             for (int c = 0; c < 3 && grid.Count < count; c++)
                 grid.Add(new Point(col0 + c * colStep, row0 + r * rowStep));
-        Log("   warhead grid anchored to Deploy As Drone (" + ax + "," + ay + "): first cell (" +
-            col0 + "," + row0 + "), step " + colStep + "x" + rowStep + ", nudge " + _whRowNudge);
+        Log("   warhead grid under Deploy As Drone (" + ax + "," + ay + "): fitted offset " + bestOff +
+            " (cell hits " + bestHits + "/" + count + "), col0 " + col0 + ", step " + colStep + "x" + rowStep);
         return grid;
+    }
+
+    // Does a small patch centred at (x,y) look like a warhead cell? Unselected cells are dark,
+    // low-saturation boxes; the selected one is green. Used to auto-fit the grid's y position.
+    bool LooksLikeCell(int[] px, int W, int H, int x, int y)
+    {
+        int cell = 0, n = 0;
+        int[] dxs = new int[] { -30, 0, 30 };
+        int[] dys = new int[] { -12, 0, 12 };
+        foreach (int dy in dys)
+            foreach (int dx in dxs)
+            {
+                int xx = x + dx, yy = y + dy;
+                if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+                int v = px[yy * W + xx];
+                int b = v & 0xFF, g = (v >> 8) & 0xFF, r = (v >> 16) & 0xFF;
+                int mx = Math.Max(r, Math.Max(g, b)), mn = Math.Min(r, Math.Min(g, b));
+                int lum = (r * 299 + g * 587 + b * 114) / 1000;
+                bool green = (g - r) >= 12 && (g - b) >= 12 && g >= 70;
+                bool dark = lum < 100 && (mx - mn) <= 45;
+                if (green || dark) cell++;
+                n++;
+            }
+        return n > 0 && cell * 2 >= n;
     }
 
     // Find the "Deploy As Drone" button (the lowest match, so the nav-bar DEPLOY is ignored) and
