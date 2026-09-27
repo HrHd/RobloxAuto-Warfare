@@ -5176,8 +5176,9 @@ class RobloxAuto : Form
                         txt = "RF LINK   HOME  " + (dh != null ? dh : "----");
                     }
 
-                    // ---- slower path, every ~1.5s ----
-                    if (Environment.TickCount - lastOcr >= 1500)
+                    // ---- screen classification, ~1x/s (was 1.5s: menus/joins are short, so check
+                    // more often - a clean menu now drops the HUD on the first read) ----
+                    if (Environment.TickCount - lastOcr >= 1000)
                     {
                         lastOcr = Environment.TickCount;
 
@@ -5236,7 +5237,12 @@ class RobloxAuto : Form
                                 shown = true;
                                 Log("   RF feed: overlay on" + (droneEv ? " (drone OSD)" : " (no menu detected)"));
                             }
-                            if (shown && outHits >= 2)
+                            // A CLEAN menu (no drone text anywhere on screen) drops the HUD on the
+                            // FIRST read, so short screens like "Joining server" and team select do
+                            // not keep it up for the debounce. If the frame also shows drone text
+                            // (contradictory), take two reads so one bad OCR frame cannot blink it.
+                            int needOut = droneEv ? 2 : 1;
+                            if (shown && outHits >= needOut)
                             {
                                 shown = false;
                                 Log("   menu on screen - overlay off (" + (why == "" ? "screen name" : why) + ")");
@@ -5448,7 +5454,7 @@ class RobloxAuto : Form
             "CAPTURE", "CONTROL", "ELIMINATE", "TOP KILLS", "COMPLETED",
             // team select / respawn / loading / crash (these screens have NO nav bar, which is why
             // the HUD used to linger on them)
-            "PLAYERS", "JOINING", "RESPAWN", "SPECTAT", "DEPLOYING", "SIGNAL",
+            "PLAYERS", "JOINING", "JOIN", "SERVER", "CONNECTING", "RESPAWN", "SPECTAT", "DEPLOYING",
             // the persistent SQUAD box
             "SQUAD", "GHILLE", "JOIN OR CREATE"
         };
