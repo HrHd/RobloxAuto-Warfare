@@ -1413,6 +1413,7 @@ class RobloxAuto : Form
         // recovery that resumes where it left off instead of the bar jumping back to zero.
         if (g > 1) AddBlackError("0x1B", "AUTO restart - re-syncing uplink");
         else if (_flowPct >= 0.99f) _flowPct = 0f;
+        OverlayHub.I.SetMission(_team, _drone, _bomb);
         Log((g > 1 ? "=== AUTO RESTART" : "=== AUTO") + "   team " + _team + " | drone " + _drone +
             " | bomb " + _bomb + " | as drone " + _asDrone + " ===");
 
@@ -4074,7 +4075,7 @@ class RobloxAuto : Form
         Log("ready.  " + ((Keys)_hkRejoinKey) + " = rejoin,  F5 = AUTO RUN,  " + ((Keys)_hkNightKey) + " = night vision.");
         if (_placeId != "") Log("server ready: " + _serverId);
         else Log("no server detected yet - launch Roblox once, then Refresh");
-        try { OverlayHub.I.Start(_appDir); Log("OBS overlay: add a Browser Source -> http://localhost:8730/"); } catch { }
+        try { OverlayHub.I.SetMission(_team, _drone, _bomb); OverlayHub.I.Start(_appDir); Log("OBS overlay: add a Browser Source -> http://localhost:8730/"); } catch { }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -5795,6 +5796,7 @@ class RobloxAuto : Form
         readonly List<string[]> _lines = new List<string[]>();
         float _progress = 0f, _target = 0f;
         string _label = "", _home = "";
+        string _team = "", _drone = "", _bomb = "";
         bool _active = false;
         bool _flight = false;            // drone deployed - show RF static in the stream overlay
         float _level = 0f;               // static intensity, based on time since deploy
@@ -5832,6 +5834,7 @@ class RobloxAuto : Form
         public void AddLine(string text, string status) { lock (_lock) _lines.Add(new string[] { text, status ?? "" }); }
         public void SetProgress(float pct, string label) { lock (_lock) { _target = pct; _label = label ?? ""; } }
         public void SetHome(string h) { lock (_lock) _home = h ?? ""; }
+        public void SetMission(string team, string drone, string bomb) { lock (_lock) { _team = team ?? ""; _drone = drone ?? ""; _bomb = bomb ?? ""; } }
         public void SetFlight(bool f, float level, int secs) { lock (_lock) { _flight = f; _level = level; _secs = secs; } }
         public void SetHud(bool on, string hdg, string spd, string agl, float roll, float pit, bool uav)
         { lock (_lock) { _hud = on; _hdg = hdg ?? ""; _spd = spd ?? ""; _agl = agl ?? ""; _roll = roll; _pit = pit; _uav = uav; } }
@@ -5856,6 +5859,9 @@ class RobloxAuto : Form
                     sb.Append(",\"progress\":").Append(_progress.ToString("0.###"));
                     sb.Append(",\"label\":\"").Append(Esc(_label)).Append("\"");
                     sb.Append(",\"home\":\"").Append(Esc(_home)).Append("\"");
+                    sb.Append(",\"team\":\"").Append(Esc(_team)).Append("\"");
+                    sb.Append(",\"drone\":\"").Append(Esc(_drone)).Append("\"");
+                    sb.Append(",\"bomb\":\"").Append(Esc(_bomb)).Append("\"");
                     sb.Append(",\"flight\":").Append(_flight ? "true" : "false");
                     sb.Append(",\"level\":").Append(_level.ToString("0.###"));
                     sb.Append(",\"secs\":").Append(_secs);

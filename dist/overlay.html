@@ -15,7 +15,10 @@
   #title { position:absolute; left:56px; top:20px; font-size:24px; font-weight:bold;
            letter-spacing:3px; color:#c8ffd6; }
   #title .dim { color:#5aff78; opacity:.6; font-weight:normal; letter-spacing:1px; }
-  #log  { position:absolute; left:56px; top:66px; font-size:26px; line-height:38px; white-space:pre; }
+  #mission { position:absolute; left:56px; top:54px; font-size:19px; letter-spacing:2px;
+             color:#7aff92; opacity:.85; }
+  #mission .sep { color:#3f9c52; }
+  #log  { position:absolute; left:56px; top:104px; font-size:26px; line-height:38px; white-space:pre; }
   .ok   { color:#5aff78; }
   .bad  { color:#ff5050; }
   .cur  { animation: blink 1s steps(1) infinite; }
@@ -34,6 +37,7 @@
   <div id="bg"></div>
   <div id="wrap">
     <div id="title">BF-DRONE LINK <span class="dim">// SECURE RF UPLINK</span></div>
+    <div id="mission"></div>
     <div id="log"></div>
     <div id="bar"><div id="fill"></div></div>
     <div id="plabel"></div>
@@ -303,6 +307,16 @@ function tick() {
     wrap.style.display = cli ? 'block' : 'none';
     bg.style.display   = cli ? 'block' : 'none';
 
+    // live mission header: what the tool is actually deploying right now (fed from settings)
+    var seg = [];
+    if (s.team && s.team !== '(none)') seg.push('TEAM ' + String(s.team).toUpperCase());
+    if (s.drone && s.drone !== '(none)') seg.push('AIRFRAME ' + String(s.drone).toUpperCase());
+    if (s.bomb && s.bomb !== '(none)') seg.push('PAYLOAD ' + String(s.bomb).toUpperCase());
+    var mode = s.hud ? (s.uav ? 'UAV LINK ACTIVE' : 'FPV LINK ACTIVE')
+                     : (s.active ? 'UPLINK SYNC' : 'STANDBY');
+    seg.push(mode);
+    document.getElementById('mission').innerHTML = seg.join(' <span class="sep">|</span> ');
+
     var lines = s.lines || [];
     // type out a line that starts with "> " (a console command) the moment it appears
     var lastText = lines.length ? lines[lines.length - 1][0] : '';
@@ -313,7 +327,7 @@ function tick() {
     var cursor = '<span style="visibility:' + ((now % 1000) < 500 ? 'visible' : 'hidden') + '">_</span>';
 
     // only show as many lines as fit above the progress bar, so the terminal never overflows
-    var maxLines = Math.max(6, Math.floor((hc.height - 66 - 240) / 38));
+    var maxLines = Math.max(6, Math.floor((hc.height - 104 - 240) / 38));
     var first = Math.max(0, lines.length - maxLines);
     var h = '';
     for (var i = first; i < lines.length; i++) {
@@ -329,7 +343,7 @@ function tick() {
     var pctv = Math.round(s.progress * 100);
     document.getElementById('fill').style.width = pctv + '%';
     document.getElementById('plabel').textContent =
-      pctv + '%   ' + (s.label || (pctv >= 100 ? 'online' : 'connecting'));
+      pctv + '%   ' + String(s.label || (pctv >= 100 ? 'online' : 'standby')).toUpperCase();
 
     // FPV RF static: eased back from the doubled setting so it is not harsh to watch, with only
     // a small lift during a glitch. MAVIC sends level 0 and never glitches - clean HD feed.
