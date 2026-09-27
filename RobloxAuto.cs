@@ -4067,6 +4067,14 @@ class RobloxAuto : Form
         // ladder - moving the left stick right/left should not affect the horizon at all.
         float sx = _padRx;
         float sy = _padRy;
+        // Prefer the stick values the joystick app feeds us (it reads the real controller) when our
+        // own XInput read is missing or weaker - that was the "stick reads 0" problem.
+        float appLx, appLy, appRx, appRy;
+        if (OverlayHub.I.AppPad(out appLx, out appLy, out appRx, out appRy))
+        {
+            if (Math.Abs(appRx) > Math.Abs(sx)) sx = appRx;
+            if (Math.Abs(appRy) > Math.Abs(sy)) sy = appRy;
+        }
         if (sx > -0.05f && sx < 0.05f) sx = 0f;
         if (sy > -0.05f && sy < 0.05f) sy = 0f;
 
@@ -6414,6 +6422,8 @@ class RobloxAuto : Form
         bool _uav = false;
         float _v1 = 0f, _v2 = 0f;
         float _plx = 0f, _ply = 0f, _prx = 0f, _pry = 0f;   // live stick values (diagnostics)
+        float _alx = 0f, _aly = 0f, _arx = 0f, _ary = 0f;   // stick values fed by the joystick app
+        long _aPadAt = 0;
         System.Net.HttpListener _lis;
         System.Windows.Forms.Timer _tick;
         string _dir = "";
@@ -6446,6 +6456,17 @@ class RobloxAuto : Form
         public void SetMission(string team, string drone, string bomb) { lock (_lock) { _team = team ?? ""; _drone = drone ?? ""; _bomb = bomb ?? ""; } }
         public void SetFlight(bool f, float level, int secs) { lock (_lock) { _flight = f; _level = level; _secs = secs; } }
         public void SetPad(float lx, float ly, float rx, float ry) { lock (_lock) { _plx = lx; _ply = ly; _prx = rx; _pry = ry; } }
+        public void SetAppPad(float lx, float ly, float rx, float ry)
+        { lock (_lock) { _alx = lx; _aly = ly; _arx = rx; _ary = ry; _aPadAt = Environment.TickCount; } }
+        // The joystick app's stick values, if it is running and fresh (< 0.6s old).
+        public bool AppPad(out float lx, out float ly, out float rx, out float ry)
+        {
+            lock (_lock)
+            {
+                lx = _alx; ly = _aly; rx = _arx; ry = _ary;
+                return _aPadAt != 0 && Environment.TickCount - _aPadAt < 600;
+            }
+        }
         public void SetHud(bool on, string hdg, string spd, string agl, float roll, float pit, bool uav, float v1, float v2)
         { lock (_lock) { _hud = on; _hdg = hdg ?? ""; _spd = spd ?? ""; _agl = agl ?? ""; _roll = roll; _pit = pit; _uav = uav; _v1 = v1; _v2 = v2; } }
         void Step() { lock (_lock) { _progress += (_target - _progress) * 0.12f; if (Math.Abs(_target - _progress) < 0.002f) _progress = _target; } }
@@ -6498,6 +6519,29 @@ class RobloxAuto : Form
                 }
                 body = sb.ToString(); ctype = "application/json";
                 try { c.Response.Headers.Add("Access-Control-Allow-Origin", "*"); } catch { }
+            }
+            else if (path == "/pad")
+            {
+                // the joystick app pushes its mapped stick values here (lx/ly/rx/ry) so the HUD has a
+                // reliable input even when our own XInput read misses the pad
+                try
+                {
+                    string q = c.Request.Url.Query;
+                    float lx = 0f, ly = 0f, rx = 0f, ry = 0f;
+                    foreach (string kv in q.TrimStart('?').Split('&'))
+                    {
+                        int e = kv.IndexOf('=');
+                        if (e <= 0) continue;
+                        string k = kv.Substring(0, e);
+                        float f;
+                        if (!float.TryParse(kv.Substring(e + 1), System.Globalization.NumberStyles.Float,
+                                            System.Globalization.CultureInfo.InvariantCulture, out f)) continue;
+                        if (k == "lx") lx = f; else if (k == "ly") ly = f; else if (k == "rx") rx = f; else if (k == "ry") ry = f;
+                    }
+                    SetAppPad(lx, ly, rx, ry);
+                }
+                catch { }
+                body = "ok"; ctype = "text/plain";
             }
             else
             {
