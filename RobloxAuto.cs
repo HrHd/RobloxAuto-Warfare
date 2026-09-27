@@ -72,7 +72,7 @@ class RobloxAuto : Form
 
     // ================= ui =================
     TextBox txtServer, txtLog;
-    Button btnRejoin, btnRefresh, btnAuto, btnSetKey, btnStop, btnOpenLog, btnHighPrio, btnSetNight;
+    Button btnRejoin, btnReconnect, btnRefresh, btnAuto, btnSetKey, btnStop, btnOpenLog, btnHighPrio, btnSetNight;
     Label lblKeyVal, lblNightVal;
     bool _capturingKey = false;
     ComboBox cmbTeam, cmbDrone, cmbBomb, cmbPadRejoin, cmbPadAuto, cmbPadStop, cmbPadLand, cmbPadReconnect;
@@ -569,9 +569,21 @@ class RobloxAuto : Form
         btnRejoin.BackColor = Color.FromArgb(32, 140, 72);
         btnRejoin.ForeColor = Color.White;
         btnRejoin.FlatStyle = FlatStyle.Flat;
-        btnRejoin.SetBounds(x, y, w, 48);
+        btnRejoin.SetBounds(x, y, w - 132, 48);
         btnRejoin.Click += delegate { Rejoin("button"); };
         Controls.Add(btnRejoin);
+
+        // straight reconnect: relaunch into the same server immediately, no LAND NOW / no hold -
+        // this is the "I am done with the MAVIC, take me back" button
+        btnReconnect = new Button();
+        btnReconnect.Text = "RECONNECT";
+        btnReconnect.Font = new Font("Segoe UI", 11F, FontStyle.Bold);
+        btnReconnect.BackColor = Color.FromArgb(40, 92, 168);
+        btnReconnect.ForeColor = Color.White;
+        btnReconnect.FlatStyle = FlatStyle.Flat;
+        btnReconnect.SetBounds(x + w - 126, y, 126, 48);
+        btnReconnect.Click += delegate { Rejoin("panel RECONNECT", false); };
+        Controls.Add(btnReconnect);
         y += 54;
 
         // run the whole AUTO macro automatically a while after a rejoin - useful when the
