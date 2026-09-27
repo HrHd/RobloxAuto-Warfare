@@ -30,6 +30,12 @@ class RobloxAuto : Form
     string _bomb = "(none)";     // warhead chosen on the Team Base panel
     bool _asDrone = true;
 
+    // ---- favourite setups: one MAVIC, one FPV. Toggle with F7 or the controller button. ----
+    string _favMTeam = "Red", _favMDrone = "MAVIC", _favMBomb = "(none)"; bool _favMAsDrone = true;
+    string _favFTeam = "Red", _favFDrone = "FPV", _favFBomb = "Light Rocket"; bool _favFAsDrone = true;
+    string _activeFav = "FPV";       // which of the two is currently live
+    bool _swapRunsAuto = true;       // after a swap, kick off AUTO so it picks up the other drone
+
     uint _hkRejoinKey = 0x77;   // F8
     uint _hkAutoKey = 0x74;     // F5
     uint _hkNightKey = 0x76;    // F7 - toggles night vision
@@ -69,6 +75,8 @@ class RobloxAuto : Form
     bool _padStopWasDown = false;
     bool _padLandWasDown = false;
     bool _padReconnectWasDown = false;
+    bool _padSwapWasDown = false;
+    bool _padSwapOn = false; string _padSwap = "B";
     ushort _lastButtons = 0;
 
     // ================= ui =================
@@ -77,6 +85,7 @@ class RobloxAuto : Form
     Label lblKeyVal, lblNightVal;
     bool _capturingKey = false;
     ComboBox cmbTeam, cmbDrone, cmbBomb, cmbPadRejoin, cmbPadAuto, cmbPadStop, cmbPadLand, cmbPadReconnect;
+    ComboBox cmbPadSwap; CheckBox chkPadSwap, chkSwapRun; Button btnSwap; Label lblActiveFav;
     CheckBox chkAsDrone, chkAutoRecon, chkOcrWatch, chkPadRejoin, chkPadAuto, chkPadStop, chkPadLand, chkPadReconnect, chkTop, chkNoAct, chkClickKey, chkHudAuto;
     CheckBox chkStepTeam, chkStepDrone, chkStepDeploy, chkStepBase, chkStepBomb;
     CheckBox chkAutoAfterRejoin;
@@ -158,7 +167,7 @@ class RobloxAuto : Form
 
     // ================= win32 =================
     const int WM_HOTKEY = 0x0312;
-    const int HK_REJOIN = 0x5A01, HK_AUTO = 0x5A02, HK_NIGHT = 0x5A03, HK_STOP = 0x5A04, HK_INSTANT = 0x5A05;
+    const int HK_REJOIN = 0x5A01, HK_AUTO = 0x5A02, HK_NIGHT = 0x5A03, HK_STOP = 0x5A04, HK_INSTANT = 0x5A05, HK_SWAP = 0x5A06;
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
     [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
 
@@ -841,7 +850,7 @@ class RobloxAuto : Form
         var gAu = new GroupBox();
         gAu.Text = "Auto sequence   (load > team > drone > deploy > base > bomb > as drone)";
         gAu.ForeColor = Color.Gainsboro;
-        gAu.SetBounds(x, y, w, 150);
+        gAu.SetBounds(x, y, w, 182);
         Controls.Add(gAu);
 
         var lT = new Label();
@@ -940,7 +949,28 @@ class RobloxAuto : Form
         lFlow.SetBounds(12, 88, 424, 44);
         lFlow.ForeColor = Color.Silver;
         gAu.Controls.Add(lFlow);
-        y += 158;
+
+        chkPadSwap = new CheckBox();
+        chkPadSwap.Text = "SWAP:";
+        chkPadSwap.Checked = _padSwapOn;
+        chkPadSwap.CheckedChanged += delegate { _padSwapOn = chkPadSwap.Checked; SaveCfg(); };
+        chkPadSwap.SetBounds(8, 136, 62, 22);
+        gAu.Controls.Add(chkPadSwap);
+
+        cmbPadSwap = new ComboBox();
+        cmbPadSwap.DropDownStyle = ComboBoxStyle.DropDownList;
+        cmbPadSwap.SetBounds(72, 135, 74, 24);
+        foreach (string k in PAD.Keys) cmbPadSwap.Items.Add(k);
+        cmbPadSwap.SelectedItem = PAD.ContainsKey(_padSwap) ? _padSwap : "B";
+        cmbPadSwap.SelectedIndexChanged += delegate { if (cmbPadSwap.SelectedItem != null) { _padSwap = cmbPadSwap.SelectedItem.ToString(); SaveCfg(); } };
+        gAu.Controls.Add(cmbPadSwap);
+
+        var lSwap = new Label();
+        lSwap.Text = "swaps your saved MAVIC / FPV setup (same as F7); tick 'also run AUTO' below to redeploy";
+        lSwap.SetBounds(150, 139, 300, 18);
+        lSwap.ForeColor = Color.Silver;
+        gAu.Controls.Add(lSwap);
+        y += 190;
 
         // ---- per-step toggles ----
         var gSt = new GroupBox();
@@ -972,6 +1002,51 @@ class RobloxAuto : Form
         numMatch.ValueChanged += delegate { _matchPct = (int)numMatch.Value; SaveCfg(); };
         gSt.Controls.Add(numMatch);
         y += 64;
+
+        // ---- favourite setups: save the current loadout under MAVIC or FPV, then swap with one tap ----
+        var gFav = new GroupBox();
+        gFav.Text = "Setups   (swap with F7 or the pad SWAP button)";
+        gFav.ForeColor = Color.Gainsboro;
+        gFav.SetBounds(x, y, w, 66);
+        Controls.Add(gFav);
+
+        var bSaveM = new Button();
+        bSaveM.Text = "save MAVIC";
+        bSaveM.FlatStyle = FlatStyle.Flat;
+        bSaveM.SetBounds(10, 20, 100, 26);
+        bSaveM.Click += delegate { SaveFav("MAVIC"); };
+        gFav.Controls.Add(bSaveM);
+
+        var bSaveF = new Button();
+        bSaveF.Text = "save FPV";
+        bSaveF.FlatStyle = FlatStyle.Flat;
+        bSaveF.SetBounds(114, 20, 100, 26);
+        bSaveF.Click += delegate { SaveFav("FPV"); };
+        gFav.Controls.Add(bSaveF);
+
+        btnSwap = new Button();
+        btnSwap.Text = "SWAP  (F7)";
+        btnSwap.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        btnSwap.BackColor = Color.FromArgb(122, 92, 28);
+        btnSwap.ForeColor = Color.White;
+        btnSwap.FlatStyle = FlatStyle.Flat;
+        btnSwap.SetBounds(222, 20, 92, 26);
+        btnSwap.Click += delegate { SwapFav(); };
+        gFav.Controls.Add(btnSwap);
+
+        chkSwapRun = new CheckBox();
+        chkSwapRun.Text = "also run AUTO";
+        chkSwapRun.Checked = _swapRunsAuto;
+        chkSwapRun.CheckedChanged += delegate { _swapRunsAuto = chkSwapRun.Checked; SaveCfg(); };
+        chkSwapRun.SetBounds(322, 22, 116, 22);
+        gFav.Controls.Add(chkSwapRun);
+
+        lblActiveFav = new Label();
+        lblActiveFav.Text = "active: " + _activeFav + "  (MAVIC: " + _favMDrone + "/" + _favMBomb + "   FPV: " + _favFDrone + "/" + _favFBomb + ")";
+        lblActiveFav.SetBounds(10, 46, 430, 16);
+        lblActiveFav.ForeColor = Color.FromArgb(150, 210, 255);
+        gFav.Controls.Add(lblActiveFav);
+        y += 74;
 
         btnAuto = new Button();
         btnAuto.Text = "AUTO RUN   (F5)      - press again to restart";
@@ -4159,7 +4234,7 @@ class RobloxAuto : Form
         if (!conn)
         {
             lblPadStatus.Text = "no controller";
-            _padRejoinWasDown = _padAutoWasDown = false;
+            _padRejoinWasDown = _padAutoWasDown = _padSwapWasDown = false;
             return;
         }
 
@@ -4234,6 +4309,18 @@ class RobloxAuto : Form
             }
             _padReconnectWasDown = d;
         }
+
+        if (_padSwapOn)
+        {
+            ushort m = PAD.ContainsKey(_padSwap) ? PAD[_padSwap] : (ushort)0;
+            bool d = m != 0 && (buttons & m) != 0;
+            if (d && !_padSwapWasDown)
+            {
+                Log("controller " + _padSwap + " pressed -> swap setup");
+                SwapFav();
+            }
+            _padSwapWasDown = d;
+        }
     }
 
     // ================= hotkeys =================
@@ -4244,6 +4331,10 @@ class RobloxAuto : Form
         UnregisterHotKey(Handle, HK_NIGHT);
         UnregisterHotKey(Handle, HK_STOP);
         UnregisterHotKey(Handle, HK_INSTANT);
+        UnregisterHotKey(Handle, HK_SWAP);
+        // F7 = SWAP the saved MAVIC / FPV setup
+        if (!RegisterHotKey(Handle, HK_SWAP, 0, 0x76))
+            Log("WARNING: could not register F7 for setup swap - another app already has it.");
         // F6 = STOP, so the flight stick can stop the flow (hotkey fires from any focus)
         if (!RegisterHotKey(Handle, HK_STOP, 0, 0x75))
             Log("WARNING: could not register F6 for STOP - another app already has it.");
@@ -4302,6 +4393,7 @@ class RobloxAuto : Form
             else if (id == HK_NIGHT) ToggleNightVision();
             else if (id == HK_STOP) { Log("hotkey F6 -> STOP"); StopAuto(); }
             else if (id == HK_INSTANT) { Log("hotkey F9 -> instant reconnect (no LAND NOW)"); Rejoin("hotkey instant", false); }
+            else if (id == HK_SWAP) { Log("hotkey F7 -> swap setup"); SwapFav(); }
         }
         base.WndProc(ref m);
     }
@@ -4322,7 +4414,8 @@ class RobloxAuto : Form
         RegisterHotkeys();
         lblKeyVal.Text = ((Keys)_hkRejoinKey).ToString();
         if (lblNightVal != null) lblNightVal.Text = ((Keys)_hkNightKey).ToString();
-        Log("ready.  " + ((Keys)_hkRejoinKey) + " = rejoin (LAND NOW),  F9 = instant reconnect (no LAND NOW),  F5 = AUTO RUN,  " + ((Keys)_hkNightKey) + " = night vision.");
+        Log("ready.  " + ((Keys)_hkRejoinKey) + " = rejoin (LAND NOW),  F9 = instant reconnect (no LAND NOW),  F7 = swap MAVIC/FPV setup,  F5 = AUTO RUN,  " + ((Keys)_hkNightKey) + " = night vision.");
+        UpdateFavLabel();
         if (_placeId != "") Log("server ready: " + _serverId);
         else Log("no server detected yet - launch Roblox once, then Refresh");
         try { OverlayHub.I.SetMission(_team, _drone, _bomb); OverlayHub.I.Start(_appDir); Log("OBS overlay: add a Browser Source -> http://localhost:8730/"); } catch { }
@@ -4336,6 +4429,8 @@ class RobloxAuto : Form
         UnregisterHotKey(Handle, HK_AUTO);
         UnregisterHotKey(Handle, HK_NIGHT);
         UnregisterHotKey(Handle, HK_STOP);
+        UnregisterHotKey(Handle, HK_INSTANT);
+        UnregisterHotKey(Handle, HK_SWAP);
         ApplyNightVision(false);   // never leave the display inverted after exit
         SaveCfg();
         base.OnFormClosing(e);
@@ -4367,6 +4462,49 @@ class RobloxAuto : Form
         if (!cmbBomb.Items.Contains(_bomb)) _bomb = "(none)";   // drop a warhead from the other drone
         cmbBomb.SelectedItem = _bomb;
         _filling = false;
+    }
+
+    // ---- favourite setups ----
+    void UpdateFavLabel()
+    {
+        if (lblActiveFav == null) return;
+        lblActiveFav.Text = "active: " + _activeFav + "  (MAVIC: " + _favMDrone + "/" + _favMBomb +
+                            "   FPV: " + _favFDrone + "/" + _favFBomb + ")";
+    }
+
+    void SaveFav(string which)
+    {
+        if (which == "MAVIC") { _favMTeam = _team; _favMDrone = _drone; _favMBomb = _bomb; _favMAsDrone = _asDrone; }
+        else { _favFTeam = _team; _favFDrone = _drone; _favFBomb = _bomb; _favFAsDrone = _asDrone; }
+        _activeFav = which;
+        UpdateFavLabel();
+        SaveCfg();
+        Log("saved " + which + " setup   team " + _team + " | drone " + _drone + " | bomb " + _bomb +
+            " | as drone " + _asDrone);
+    }
+
+    void SwapFav() { ApplyFav(_activeFav == "MAVIC" ? "FPV" : "MAVIC"); }
+
+    void ApplyFav(string which)
+    {
+        if (InvokeRequired) { BeginInvoke((MethodInvoker)delegate { ApplyFav(which); }); return; }
+        _activeFav = which;
+        if (which == "MAVIC") { _team = _favMTeam; _drone = _favMDrone; _bomb = _favMBomb; _asDrone = _favMAsDrone; }
+        else { _team = _favFTeam; _drone = _favFDrone; _bomb = _favFBomb; _asDrone = _favFAsDrone; }
+        _hudStyleUav = _drone == "MAVIC";
+        // sync the dropdowns so the panel shows what is actually live
+        if (cmbTeam != null && cmbTeam.Items.Contains(_team)) cmbTeam.SelectedItem = _team;
+        if (cmbDrone != null && cmbDrone.Items.Contains(_drone)) cmbDrone.SelectedItem = _drone;
+        FillBombs();
+        if (cmbBomb != null && cmbBomb.Items.Contains(_bomb)) cmbBomb.SelectedItem = _bomb;
+        if (chkAsDrone != null) chkAsDrone.Checked = _asDrone;
+        if (_hudForm != null) _hudForm.Uav = _hudStyleUav;
+        OverlayHub.I.SetMission(_team, _drone, _bomb);
+        UpdateFavLabel();
+        Log("setup -> " + which + "   team " + _team + " | drone " + _drone + " | bomb " + _bomb);
+        AddBlackLine("loadout profile: " + which, "OK");
+        SaveCfg();
+        if (_swapRunsAuto) AutoRun();     // pick up the other drone straight away
     }
 
     void LoadCfg()
@@ -4403,6 +4541,18 @@ class RobloxAuto : Form
             else if (k == "watchStuck") _watchStuckSec = int.Parse(v);
             else if (k == "matchPct") _matchPct = int.Parse(v);
             else if (k == "userName") _userName = v;
+            else if (k == "favMTeam") _favMTeam = v;
+            else if (k == "favMDrone") _favMDrone = v;
+            else if (k == "favMBomb") _favMBomb = v;
+            else if (k == "favMAsDrone") _favMAsDrone = v == "1";
+            else if (k == "favFTeam") _favFTeam = v;
+            else if (k == "favFDrone") _favFDrone = v;
+            else if (k == "favFBomb") _favFBomb = v;
+            else if (k == "favFAsDrone") _favFAsDrone = v == "1";
+            else if (k == "activeFav") _activeFav = v;
+            else if (k == "swapRunsAuto") _swapRunsAuto = v == "1";
+            else if (k == "padSwap") _padSwap = v;
+            else if (k == "padSwapOn") _padSwapOn = v == "1";
                 else if (k == "hoverMs") { _hoverBase = int.Parse(v); _hoverMs = _hoverBase; }
                 else if (k == "autoAfterRejoin") _autoAfterRejoin = v == "1";
                 else if (k == "autoAfterRejoinMs") _autoAfterRejoinMs = int.Parse(v);
@@ -4456,6 +4606,13 @@ class RobloxAuto : Form
                 "watchStuck=" + _watchStuckSec,
                 "matchPct=" + _matchPct,
                 "userName=" + _userName,
+                "favMTeam=" + _favMTeam, "favMDrone=" + _favMDrone, "favMBomb=" + _favMBomb,
+                "favMAsDrone=" + (_favMAsDrone ? "1" : "0"),
+                "favFTeam=" + _favFTeam, "favFDrone=" + _favFDrone, "favFBomb=" + _favFBomb,
+                "favFAsDrone=" + (_favFAsDrone ? "1" : "0"),
+                "activeFav=" + _activeFav,
+                "swapRunsAuto=" + (_swapRunsAuto ? "1" : "0"),
+                "padSwap=" + _padSwap, "padSwapOn=" + (_padSwapOn ? "1" : "0"),
                 "hoverMs=" + _hoverBase,
                 "autoAfterRejoin=" + (_autoAfterRejoin ? "1" : "0"),
                 "autoAfterRejoinMs=" + _autoAfterRejoinMs,
