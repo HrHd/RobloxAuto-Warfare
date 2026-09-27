@@ -123,11 +123,13 @@ class RobloxAuto : Form
     // ---- HUD tuning dials (live-adjustable, hotkeys below) ----
     float _hudPitchRate = 660f;                    // px/s the horizon moves per unit of stick pitch
     float _hudRollRate = 220f;                     // deg/s per unit of stick roll
+    float _hudPitchVel = 0f, _hudRollVel = 0f;     // current horizon velocity (px/s, deg/s) - the ACCEL model
+    float _hudAccelTau = 0.12f;                    // s - how fast the velocity chases the stick (accel/brake)
     float _hudLockTau = 0.25f;                     // s - camera lock time constant when centred (small = snappy)
     float _hudFlyTau = 0.9f;                       // s - camera correction while flying
     float _hudBias = 6f;                           // px - constant downward offset of the detected line
     float _hudLeftPx = 50f;                        // px - max horizon offset from the LEFT stick (bounded)
-    NumericUpDown numPitch, numRoll, numLock, numFly, numBias;
+    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
@@ -541,7 +543,9 @@ class RobloxAuto : Form
         y += 28;
 
         numBias = MkTune(x, y, "bias px", (decimal)_hudBias, -120m, 120m, 2m, 0);
+        numAccel = MkTune(x + 168, y, "accel s", (decimal)_hudAccelTau, 0.02m, 1.0m, 0.02m, 2);
         numBias.ValueChanged += delegate { _hudBias = (float)numBias.Value; SaveCfg(); };
+        numAccel.ValueChanged += delegate { _hudAccelTau = (float)numAccel.Value; SaveCfg(); };
         y += 32;
 
         var l1 = new Label();
@@ -3971,10 +3975,17 @@ class RobloxAuto : Form
         if (sx > -0.05f && sx < 0.05f) sx = 0f;
         if (sy > -0.05f && sy < 0.05f) sy = 0f;
 
-        // controller priority: integrate the stick every frame (rate -> angle)
-        _hudFRoll += -sx * _hudRollRate * dt;    // tunable (roll deg/s)
-        _hudFPitch -= sy * _hudPitchRate * dt;   // tunable (pitch px/s); inverted on purpose:
-                                                 // pitching up must move the horizon DOWN
+        // ACCELERATION model. The stick no longer sets the horizon's SPEED directly - it sets a
+        // TARGET speed, and the horizon's actual speed eases toward it. So a stick flick makes the
+        // line accelerate into motion and ease to a stop instead of snapping to a new speed and
+        // slamming to rest, which is what read as "jumpy". dt-correct so it is identical at any FPS.
+        float vTargetRoll = -sx * _hudRollRate;    // deg/s (roll)
+        float vTargetPitch = -sy * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
+        float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
+        _hudRollVel += (vTargetRoll - _hudRollVel) * av;
+        _hudPitchVel += (vTargetPitch - _hudPitchVel) * av;
+        _hudFRoll += _hudRollVel * dt;
+        _hudFPitch += _hudPitchVel * dt;
 
         // The LEFT stick (throttle) is a small, BOUNDED proportional nudge, NOT integrated. Adding
         // it to the rate meant holding throttle walked the horizon clean off the screen.
@@ -4404,6 +4415,7 @@ class RobloxAuto : Form
             else if (k == "hudLock") _hudLockTau = ParseF(v);
             else if (k == "hudFly") _hudFlyTau = ParseF(v);
             else if (k == "hudBias") _hudBias = ParseF(v);
+            else if (k == "hudAccel") _hudAccelTau = ParseF(v);
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -4457,6 +4469,7 @@ class RobloxAuto : Form
             "hudLock=" + _hudLockTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudFly=" + _hudFlyTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudBias=" + _hudBias.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudAccel=" + _hudAccelTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "uav=" + (_hudStyleUav ? "1" : "0"),
             "night=" + (_nightVision ? "1" : "0"),
             "nightKey=" + _hkNightKey,
@@ -4887,6 +4900,7 @@ class RobloxAuto : Form
             _rfHomeText = "----";
             _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
             _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
+            _hudPitchVel = 0f; _hudRollVel = 0f;   // start each flight with no carried velocity
             OverlayHub.I.SetFlight(true, 0.18f, 0);
 
             Thread t = new Thread(delegate ()
