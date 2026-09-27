@@ -2569,13 +2569,23 @@ class RobloxAuto : Form
             int[] after = CellSample(cells[slot].X, cells[slot].Y);
             int diff = Math.Abs(after[0] - before[0]) + Math.Abs(after[1] - before[1]) + Math.Abs(after[2] - before[2]);
             bool green = diff >= 40 && CellIsGreen(cells[slot].X, cells[slot].Y);
-            bool named = green && WarheadDescMatches(_bomb);   // cross-reference the label
-            if (green && named)
+            if (green)
             {
-                Log("   " + _bomb + " confirmed (green + label)");
-                return true;
+                // Trust the grid + green box: we already know how many warheads the drone has and
+                // which name sits in which slot, so the colour change at the measured cell is the
+                // proof. The tiny label OCR is only an ENHANCED cross-check around the cell's own
+                // coordinates - and it never blocks when it cannot read anything.
+                string cellLabel = WarheadCellLabel(cells[slot].X, cells[slot].Y);
+                if (cellLabel == "" || cellLabel == _bomb)
+                {
+                    Log("   " + _bomb + " confirmed (green box" +
+                        (cellLabel == "" ? ", label unread" : " + cell reads " + cellLabel) + ")");
+                    return true;
+                }
+                Log("   " + _bomb + " is green but the cell reads \"" + cellLabel + "\" - retrying");
+                continue;
             }
-            Log("   " + _bomb + " not confirmed (green=" + green + " label=" + named + " diff=" + diff + ") - retrying");
+            Log("   " + _bomb + " not confirmed (green=" + green + " diff=" + diff + ") - retrying");
         }
         Log("   " + _bomb + " is NOT green - leaving the flow here so we do not deploy the wrong loadout");
         return false;
@@ -2600,6 +2610,36 @@ class RobloxAuto : Form
             }
         if (n == 0) return new int[] { 0, 0, 0 };
         return new int[] { (int)(r / n), (int)(g / n), (int)(b / n) };
+    }
+
+    // Enhanced read of a SMALL area around a known coordinate (a warhead cell's own centre).
+    // Crops tight, runs the mask + upscale pass at high scale, then scores the words against
+    // every warhead this drone can carry and returns the closest name, or "" if unreadable.
+    // This is the "if a whole-screen read fails, enhance just the region we care about" path.
+    string WarheadCellLabel(int cx, int cy)
+    {
+        try
+        {
+            List<string[]> ws = OcrMaskedRegion(cx - 72, cy - 22, cx + 72, cy + 22, 4);
+            if (ws == null || ws.Count == 0)
+            {
+                ws = OcrMaskedRegion(cx - 72, cy - 22, cx + 72, cy + 22, 6);
+                if (ws == null || ws.Count == 0) return "";
+            }
+            string all = "";
+            foreach (string[] w in ws) all += (w[4] ?? "").ToUpperInvariant() + " ";
+            string best = null; int bestScore = 0;
+            foreach (string b in BombsFor(_drone))
+            {
+                if (b == "(none)") continue;
+                int s = TokenOverlap(all, b);
+                if (s > bestScore) { bestScore = s; best = b; }
+            }
+            Log("   cell (" + cx + "," + cy + ") enhanced read: \"" + all.Trim() + "\"" +
+                (bestScore > 0 ? " -> " + best + " (" + bestScore + ")" : " (no match)"));
+            return bestScore > 0 ? best : "";
+        }
+        catch { return ""; }
     }
 
     // Cross-reference for the warhead: the panel prints "WARHEAD: <name> - <desc>" above the
@@ -3717,7 +3757,15 @@ class RobloxAuto : Form
     // this every 20ms makes the horizon smooth instead of stepping once per RF-loop tick.
     void HudTick(object sender, EventArgs e)
     {
-        if (!_hudShown || !_hudOn) { if (_hudForm != null) StopHud(); return; }
+        if (!_hudShown || !_hudOn)
+        {
+            // Tell the OBS overlay too, not just the on-monitor form - otherwise /state keeps
+            // reporting hud:true and the stream stays stuck on the last HUD frame instead of
+            // falling back to the CLI terminal.
+            OverlayHub.I.SetHud(false, "", "", "", 0f, 0f, false);
+            if (_hudForm != null) StopHud();
+            return;
+        }
         long now = Environment.TickCount;
         if (_hudPrevTick == 0) { _hudPrevTick = now; return; }
         float dt = (now - _hudPrevTick) / 1000f;
@@ -4729,6 +4777,10 @@ class RobloxAuto : Form
                             // otherwise the OSD simply went quiet, so give it the full 30s.
                             shown = false;
                             Log(menu ? "   menu on screen - overlay off" : "   RF feed: 30s with no drone view - overlay off");
+                            // tell the OBS terminal so it visibly drops back to the CLI instead of
+                            // freezing on the last HUD frame
+                            AddBlackLine(menu ? "returning to command line - menu detected"
+                                              : "rf feed lost - reverting to command line", "OK");
                         }
                         if (shown && inDrone)
                         {
