@@ -4073,8 +4073,7 @@ class RobloxAuto : Form
         // The RIGHT stick drives the ladder DIRECTLY: X = bank/tilt, Y = pitch. Both INTEGRATE (a
         // rate) and HOLD, with the acceleration easing the motion. So when you bank, the lines stay
         // banked with the horizon - they no longer snap back flat the moment you centre the stick to
-        // hold the turn. There is NO camera correction and NO self-levelling any more: the broken
-        // horizon detector was permanently forcing roll 0 / pitch -270 and flattening everything.
+        // hold the turn.
         float vTargetRoll = -sx * _hudRollRate;    // deg/s (bank)
         float vTargetPitch = -sy * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
         float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
@@ -4082,6 +4081,16 @@ class RobloxAuto : Form
         _hudPitchVel += (vTargetPitch - _hudPitchVel) * av;
         _hudFRoll += _hudRollVel * dt;
         _hudFPitch += _hudPitchVel * dt;
+
+        // HORIZON LOCK (pitch). The camera measurement is the absolute reference that keeps the
+        // ladder ON the real horizon instead of drifting away on accumulated stick error. Applied to
+        // PITCH only - the roll is the stick's job. A fix older than 1.5s is not trusted.
+        bool det = _hudDetValid && (now - _hudDetAt) < 1500;
+        if (det)
+        {
+            float a = 1f - (float)Math.Pow(0.5, dt / _hudFlyTau);
+            _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
+        }
 
         // The LEFT stick (throttle) is a small, BOUNDED proportional nudge, NOT integrated. Adding
         // it to the rate meant holding throttle walked the horizon clean off the screen.
@@ -5035,19 +5044,16 @@ class RobloxAuto : Form
 
             if (Uav) { DrawMavic(g, W, H); base.OnPaint(e); return; }   // DJI-Fly style
 
-            // artificial horizon + pitch ladder - every endpoint is rotated about the centre by
-            // the bank, so the whole ladder rolls (tilts diagonally) with the controller input.
-            // It also SPREADS as it tilts: the rungs fan out with pitch (plus a little for roll),
-            // so the ladder opens up like a drone HUD and you can read the dive/climb angle to aim.
-            float tilt = Math.Min(1f, Math.Abs(PitchPx) / 900f + Math.Abs(Roll) / 240f);
-            float spread = 1f + 0.9f * tilt;
+            // artificial horizon + pitch ladder. Flat (level) when the drone is level, and every
+            // endpoint is rotated about the centre by the bank so the lines go DIAGONAL as it rolls
+            // with the right stick X. No fanning/spread.
             for (int d = -90; d <= 90; d += 10)
             {
-                float yy = PitchPx + d * 8f * spread;        // 10 deg = 8px, fanned by the tilt
+                float yy = PitchPx + d * 8f;                 // 10 deg = 8px
                 float dist = Math.Abs(yy);
                 float af = dist <= 200f ? 1f : 1f - (dist - 200f) / 320f;   // fade 200px -> 520px
                 if (af <= 0.02f) continue;
-                float half = (d == 0 ? 150f : 70f) * (1f + 0.35f * tilt);
+                float half = d == 0 ? 150f : 70f;
                 int aMain = (int)(230 * af), aThin = (int)(165 * af), aTxt = (int)(235 * af);
                 Pen pen = d == 0
                     ? new Pen(Color.FromArgb(aMain, 255, 255, 255), 2)
