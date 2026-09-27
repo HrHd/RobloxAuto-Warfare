@@ -34,7 +34,6 @@ class RobloxAuto : Form
     string _favMTeam = "Red", _favMDrone = "MAVIC", _favMBomb = "(none)"; bool _favMAsDrone = true;
     string _favFTeam = "Red", _favFDrone = "FPV", _favFBomb = "Light Rocket"; bool _favFAsDrone = true;
     string _activeFav = "FPV";       // which of the two is currently live
-    bool _swapRunsAuto = true;       // after a swap, kick off AUTO so it picks up the other drone
 
     uint _hkRejoinKey = 0x77;   // F8
     uint _hkAutoKey = 0x74;     // F5
@@ -85,7 +84,7 @@ class RobloxAuto : Form
     Label lblKeyVal, lblNightVal;
     bool _capturingKey = false;
     ComboBox cmbTeam, cmbDrone, cmbBomb, cmbPadRejoin, cmbPadAuto, cmbPadStop, cmbPadLand, cmbPadReconnect;
-    ComboBox cmbPadSwap; CheckBox chkPadSwap, chkSwapRun; Button btnSwap; Label lblActiveFav;
+    ComboBox cmbPadSwap; CheckBox chkPadSwap; Button btnSwap; Label lblActiveFav;
     CheckBox chkAsDrone, chkAutoRecon, chkOcrWatch, chkPadRejoin, chkPadAuto, chkPadStop, chkPadLand, chkPadReconnect, chkTop, chkNoAct, chkClickKey, chkHudAuto;
     CheckBox chkStepTeam, chkStepDrone, chkStepDeploy, chkStepBase, chkStepBomb;
     CheckBox chkAutoAfterRejoin;
@@ -966,7 +965,7 @@ class RobloxAuto : Form
         gAu.Controls.Add(cmbPadSwap);
 
         var lSwap = new Label();
-        lSwap.Text = "swaps your saved MAVIC / FPV setup (same as F7); tick 'also run AUTO' below to redeploy";
+        lSwap.Text = "swaps your saved MAVIC / FPV setup (same as F7) - it only changes the selection, never starts a run";
         lSwap.SetBounds(150, 139, 300, 18);
         lSwap.ForeColor = Color.Silver;
         gAu.Controls.Add(lSwap);
@@ -1033,13 +1032,6 @@ class RobloxAuto : Form
         btnSwap.SetBounds(222, 20, 92, 26);
         btnSwap.Click += delegate { SwapFav(); };
         gFav.Controls.Add(btnSwap);
-
-        chkSwapRun = new CheckBox();
-        chkSwapRun.Text = "also run AUTO";
-        chkSwapRun.Checked = _swapRunsAuto;
-        chkSwapRun.CheckedChanged += delegate { _swapRunsAuto = chkSwapRun.Checked; SaveCfg(); };
-        chkSwapRun.SetBounds(322, 22, 116, 22);
-        gFav.Controls.Add(chkSwapRun);
 
         lblActiveFav = new Label();
         lblActiveFav.Text = "active: " + _activeFav + "  (MAVIC: " + _favMDrone + "/" + _favMBomb + "   FPV: " + _favFDrone + "/" + _favFBomb + ")";
@@ -4504,7 +4496,85 @@ class RobloxAuto : Form
         Log("setup -> " + which + "   team " + _team + " | drone " + _drone + " | bomb " + _bomb);
         AddBlackLine("loadout profile: " + which, "OK");
         SaveCfg();
-        if (_swapRunsAuto) AutoRun();     // pick up the other drone straight away
+        // NOTE: deliberately NOT AutoRun() - swapping only changes the selection. But do make sure
+        // the GAME is actually on the chosen drone if the LOADOUT screen happens to be open.
+        SyncDroneOnMenu(which);
+    }
+
+    // Swapping only changed our panel before, so the game could still be on the other drone. If the
+    // LOADOUT screen is up, click its chevron to match - same verified logic as the flow's step 3.
+    // Never runs AUTO and never clicks blind (an unreadable loadout is left untouched).
+    void SyncDroneOnMenu(string which)
+    {
+        if (_running) { Log("swap: AUTO is running - it will use " + _drone); return; }
+        if (!(_drone == "MAVIC" || _drone == "FPV")) return;
+        int g = _autoGen;
+        Thread t = new Thread(delegate ()
+        {
+            try
+            {
+                Thread.Sleep(200);
+                InvalidateOcr();
+                string st = ScreenName();
+
+                // TEAM BASE: the warhead cards belong to whichever drone is equipped. If they are
+                // the OTHER drone's, the only fix is Return -> map -> LOADOUT, so bail out to there.
+                if (st == "team base")
+                {
+                    if (BasePanelIsDrone(_drone))
+                    {
+                        Log("swap: TEAM BASE already shows the " + _drone + " warheads");
+                        return;
+                    }
+                    Log("swap: TEAM BASE has the other drone's warheads - clicking Return, then LOADOUT");
+                    ClickRedReturn();
+                    Thread.Sleep(900);
+                    InvalidateOcr();
+                    st = ScreenName();
+                }
+
+                if (st != "loadout" && (st == "map" || st == "lobby"))
+                {
+                    Log("swap: opening LOADOUT to set the drone (" + st + ")");
+                    ClickPhraseVerified("LOADOUT", g);
+                    WaitPhrase("SELECT DRONE", 6000, g);
+                    InvalidateOcr();
+                    st = ScreenName();
+                }
+                if (st != "loadout")
+                {
+                    Log("swap: " + which + " set - the drone can't be changed from here (" + st + "); run AUTO to apply it");
+                    return;
+                }
+                Log("swap: checking the LOADOUT drone - want " + _drone + "...");
+                if (DroneIs(_drone)) { Log("   " + _drone + " already selected"); return; }
+                if (DroneIs("MAVIC") || DroneIs("FPV"))
+                {
+                    bool wantMavic = _drone == "MAVIC";
+                    ClickDroneArrow(wantMavic, g);       // right = MAVIC, left = FPV
+                    Thread.Sleep(350);
+                    InvalidateOcr();
+                    Log(DroneIs(_drone) ? "   " + _drone + " selected" : "   could not confirm " + _drone);
+                }
+                else Log("   could not read the current drone - leaving the loadout untouched");
+                if (PhraseOnScreen("Return")) ClickRedReturn();
+            }
+            catch (Exception ex) { Log("swap drone check failed: " + ex.Message); }
+        });
+        t.IsBackground = true;
+        t.Start();
+    }
+
+    // Which drone's warhead cards are on the TEAM BASE panel? The two sets use distinct words -
+    // MAVIC has RGO/M67 racks, FPV has PG-7/TBG/Light Rocket/Standard Frag - so seeing only the
+    // other set means the panel belongs to the wrong drone. Ambiguous -> true (never force Return).
+    bool BasePanelIsDrone(string drone)
+    {
+        bool mav = PhraseOnScreen("RGO") || PhraseOnScreen("M67");
+        bool fpv = PhraseOnScreen("PG-7") || PhraseOnScreen("TBG") || PhraseOnScreen("Light Rocket") || PhraseOnScreen("Standard Frag");
+        if (mav && !fpv) return drone == "MAVIC";
+        if (fpv && !mav) return drone == "FPV";
+        return true;
     }
 
     void LoadCfg()
@@ -4550,7 +4620,6 @@ class RobloxAuto : Form
             else if (k == "favFBomb") _favFBomb = v;
             else if (k == "favFAsDrone") _favFAsDrone = v == "1";
             else if (k == "activeFav") _activeFav = v;
-            else if (k == "swapRunsAuto") _swapRunsAuto = v == "1";
             else if (k == "padSwap") _padSwap = v;
             else if (k == "padSwapOn") _padSwapOn = v == "1";
                 else if (k == "hoverMs") { _hoverBase = int.Parse(v); _hoverMs = _hoverBase; }
@@ -4611,7 +4680,6 @@ class RobloxAuto : Form
                 "favFTeam=" + _favFTeam, "favFDrone=" + _favFDrone, "favFBomb=" + _favFBomb,
                 "favFAsDrone=" + (_favFAsDrone ? "1" : "0"),
                 "activeFav=" + _activeFav,
-                "swapRunsAuto=" + (_swapRunsAuto ? "1" : "0"),
                 "padSwap=" + _padSwap, "padSwapOn=" + (_padSwapOn ? "1" : "0"),
                 "hoverMs=" + _hoverBase,
                 "autoAfterRejoin=" + (_autoAfterRejoin ? "1" : "0"),
