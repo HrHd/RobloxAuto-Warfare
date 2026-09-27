@@ -6253,42 +6253,34 @@ class RobloxAuto : Form
                     for (int gx = gx0; gx < gx1; gx++)
                     {
                         float best = -1e9f; int by = -1; float byGrad = 0f;
-                        float runSum = 0f; int runN = 0;
-                        // TRACKING PRIOR: if we had a recent fix, only consider the band near where the
-                        // line was last time (with slack for fast pitch), so a stray edge cannot steal it.
-                        for (int gy = gy0; gy < gy1; gy++)
+                        // LOCAL sky test: a real horizon has SKY in the few blocks just ABOVE it and
+                        // ground just below. Using the whole column above (a running mean) stayed
+                        // sky-ish for terrain edges near the top, so at altitude sharp tree/field lines
+                        // just under the horizon stole the lock and parked the roll near -10. Local fixes it.
+                        for (int gy = gy0 + 3; gy < gy1 - 3; gy++)
                         {
-                            float aboveMean = runN > 0 ? runSum / runN : im[gy * gw + gx];
-                            if (gy > gy0 && gy < gy1 - 1)
+                            bool inBand = true;
+                            if (trk)
                             {
-                                bool inBand = true;
-                                if (trk)
-                                {
-                                    int pyb = (int)((_hudTrkM * (gx * B + B / 2f) + _hudTrkB) / B);
-                                    inBand = gy >= pyb - 8 && gy <= pyb + 8;
-                                }
-                                if (inBand)
-                                {
-                                    float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
-                                    float score = g - Math.Abs(aboveMean - skyRef) * 0.6f;   // prefer SKY above
-                                    if (score > best) { best = score; by = gy; byGrad = g; }
-                                }
+                                int pyb = (int)((_hudTrkM * (gx * B + B / 2f) + _hudTrkB) / B);
+                                inBand = gy >= pyb - 8 && gy <= pyb + 8;
                             }
-                            runSum += im[gy * gw + gx]; runN++;
+                            if (!inBand) continue;
+                            float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
+                            float above = (im[(gy - 1) * gw + gx] + im[(gy - 2) * gw + gx] + im[(gy - 3) * gw + gx]) / 3f;
+                            float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx] + im[(gy + 3) * gw + gx]) / 3f;
+                            float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f;
+                            if (score > best) { best = score; by = gy; byGrad = g; }
                         }
                         if (by < 0 && trk)      // band empty -> fall back to the whole column
                         {
-                            runSum = 0f; runN = 0;
-                            for (int gy = gy0; gy < gy1; gy++)
+                            for (int gy = gy0 + 3; gy < gy1 - 3; gy++)
                             {
-                                float aboveMean = runN > 0 ? runSum / runN : im[gy * gw + gx];
-                                if (gy > gy0 && gy < gy1 - 1)
-                                {
-                                    float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
-                                    float score = g - Math.Abs(aboveMean - skyRef) * 0.6f;
-                                    if (score > best) { best = score; by = gy; byGrad = g; }
-                                }
-                                runSum += im[gy * gw + gx]; runN++;
+                                float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
+                                float above = (im[(gy - 1) * gw + gx] + im[(gy - 2) * gw + gx] + im[(gy - 3) * gw + gx]) / 3f;
+                                float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx] + im[(gy + 3) * gw + gx]) / 3f;
+                                float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f;
+                                if (score > best) { best = score; by = gy; byGrad = g; }
                             }
                         }
                         if (by < 0) continue;
