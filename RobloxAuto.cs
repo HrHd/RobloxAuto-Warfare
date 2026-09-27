@@ -1616,29 +1616,8 @@ class RobloxAuto : Form
                 InvalidateOcr();
             }
 
-            // FIRST drag the map around to bring the Base into view - the Base is anchored to
-            // one edge and panning brings it (and its label) into the middle where OCR reads it.
-            if (!sawBase)
-            {
-                int[,] pans = { { 520, 0 }, { -1040, 0 }, { 520, 0 }, { 0, 380 }, { 0, -760 }, { 0, 380 } };
-                for (int p = 0; p < 6 && !sawBase && Alive(g); p++)
-                {
-                    Log("   panning the map to look for the Base (" + (p + 1) + "/6)");
-                    FocusRoblox();
-                    DragPan(pans[p, 0], pans[p, 1]);
-                    Thread.Sleep(180);
-                    InvalidateOcr();
-                    List<Hit> bh = FindPhraseAll("Base", null, OcrWordsWhiten());
-                    if (bh.Count == 0) bh = FindPhraseAll("Base", null, OcrWords());
-                    if (bh.Count > 0)
-                    {
-                        sawBase = true; baseX = bh[0].X; baseY = bh[0].Y;
-                        Log("   Base label is visible at (" + baseX + "," + baseY + ") after panning");
-                    }
-                }
-            }
-
-            // THEN, if panning did not reveal it, zoom out. Do NOT bail early on "no change":
+            // Zoom out FIRST - the Base is usually just off the edge of the initial view, and the
+            // wheel reveals it without moving the pointer around. Do NOT bail early on "no change":
             // the wheel redraw is often too subtle for Signature/WaitChange to see, so an old
             // max-zoom guess fired while the map still had plenty of zoom to give. Over-scrolling
             // is harmless - the map just clamps at its own max zoom.
@@ -1660,6 +1639,29 @@ class RobloxAuto : Form
                 MoveOverGameSoft(z);
                 ScrollOut(2);
                 Thread.Sleep(140);
+            }
+
+            // THEN pan, but only gently - the drag is clamped away from the screen edges so it can
+            // never yank the pointer to the top of the window (which dragged the Roblox window
+            // around). Panning is the fallback for a Base sitting off to one side.
+            if (!sawBase)
+            {
+                int[,] pans = { { 520, 0 }, { -1040, 0 }, { 520, 0 }, { 0, 300 }, { 0, -600 }, { 0, 300 } };
+                for (int p = 0; p < 6 && !sawBase && Alive(g); p++)
+                {
+                    Log("   panning the map to look for the Base (" + (p + 1) + "/6)");
+                    FocusRoblox();
+                    DragPan(pans[p, 0], pans[p, 1]);
+                    Thread.Sleep(180);
+                    InvalidateOcr();
+                    List<Hit> bh = FindPhraseAll("Base", null, OcrWordsWhiten());
+                    if (bh.Count == 0) bh = FindPhraseAll("Base", null, OcrWords());
+                    if (bh.Count > 0)
+                    {
+                        sawBase = true; baseX = bh[0].X; baseY = bh[0].Y;
+                        Log("   Base label is visible at (" + baseX + "," + baseY + ") after panning");
+                    }
+                }
             }
 
             if (!sawBase)
@@ -3526,11 +3528,17 @@ class RobloxAuto : Form
         SetCursorPos(cx, cy); Thread.Sleep(80);
         INPUT[] dn = new INPUT[1]; dn[0].type = IN_MOUSE; dn[0].U.mi.flags = MV_LDOWN;
         SendInput(1, dn, cb); Thread.Sleep(80);
+        // Keep the pointer well inside the window. A large drag used to push it past the top
+        // edge, where Windows clamps it and the Roblox window gets shoved around - so clamp the
+        // absolute position with a margin instead.
+        int mgx = pb.Width / 5, mgy = pb.Height / 5;
         int steps = 24;
-        int px = 0, py = 0;
+        int px = cx, py = cy;
         for (int i = 1; i <= steps; i++)
         {
-            int tx = dx * i / steps, ty = dy * i / steps;
+            int tx = cx + dx * i / steps, ty = cy + dy * i / steps;
+            if (tx < mgx) tx = mgx; else if (tx > pb.Width - mgx) tx = pb.Width - mgx;
+            if (ty < mgy) ty = mgy; else if (ty > pb.Height - mgy) ty = pb.Height - mgy;
             INPUT[] mv = new INPUT[1]; mv[0].type = IN_MOUSE; mv[0].U.mi.flags = MV_MOVE;
             mv[0].U.mi.dx = tx - px; mv[0].U.mi.dy = ty - py;
             SendInput(1, mv, cb); px = tx; py = ty;
