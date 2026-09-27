@@ -4070,16 +4070,16 @@ class RobloxAuto : Form
         if (sx > -0.05f && sx < 0.05f) sx = 0f;
         if (sy > -0.05f && sy < 0.05f) sy = 0f;
 
-        // The RIGHT stick drives the ladder DIRECTLY: X = bank/tilt, Y = pitch. Both INTEGRATE (a
-        // rate) and HOLD, with the acceleration easing the motion. So when you bank, the lines stay
-        // banked with the horizon - they no longer snap back flat the moment you centre the stick to
-        // hold the turn.
-        float vTargetRoll = -sx * _hudRollRate;    // deg/s (bank)
+        // ROLL = the right stick X deflection, as an ANGLE. Centred stick -> the ladder is FLAT
+        // (level with the monitor); deflected -> it goes DIAGONAL. It is NOT integrated, so it can
+        // never hold a stale bank and sit diagonal while you are flying level.
+        float rollTarget = -sx * 45f;              // up to ~45 deg at full deflection
+        _hudFRoll += (rollTarget - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 0.12));
+
+        // PITCH keeps the rate + acceleration model.
         float vTargetPitch = -sy * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
         float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
-        _hudRollVel += (vTargetRoll - _hudRollVel) * av;
         _hudPitchVel += (vTargetPitch - _hudPitchVel) * av;
-        _hudFRoll += _hudRollVel * dt;
         _hudFPitch += _hudPitchVel * dt;
 
         // HORIZON LOCK (pitch). The camera measurement is the absolute reference that keeps the
