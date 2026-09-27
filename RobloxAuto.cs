@@ -154,7 +154,7 @@ class RobloxAuto : Form
 
     // ================= win32 =================
     const int WM_HOTKEY = 0x0312;
-    const int HK_REJOIN = 0x5A01, HK_AUTO = 0x5A02, HK_NIGHT = 0x5A03;
+    const int HK_REJOIN = 0x5A01, HK_AUTO = 0x5A02, HK_NIGHT = 0x5A03, HK_STOP = 0x5A04;
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
     [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
 
@@ -3947,6 +3947,10 @@ class RobloxAuto : Form
         UnregisterHotKey(Handle, HK_REJOIN);
         UnregisterHotKey(Handle, HK_AUTO);
         UnregisterHotKey(Handle, HK_NIGHT);
+        UnregisterHotKey(Handle, HK_STOP);
+        // F6 = STOP, so the flight stick can stop the flow (hotkey fires from any focus)
+        if (!RegisterHotKey(Handle, HK_STOP, 0, 0x75))
+            Log("WARNING: could not register F6 for STOP - another app already has it.");
         if (!RegisterHotKey(Handle, HK_REJOIN, 0, _hkRejoinKey))
             Log("WARNING: could not register " + ((Keys)_hkRejoinKey) + " - another app already has it. Use 'Set key' to choose another.");
         if (!RegisterHotKey(Handle, HK_AUTO, 0, _hkAutoKey))
@@ -3997,6 +4001,7 @@ class RobloxAuto : Form
             if (id == HK_REJOIN) { Log("hotkey " + ((Keys)_hkRejoinKey) + " pressed"); Rejoin("hotkey"); }
             else if (id == HK_AUTO) AutoRun();
             else if (id == HK_NIGHT) ToggleNightVision();
+            else if (id == HK_STOP) { Log("hotkey F6 -> STOP"); StopAuto(); }
         }
         base.WndProc(ref m);
     }
@@ -4030,6 +4035,7 @@ class RobloxAuto : Form
         UnregisterHotKey(Handle, HK_REJOIN);
         UnregisterHotKey(Handle, HK_AUTO);
         UnregisterHotKey(Handle, HK_NIGHT);
+        UnregisterHotKey(Handle, HK_STOP);
         ApplyNightVision(false);   // never leave the display inverted after exit
         SaveCfg();
         base.OnFormClosing(e);
