@@ -4120,8 +4120,8 @@ class RobloxAuto : Form
         float chg = _hudVBat + ripple;
         if (chg < 0.26f) chg = 0.26f;
         if (chg > 1f) chg = 1f;
-        _hudV1 = 13.2f + chg * 3.6f;             // 13.2 .. 16.8
-        _hudV2 = 13.2f + (chg * 0.992f) * 3.6f;  // second pack reads a hair lower
+        _hudV1 = 12.0f + chg * 8.0f;             // 12.0 .. 20.0V - wide range so it visibly jumps
+        _hudV2 = 12.0f + (chg * 0.992f) * 8.0f;  // second pack reads a hair lower
 
         string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
         OverlayHub.I.SetHud(true, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudFRoll, _hudPitch, _hudStyleUav, _hudV1, _hudV2);
@@ -5093,7 +5093,7 @@ class RobloxAuto : Form
             int bw = 16, bh = 24;
             g.DrawRectangle(_p, x, y, bw, bh);
             g.FillRectangle(_g, x + bw / 2 - 4, y - 4, 8, 4);          // terminal nub
-            float frac = (volts - 13.2f) / 3.6f;                        // 4S 13.2..16.8V
+            float frac = (volts - 12.0f) / 8.0f;                        // 12.0..20.0V
             if (frac < 0.06f) frac = 0.06f;
             if (frac > 1f) frac = 1f;
             int inner = bh - 6;
