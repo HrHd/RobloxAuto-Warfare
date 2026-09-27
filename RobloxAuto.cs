@@ -4916,11 +4916,14 @@ class RobloxAuto : Form
                         // the drone, so drop the HUD instead of leaving it stuck on screen.
                         int fs = ReadFlightSecs();   // FLIGHT (MAVIC) / FLY (FPV) clock
                         bool corner = CornerLinked();
-                        // "not flying" proof, two ways: a menu-only word, OR the screen classifier
-                        // recognising ANY of the game's UI screens (team select, lobby, loadout,
-                        // map, base panel, loading). The drone view matches none of them and
-                        // reports "unknown", so a positive match can only mean we left the drone.
-                        bool menu = MenuOnScreen() || ScreenName(OcrWords()) != "unknown";
+                        // "not flying" proof. Menu words, plus ONLY the unambiguous screen names.
+                        // We must NOT use the whole ScreenName() here: its "map" case matches the
+                        // bare word POINT, and the drone OSD prints "Return to a supply point" -
+                        // which was dropping the MAVIC HUD the moment the payload ran out.
+                        string sn = ScreenName(OcrWords());
+                        bool menu = MenuOnScreen()
+                            || sn == "team select" || sn == "lobby" || sn == "loadout"
+                            || sn == "team base" || sn == "loading";
                         bool inDrone = (fs >= 0 || corner || DroneKeyword()) && !menu;
                         if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
                         if (inDrone)
