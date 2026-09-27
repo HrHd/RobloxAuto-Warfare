@@ -3642,39 +3642,29 @@ class RobloxAuto : Form
         try
         {
             int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
-            // 1) top-right names the drone: "RC LIVE" over "MAVIC" / "FPV". Fastest, most reliable.
-            List<string[]> tr = OcrMaskedRegion(W * 80 / 100, 4, W, 120, 3);
+            // The drone OSD ALWAYS shows "RC LIVE" (MAVIC) or "LINK LIVE" (FPV) in the top-right
+            // corner. That word "LIVE" is the tell - the loadout / menus / nav bar do not have it
+            // there. Do NOT match MAVIC / FPV / GRENADE / PAYLOAD here: the loadout screen shows
+            // those words, and that is exactly what was popping the HUD up in the loadout.
+            List<string[]> tr = OcrMaskedRegion(W * 78 / 100, 2, W, 130, 3);
+            _detDbg = DumpWords(tr);
             if (tr != null)
                 foreach (string[] w in tr)
                 {
                     string t = (w[4] ?? "").ToUpperInvariant();
-                    if (t.IndexOf("MAVIC") >= 0 || t.IndexOf("FPV") >= 0 || t.IndexOf("LIVE") >= 0 || t.IndexOf("LINK") >= 0)
-                        return true;
+                    if (t.IndexOf("LIVE") >= 0 || t.IndexOf("LINK") >= 0) return true;
                 }
-            if (IsLinked()) return true;
-            // 2) bottom-right payload block ("PAYLOAD / 2 grenades ready"), widened to catch "ready"
-            List<string[]> ws = OcrMaskedRegion(W * 62 / 100, H - 95 * H / 1080, W, H - 4 * H / 1080, 3);
-            if (ws != null)
-                foreach (string[] w in ws)
-                {
-                    string t = (w[4] ?? "").ToUpperInvariant();
-                    if (t.IndexOf("PAYLOAD") >= 0 || t.IndexOf("MOUNTED") >= 0 ||
-                        t.IndexOf("GRENADE") >= 0 || t.IndexOf("READY") >= 0)
-                        return true;                          // payload readout = drone view
-                }
-            // 3) last resort: plain full-screen read for DRONE-SPECIFIC words only (never "live"/
-            // "link" on their own - those are what used to false-flag). Detect is opt-in so this
-            // broad read cannot pop the HUD up by accident.
-            List<string[]> all = OcrWords();
-            _detDbg = DumpWords(all);
-            if (all != null)
-                foreach (string[] w in all)
-                {
-                    string t = (w[4] ?? "").ToUpperInvariant();
-                    if (t.IndexOf("MAVIC") >= 0 || t.IndexOf("FPV") >= 0 || t.IndexOf("PAYLOAD") >= 0 ||
-                        t.IndexOf("GRENADE") >= 0 || t.IndexOf("MOUNTED") >= 0)
-                        return true;
-                }
+            // second chance with the plain read of that same corner (white text over pale sky can
+            // defeat the whiten mask)
+            int W2 = W * 78 / 100;
+            foreach (string[] w in OcrWords())
+            {
+                int wx, wy;
+                try { wx = int.Parse(w[0]); wy = int.Parse(w[1]); } catch { continue; }
+                if (wx < W2 || wy > 130) continue;
+                string t = (w[4] ?? "").ToUpperInvariant();
+                if (t.IndexOf("LIVE") >= 0 || t.IndexOf("LINK") >= 0) return true;
+            }
         }
         catch { }
         return false;
@@ -4676,11 +4666,11 @@ class RobloxAuto : Form
                             if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
                             ReadHudTop();             // heading + AGL
                             DetectHorizon();          // bank the artificial horizon
-                            bool mavic = DroneLooksMavic();   // top-right drone name, else payload
-                            if (mavic != _hudStyleUav)
+                            int st = DroneStyle();    // 1 MAVIC / 0 FPV / -1 unknown - only a positive read may flip
+                            if (st >= 0 && (st == 1) != _hudStyleUav)
                             {
-                                _hudStyleUav = mavic;
-                                Log("   drone on screen -> " + (mavic ? "UAV (DJI)" : "FPV") + " HUD");
+                                _hudStyleUav = (st == 1);
+                                Log("   drone on screen -> " + (_hudStyleUav ? "UAV (DJI)" : "FPV") + " HUD");
                             }
                         }
                     }
@@ -4835,7 +4825,8 @@ class RobloxAuto : Form
         try
         {
             int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
-            List<string[]> ws = OcrMaskedRegion(W * 62 / 100, H - 60 * H / 1080, W, H - 6 * H / 1080, 3);
+            // wider band so the payload STATUS line ("3 grenades ready" / "Payload empty") is caught
+            List<string[]> ws = OcrMaskedRegion(W * 62 / 100, H - 95 * H / 1080, W, H - 4 * H / 1080, 3);
             string all = "";
             if (ws != null)
                 foreach (string[] w in ws) all += (w[4] ?? "").ToUpperInvariant() + " ";
@@ -4848,6 +4839,39 @@ class RobloxAuto : Form
             return _hudStyleUav;                         // nothing readable - keep the current style
         }
         catch { return _hudStyleUav; }
+    }
+
+    // 1 = MAVIC, 0 = FPV, -1 = could not tell. Only a POSITIVE read may change the HUD style, so a
+    // failed read can never flip a MAVIC into the FPV layout (which is what happened in the drone).
+    int DroneStyle()
+    {
+        try
+        {
+            int W = Screen.PrimaryScreen.Bounds.Width;
+            List<string[]> ws = OcrMaskedRegion(W * 78 / 100, 2, W, 130, 3);
+            string dbg = DumpWords(ws);
+            if (dbg != _lastDroneDbg) { _lastDroneDbg = dbg; Log("   top-right OCR: " + dbg); }
+            if (ws != null)
+                foreach (string[] w in ws)
+                {
+                    string t = (w[4] ?? "").ToUpperInvariant();
+                    if (t.IndexOf("MAVIC") >= 0 || t.IndexOf("MAV") >= 0 || t.IndexOf("MAV1C") >= 0) return 1;
+                    if (t.IndexOf("FPV") >= 0 || t.IndexOf("FPY") >= 0) return 0;
+                }
+        }
+        catch { }
+        // fall back to the payload line - return -1 when unreadable so nothing changes
+        try
+        {
+            int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
+            List<string[]> ws = OcrMaskedRegion(W * 62 / 100, H - 95 * H / 1080, W, H - 4 * H / 1080, 3);
+            string all = "";
+            if (ws != null) foreach (string[] w in ws) all += (w[4] ?? "").ToUpperInvariant() + " ";
+            foreach (string k in new string[] { "RGO", "RACK", "GRENADE", "M67" }) if (all.IndexOf(k) >= 0) return 1;
+            foreach (string k in new string[] { "ROCKET", "PG-7", "PG7", "TBG", "THERMO", "SHAPED", "FRAG", "RPG" }) if (all.IndexOf(k) >= 0) return 0;
+        }
+        catch { }
+        return -1;
     }
 
     static bool LinkWords(List<string[]> ws)
