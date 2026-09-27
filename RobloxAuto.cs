@@ -1641,6 +1641,16 @@ class RobloxAuto : Form
         string state = ScreenName(ws0);
         Log("state on entry: " + state);
 
+        // If we start ON the map's POINT lock screen (one POINT, no TEAM BASE) a point got
+        // misclicked. Get out FIRST - otherwise "POINT" reads as "map" and the flow barrels on.
+        if (MapPointLockUp())
+        {
+            Log("entry: map POINT lock screen (misclick) - backing out with Return");
+            ClickRedReturn();
+            Thread.Sleep(500);
+            return;
+        }
+
         bool mapUp = PhraseIn("POINT", ws0) || PhraseIn("Base", ws0);
         bool panelUp = PhraseIn("TEAM BASE", ws0);
 
