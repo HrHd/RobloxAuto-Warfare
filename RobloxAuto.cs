@@ -2915,12 +2915,14 @@ class RobloxAuto : Form
         }
     }
 
-    // How green is a cell, as the mean of (green - the stronger of red/blue). The selected
-    // warhead is a green overlay; terrain showing through is green-ish too, so we never trust an
-    // absolute value - we compare the cells against each other.
-    float CellGreen(int[] px, int W, int H, int cx, int cy)
+    // Fraction of samples inside a cell that are STRONGLY green. Measured from a real capture:
+    // the selected warhead overlay reads about R75 G126 B50 (g-max(r,b) ~ 50, g ~ 126), while an
+    // unselected cell is neutral grey (R114 G115 B113) and terrain showing through is darker and
+    // mottled. So we count only bright, saturated green - a green-looking patch of grass does not
+    // score 1.0 the way the real overlay does.
+    float CellGreenFrac(int[] px, int W, int H, int cx, int cy)
     {
-        float sum = 0; int n = 0;
+        int green = 0, n = 0;
         int[] dxs = new int[] { -34, 0, 34 };
         int[] dys = new int[] { -14, 0, 14 };
         foreach (int dy in dys)
@@ -2930,23 +2932,25 @@ class RobloxAuto : Form
                 if (x < 0 || y < 0 || x >= W || y >= H) continue;
                 int v = px[y * W + x];
                 int b = v & 0xFF, g = (v >> 8) & 0xFF, r = (v >> 16) & 0xFF;
-                sum += (g - Math.Max(r, b)); n++;
+                if ((g - Math.Max(r, b)) >= 30 && g >= 95) green++;
+                n++;
             }
-        return n > 0 ? sum / n : 0f;
+        return n > 0 ? (float)green / n : 0f;
     }
 
     // Which warhead slot is the green selected one? Returns the slot index, or -1 when no single
-    // cell clearly stands out (so the caller clicks and verifies instead of assuming).
+    // cell clearly stands out (so the caller clicks and verifies instead of assuming). We require
+    // BOTH a strong score and a clear margin over the runner-up, so terrain can never fake it.
     int GreenSlot(int[] px, int W, int H, List<Point> cells, int count)
     {
-        float best = -9999f, second = -9999f; int bi = -1;
+        float best = -1f, second = -1f; int bi = -1;
         for (int i = 0; i < count && i < cells.Count; i++)
         {
-            float v = CellGreen(px, W, H, cells[i].X, cells[i].Y);
+            float v = CellGreenFrac(px, W, H, cells[i].X, cells[i].Y);
             if (v > best) { second = best; best = v; bi = i; }
             else if (v > second) second = v;
         }
-        if (bi >= 0 && best >= 14f && (best - second) >= 10f) return bi;
+        if (bi >= 0 && best >= 0.55f && (best - second) >= 0.25f) return bi;
         return -1;
     }
 
