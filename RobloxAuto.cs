@@ -1526,9 +1526,15 @@ class RobloxAuto : Form
         if (!GoOn(g)) return;
         if (!warheadOk)
         {
-            Log("7) NOT deploying - the " + _bomb + " box is not green");
+            // Wrong bombs / wrong loadout - do NOT deploy. Back out to the LOADOUT screen so the
+            // drone + warhead can be re-selected, then stop this run.
+            Log("7) wrong loadout (" + _bomb + " not equipped) - returning to LOADOUT, not deploying");
+            AddBlackLine("wrong loadout - back to loadout", "BAD");
+            ClickPhraseVerified("LOADOUT", g);
+            HideBlack();
+            return;
         }
-        else if (TeamBaseUp(panelUp))
+        if (TeamBaseUp(panelUp))
         {
             if (_asDrone)
             {
