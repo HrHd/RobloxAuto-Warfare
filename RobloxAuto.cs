@@ -93,6 +93,7 @@ class RobloxAuto : Form
     // live telemetry for the FPV/UAV HUD (read from the drone OSD)
     string _hudHome = "----", _hudSpd = "", _hudAlt = "", _hudAgl = "", _hudHdg = "";
     string _lastHudDbg = "";
+    string _lastDroneDbg = "";
     bool _ulwLogged = false;
     string _homeLastText = null;              // last accepted HOME, for the jump filter
     float _homeLastM = -1f;
@@ -101,7 +102,8 @@ class RobloxAuto : Form
     float _hudPitch = 0f, _hudPitchTarget = 0f;   // horizon vertical offset, px (eased)
     float _hudDetRoll = 0f, _hudDetPitch = 0f;    // what DetectHorizon last measured (image-based)
     float _padLx = 0f, _padLy = 0f, _padRx = 0f, _padRy = 0f;   // sticks, -1..1, dead-zoned
-    float _hudLockRoll = 0f, _hudLockPitch = 0f;  // horizon captured when the drone spawns
+    float _hudLockRoll = 0f, _hudLockPitch = 0f;  // base horizon (image-derived, corrected over time)
+    float _hudCtrlRoll = 0f, _hudCtrlPitch = 0f;  // stick rotation integrated on top of the base
     bool _hudLocked = false;
     bool _hudNeedLock = false;                    // true from Deploy As Drone until we lock
     bool _hudDetValid = false;                    // DetectHorizon found a confident line
@@ -4263,6 +4265,7 @@ class RobloxAuto : Form
                 string lastTxt = null;
                 bool lastOk = false;
                 long lastHud = 0;
+                long lastDet = 0;      // horizon measurement cadence (faster than the slow path)
 
                 while (_rfRun)
                 {
@@ -4376,6 +4379,14 @@ class RobloxAuto : Form
                         _hudPrevTick = nowT;
                         lastHud = nowT;
 
+                        // refresh the horizon ~3x/s (not only on the 1.5s slow pass) so it tracks
+                        // the camera quickly
+                        if (shown && nowT - lastDet >= 350)
+                        {
+                            lastDet = nowT;
+                            DetectHorizon();
+                        }
+
                         // Lock the horizon AT SPAWN: we start detecting the moment Deploy As Drone
                         // is clicked, so the first confident line is the spawn horizon and our
                         // lines begin aligned to it, then the controller rotates from there.
@@ -4388,6 +4399,7 @@ class RobloxAuto : Form
                                 _hudNeedLock = false;
                                 _hudLockRoll = _hudDetRoll;
                                 _hudLockPitch = _hudDetPitch;
+                                _hudCtrlRoll = _hudCtrlPitch = 0f;
                                 _hudRoll = _hudRollTarget = _hudLockRoll;
                                 _hudPitch = _hudPitchTarget = _hudLockPitch;
                                 Log("   horizon locked at spawn: roll " + _hudLockRoll.ToString("0") +
@@ -4395,23 +4407,35 @@ class RobloxAuto : Form
                             }
                         }
 
-                        // Use BOTH sticks: whichever the player is flying with rotates the horizon
-                        // (Roblox maps the right stick to the camera and the left to movement, and
-                        // either can bank). Rate control: the stick is a velocity, not an angle.
+                        // Sensor fusion for the horizon:
+                        //   base = what the camera sees (corrected whenever a horizon is detected)
+                        //   ctrl = stick rotation integrated on top (rate control)
+                        // display = base + ctrl.  So when the horizon is hidden behind terrain the
+                        // controller still drives it, and when the camera sees it again the base is
+                        // pulled back onto reality.
                         float sx = Math.Abs(_padLx) >= Math.Abs(_padRx) ? _padLx : _padRx;
                         float sy = Math.Abs(_padLy) >= Math.Abs(_padRy) ? _padLy : _padRy;
-                        _hudRollTarget += -sx * 110f * dt;
-                        _hudPitchTarget += sy * 200f * dt;
-                        if (sx == 0f) _hudRollTarget += (_hudLockRoll - _hudRollTarget) * 0.015f;
-                        if (sy == 0f) _hudPitchTarget += (_hudLockPitch - _hudPitchTarget) * 0.015f;
-                        if (_hudRollTarget > 80f) _hudRollTarget = 80f;
-                        if (_hudRollTarget < -80f) _hudRollTarget = -80f;
-                        if (_hudPitchTarget > 220f) _hudPitchTarget = 220f;
-                        if (_hudPitchTarget < -220f) _hudPitchTarget = -220f;
+                        _hudCtrlRoll += -sx * 110f * dt;
+                        _hudCtrlPitch += sy * 200f * dt;
+                        if (sx == 0f) _hudCtrlRoll += (0f - _hudCtrlRoll) * 0.02f;   // release -> recentre
+                        if (sy == 0f) _hudCtrlPitch += (0f - _hudCtrlPitch) * 0.02f;
+                        if (_hudCtrlRoll > 80f) _hudCtrlRoll = 80f;
+                        if (_hudCtrlRoll < -80f) _hudCtrlRoll = -80f;
+                        if (_hudCtrlPitch > 220f) _hudCtrlPitch = 220f;
+                        if (_hudCtrlPitch < -220f) _hudCtrlPitch = -220f;
+
+                        if (_hudDetValid)
+                        {
+                            // the camera sees a horizon - pull the base so base+ctrl matches it
+                            _hudLockRoll += (_hudDetRoll - (_hudLockRoll + _hudCtrlRoll)) * 0.28f;
+                            _hudLockPitch += (_hudDetPitch - (_hudLockPitch + _hudCtrlPitch)) * 0.28f;
+                        }
+                        _hudRollTarget = _hudLockRoll + _hudCtrlRoll;
+                        _hudPitchTarget = _hudLockPitch + _hudCtrlPitch;
 
                         float rollBefore = _hudRoll;
-                        _hudRoll += (_hudRollTarget - _hudRoll) * 0.25f;
-                        _hudPitch += (_hudPitchTarget - _hudPitch) * 0.25f;
+                        _hudRoll += (_hudRollTarget - _hudRoll) * 0.4f;
+                        _hudPitch += (_hudPitchTarget - _hudPitch) * 0.4f;
                         if (Math.Abs(_hudRoll - rollBefore) > 7f)
                             Log("   horizon roll " + _hudRoll.ToString("0") + "°  (stick x " + sx.ToString("0.00") + ")");
                         bool wantHud = shown && _hudOn;
@@ -4506,6 +4530,8 @@ class RobloxAuto : Form
         {
             int W = Screen.PrimaryScreen.Bounds.Width;
             List<string[]> ws = OcrMaskedRegion(W * 80 / 100, 4, W, 120, 3);
+            string dbg = DumpWords(ws);
+            if (dbg != _lastDroneDbg) { _lastDroneDbg = dbg; Log("   top-right OCR: " + dbg); }
             if (ws != null)
                 foreach (string[] w in ws)
                 {
@@ -4870,13 +4896,16 @@ class RobloxAuto : Form
             int n = 0;
             for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 6)
             {
-                int bestY = -1, bestG = 55;
+                // signed step: sky is ABOVE the horizon and brighter, so look for the strongest
+                // downward brightness drop, not any edge - an arbitrary terrain edge used to win
+                // and drag the line far below the real horizon.
+                int bestY = -1, bestG = 45;
                 for (int y = yTop; y < yBot; y += 2)
                 {
                     int c1 = px[(y - 4) * W + x], c2 = px[(y + 4) * W + x];
                     int g1 = ((c1 >> 8) & 0xFF) + (c1 & 0xFF) + ((c1 >> 16) & 0xFF);
                     int g2 = ((c2 >> 8) & 0xFF) + (c2 & 0xFF) + ((c2 >> 16) & 0xFF);
-                    int d = Math.Abs(g2 - g1);
+                    int d = g1 - g2;
                     if (d > bestG) { bestG = d; bestY = y; }
                 }
                 if (bestY >= 0) { pxs[n] = x; pys[n] = bestY; n++; }
