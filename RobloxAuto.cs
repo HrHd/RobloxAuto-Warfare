@@ -155,12 +155,14 @@ class RobloxAuto : Form
     float _hudBadLift = 5f;                         // DEGREES to lift the horizon when detector quality is
                                                     // poor (dial "bad lift") - a weak lock lands low, so
                                                     // we raise it back toward where it belongs
+    float _hudTexW = 1f;                            // how hard the TEXTURE cue (smooth sky / busy ground)
+                                                    // backs the colour cue (dial "texture"); 0 = off
     float _hudLeftPx = 0f;                         // px - max horizon offset from the LEFT stick (dial "thr pitch"); 0 = off
     float _hudPitStick = 280f;                      // px - DIRECT horizon offset from the RIGHT stick Y (dial "stick pitch")
                                                     //      push forward = line UP, pull back = line DOWN (signed: set - to invert)
     float _hudPitStickSm = 0f;                      // smoothed stick-pitch offset (glides, never jumps)
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numBadLift;
+    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numBadLift, numTexW;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
@@ -619,6 +621,8 @@ class RobloxAuto : Form
 
         numBadLift = MkTune(x, y, "bad lift (deg)", (decimal)_hudBadLift, -30m, 30m, 1m, 0);
         numBadLift.ValueChanged += delegate { _hudBadLift = (float)numBadLift.Value; SaveCfg(); };
+        numTexW = MkTune(x + 168, y, "texture", (decimal)_hudTexW, 0m, 3m, 0.1m, 1);
+        numTexW.ValueChanged += delegate { _hudTexW = (float)numTexW.Value; SaveCfg(); };
         y += 28;
 
         numThr = MkTune(x, y, "throttle", (decimal)_hudLeftPx, 0m, 120m, 2m, 0);
@@ -4923,6 +4927,7 @@ class RobloxAuto : Form
             else if (k == "hudThr") _hudLeftPx = ParseF(v);
             else if (k == "hudPStick") _hudPitStick = ParseF(v);
             else if (k == "hudBadLift") _hudBadLift = ParseF(v);
+            else if (k == "hudTexW") _hudTexW = ParseF(v);
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -4992,6 +4997,7 @@ class RobloxAuto : Form
             "hudThr=" + _hudLeftPx.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPStick=" + _hudPitStick.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudBadLift=" + _hudBadLift.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudTexW=" + _hudTexW.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "uav=" + (_hudStyleUav ? "1" : "0"),
             "night=" + (_nightVision ? "1" : "0"),
             "nightKey=" + _hkNightKey,
@@ -6318,17 +6324,32 @@ class RobloxAuto : Form
                 // scene (blue sky vs green ground vs dust), so we try all three and keep whichever
                 // gives the strongest sky/ground step. (Inverting is pointless - the step is the same.)
                 float[] imR = new float[gw * gh], imG = new float[gw * gh], imB = new float[gw * gh];
+                // TEXTURE map - the "blurred vs not" difference the user suggested, done cheaply: the mean
+                // local detail of each block. Sky is smooth (low), ground is busy (high), so this works
+                // even when the COLOURS are identical (fog/snow). Fused with the colour cue so a column
+                // only wins if it looks like sky/ground in BOTH colour and texture.
+                float[] imT = new float[gw * gh];
                 for (int gy = 0; gy < gh; gy++)
                     for (int gx = 0; gx < gw; gx++)
                     {
-                        long sr2 = 0, sg2 = 0, sb2 = 0; int c = 0;
+                        long sr2 = 0, sg2 = 0, sb2 = 0, td = 0; int c = 0, tc = 0;
                         for (int y = gy * B; y < gy * B + B && y < H; y++)
+                        {
+                            int prev = -1;
                             for (int x = gx * B; x < gx * B + B && x < W; x++)
-                            { int p = px[y * W + x]; sr2 += (p >> 16) & 0xFF; sg2 += (p >> 8) & 0xFF; sb2 += p & 0xFF; c++; }
+                            {
+                                int p = px[y * W + x];
+                                sr2 += (p >> 16) & 0xFF; sg2 += (p >> 8) & 0xFF; sb2 += p & 0xFF; c++;
+                                int l = (((p >> 16) & 255) * 299 + ((p >> 8) & 255) * 587 + (p & 255) * 114) / 1000;
+                                if (prev >= 0) { int d = l - prev; td += d < 0 ? -d : d; tc++; }
+                                prev = l;
+                            }
+                        }
                         int ii = gy * gw + gx;
                         imR[ii] = c > 0 ? sr2 / (float)c : 0f;
                         imG[ii] = c > 0 ? sg2 / (float)c : 0f;
                         imB[ii] = c > 0 ? sb2 / (float)c : 0f;
+                        imT[ii] = tc > 0 ? td / (float)tc : 0f;
                     }
                 int gx0 = gw * 20 / 100, gx1 = gw * 80 / 100, gy0 = gh * 8 / 100, gy1 = gh * 88 / 100;
                 float[] bx2 = new float[gw], by2 = new float[gw], bg2 = new float[gw];
@@ -6367,7 +6388,8 @@ class RobloxAuto : Form
                             float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
                             float above = (im[(gy - 1) * gw + gx] + im[(gy - 2) * gw + gx]) / 2f;
                             float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx]) / 2f;
-                            float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f;
+                            float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f
+                                        + ((imT[(gy + 1) * gw + gx] + imT[(gy + 2) * gw + gx]) - (imT[(gy - 1) * gw + gx] + imT[(gy - 2) * gw + gx])) * 0.5f * _hudTexW;
                             if (score > best) { best = score; by = gy; byGrad = g; }
                         }
                         if (by < 0 && trk)      // band empty -> fall back to the whole column
@@ -6377,7 +6399,8 @@ class RobloxAuto : Form
                                 float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
                                 float above = (im[(gy - 1) * gw + gx] + im[(gy - 2) * gw + gx]) / 2f;
                                 float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx]) / 2f;
-                                float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f;
+                                float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f
+                                        + ((imT[(gy + 1) * gw + gx] + imT[(gy + 2) * gw + gx]) - (imT[(gy - 1) * gw + gx] + imT[(gy - 2) * gw + gx])) * 0.5f * _hudTexW;
                                 if (score > best) { best = score; by = gy; byGrad = g; }
                             }
                         }
