@@ -4187,7 +4187,15 @@ class RobloxAuto : Form
         if (det)
         {
             float conf = _hudDetConf; if (conf < 0.05f) conf = 0.05f; if (conf > 1f) conf = 1f;
-            float tau = (0.15f + 1.6f * (1f - conf)) / Math.Max(0.05f, _hudImgGain);
+            // GYRO PRIORITY: while the right stick is being moved, trust the stick integration (the
+            // gyro) so the pilot's input drives the lines; as the stick returns to centre, let the
+            // IMAGE horizon take over and pull out any drift. That is a real complementary filter -
+            // fast stick, slow absolute - so the stick has real influence but it still never drifts.
+            float act = Math.Max(Math.Abs(sx), Math.Abs(sy));
+            if (act > 0.3f) act = 0.3f;
+            act /= 0.3f;                                   // 0 = centred, 1 = deflected
+            float imgW = (1f - 0.85f * act) * _hudImgGain;
+            float tau = (0.15f + 1.6f * (1f - conf)) / Math.Max(0.05f, imgW);
             float a = 1f - (float)Math.Pow(0.5, dt / tau);
             _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
             _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
