@@ -294,7 +294,7 @@ function tick() {
     var gl = glitchState(now);
     var lvl = s.level || 0;
     var op = gl ? Math.min(1, 0.30 + Math.random() * 0.22) : Math.min(0.42, lvl * 0.42);
-    var showStatic = (s.flight || s.hud) && (op > 0.01);
+    var showStatic = s.hud && (op > 0.01);   // never static when the HUD is off
     nc.style.display = showStatic ? 'block' : 'none';
     nc.style.opacity = showStatic ? op : 0;
 
