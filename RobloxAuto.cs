@@ -6186,7 +6186,26 @@ class RobloxAuto : Form
                         float gsum = 0f, wsum = 0f;
                         for (int i = 0; i < pn; i++) if (Math.Abs(by2[i] - (fm * bx2[i] + fb)) <= 24f) { gsum += bg2[i] * bg2[i]; wsum += bg2[i]; }
                         float gm = wsum > 0 ? gsum / wsum : 0f;
-                        if (gm > 1.5f) { slope = fm; icept = fb; gOk = true; conf = Math.Min(1f, gm / 12f); }
+                        // Require a real SKY/GROUND brightness step across the line. If the view is mostly
+                        // ONE colour (pitched hard up = all sky, or hard down = all ground) there is no
+                        // horizon to measure - so we do NOT lock, and the ladder simply carries on from
+                        // the stick and runs off the screen, exactly like the real ground line would.
+                        float above = 0f, below = 0f; int cc = 0;
+                        for (int gx = gx0; gx < gx1; gx++)
+                        {
+                            int yb = (int)((fm * (gx * B + B / 2f) + fb) / B);
+                            if (yb - 3 < 0 || yb + 3 >= gh) continue;
+                            above += lum[(yb - 3) * gw + gx];
+                            below += lum[(yb + 3) * gw + gx];
+                            cc++;
+                        }
+                        float contrast = cc > 0 ? Math.Abs(below - above) / cc : 0f;
+                        // Also reject a wild jump from the last good fix - a false line during a fast
+                        // pitch/roll. The complementary filter then just coasts on the stick.
+                        float rollNow = (float)(Math.Atan(fm) * 180.0 / Math.PI);
+                        bool jump = _hudSmSeeded && Math.Abs(rollNow - _hudSmRoll) > 50f;
+                        if (gm > 1.5f && contrast > 2.5f && !jump)
+                        { slope = fm; icept = fb; gOk = true; conf = Math.Min(1f, gm / 12f); }
                     }
                 }
             }
