@@ -138,8 +138,15 @@ class RobloxAuto : Form
     float _hudLockTau = 0.25f;                     // s - camera lock time constant when centred (small = snappy)
     float _hudFlyTau = 0.9f;                       // s - camera correction while flying
     float _hudBias = 6f;                           // px - constant downward offset of the detected line
+    // Pitch-ladder geometry (the "math" knobs):
+    //   rung n sits at  y = cy + pit + dpp * d        (d = rung angle in degrees)
+    //   its sideways slide is  xoff = -dpp * d * tan(bank) * shear   (exact shear of a rotated horizon)
+    float _hudDpp = 8f;                            // px per degree of pitch (rung spacing)
+    float _hudShear = 0.9f;                         // 0 = lines never slide, 1 = exact geometric shear
+    float _hudLen = 1f;                             // rung length scale
     float _hudLeftPx = 50f;                        // px - max horizon offset from the LEFT stick (bounded)
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
+    NumericUpDown numDpp, numShear, numLen;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
@@ -574,6 +581,16 @@ class RobloxAuto : Form
         numAccel = MkTune(x + 168, y, "accel s", (decimal)_hudAccelTau, 0.02m, 1.0m, 0.02m, 2);
         numBias.ValueChanged += delegate { _hudBias = (float)numBias.Value; SaveCfg(); };
         numAccel.ValueChanged += delegate { _hudAccelTau = (float)numAccel.Value; SaveCfg(); };
+        y += 28;
+
+        numDpp = MkTune(x, y, "rung px/deg", (decimal)_hudDpp, 1m, 40m, 1m, 0);
+        numShear = MkTune(x + 168, y, "shear", (decimal)_hudShear, -2m, 2m, 0.05m, 2);
+        numDpp.ValueChanged += delegate { _hudDpp = (float)numDpp.Value; SaveCfg(); };
+        numShear.ValueChanged += delegate { _hudShear = (float)numShear.Value; SaveCfg(); };
+        y += 28;
+
+        numLen = MkTune(x, y, "rung len", (decimal)_hudLen, 0.3m, 2.5m, 0.1m, 2);
+        numLen.ValueChanged += delegate { _hudLen = (float)numLen.Value; SaveCfg(); };
         y += 32;
 
         var l1 = new Label();
@@ -4133,6 +4150,7 @@ class RobloxAuto : Form
 
         string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
         OverlayHub.I.SetHud(true, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudFRoll, _hudPitch, _hudStyleUav, _hudV1, _hudV2);
+        OverlayHub.I.SetDials(_hudDpp, _hudShear, _hudLen);
 
         if (_hudForm == null) EnsureHud();          // UI thread - safe to create here
         if (_hudForm != null)
@@ -4143,6 +4161,7 @@ class RobloxAuto : Form
             _hudForm.Hdg = _hudHdg;
             _hudForm.Roll = _hudFRoll;
             _hudForm.PitchPx = _hudPitch;
+            _hudForm.Dpp = _hudDpp; _hudForm.Shear = _hudShear; _hudForm.Len = _hudLen;
             _hudForm.Uav = _hudStyleUav;
             _hudForm.V1 = _hudV1; _hudForm.V2 = _hudV2;
             _hudForm.Timer = string.Format("{0:00}:{1:00}", _hudSecs / 60, _hudSecs % 60);
@@ -4695,6 +4714,9 @@ class RobloxAuto : Form
             else if (k == "hudFly") _hudFlyTau = ParseF(v);
             else if (k == "hudBias") _hudBias = ParseF(v);
             else if (k == "hudAccel") _hudAccelTau = ParseF(v);
+            else if (k == "hudDpp") _hudDpp = ParseF(v);
+            else if (k == "hudShear") _hudShear = ParseF(v);
+            else if (k == "hudLen") _hudLen = ParseF(v);
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -4755,6 +4777,9 @@ class RobloxAuto : Form
             "hudFly=" + _hudFlyTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudBias=" + _hudBias.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAccel=" + _hudAccelTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudDpp=" + _hudDpp.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudShear=" + _hudShear.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudLen=" + _hudLen.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "uav=" + (_hudStyleUav ? "1" : "0"),
             "night=" + (_nightVision ? "1" : "0"),
             "nightKey=" + _hkNightKey,
@@ -4923,6 +4948,7 @@ class RobloxAuto : Form
         public float V1 = 0f, V2 = 0f;      // simulated pack voltages for the battery row
         public int Secs = 0;   // flight seconds - drives the draining battery readout
         public float Roll = 0f, PitchPx = 0f;
+        public float Dpp = 8f, Shear = 0.9f, Len = 1f;   // ladder geometry dials
         public bool Uav = false;
         readonly Font _f = new Font("Consolas", 12F, FontStyle.Bold);
         readonly Font _fb = new Font("Consolas", 15F, FontStyle.Bold);
@@ -5063,12 +5089,12 @@ class RobloxAuto : Form
             float spread = 1f + 1.1f * tilt;
             for (int d = -90; d <= 90; d += 10)
             {
-                float yy = PitchPx + d * 8f * spread;        // 10 deg = 8px, fanned by the tilt
-                float xoff = rad * yy * 0.9f;                // bank slides the rung sideways
+                float yy = PitchPx + d * Dpp * spread;       // dpp = px per degree, fanned by the tilt
+                float xoff = -(float)Math.Tan(rad) * yy * Shear;   // exact shear of a rotated horizon
                 float dist = Math.Abs(yy);
                 float af = dist <= 200f ? 1f : 1f - (dist - 200f) / 320f;   // fade 200px -> 520px
                 if (af <= 0.02f) continue;
-                float half = (d == 0 ? 150f : 70f) * (1f + 0.4f * tilt);
+                float half = (d == 0 ? 150f : 70f) * Len * (1f + 0.4f * tilt);
                 int aMain = (int)(230 * af), aThin = (int)(165 * af), aTxt = (int)(235 * af);
                 Pen pen = d == 0
                     ? new Pen(Color.FromArgb(aMain, 255, 255, 255), 2)
@@ -6415,6 +6441,7 @@ class RobloxAuto : Form
         float _roll = 0f, _pit = 0f;
         bool _uav = false;
         float _v1 = 0f, _v2 = 0f;
+        float _dpp = 8f, _shear = 0.9f, _len = 1f;   // ladder geometry dials (from settings)
         float _plx = 0f, _ply = 0f, _prx = 0f, _pry = 0f;   // live stick values (diagnostics)
         float _alx = 0f, _aly = 0f, _arx = 0f, _ary = 0f;   // stick values fed by the joystick app
         long _aPadAt = 0;
@@ -6463,6 +6490,8 @@ class RobloxAuto : Form
         }
         public void SetHud(bool on, string hdg, string spd, string agl, float roll, float pit, bool uav, float v1, float v2)
         { lock (_lock) { _hud = on; _hdg = hdg ?? ""; _spd = spd ?? ""; _agl = agl ?? ""; _roll = roll; _pit = pit; _uav = uav; _v1 = v1; _v2 = v2; } }
+        public void SetDials(float dpp, float shear, float len)
+        { lock (_lock) { _dpp = dpp; _shear = shear; _len = len; } }
         void Step() { lock (_lock) { _progress += (_target - _progress) * 0.12f; if (Math.Abs(_target - _progress) < 0.002f) _progress = _target; } }
 
         static string Esc(string s)
@@ -6503,6 +6532,9 @@ class RobloxAuto : Form
                     sb.Append(",\"pry\":").Append(_pry.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"v1\":").Append(_v1.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"v2\":").Append(_v2.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"dpp\":").Append(_dpp.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"shear\":").Append(_shear.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"len\":").Append(_len.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"lines\":[");
                     for (int i = 0; i < _lines.Count; i++)
                     {
