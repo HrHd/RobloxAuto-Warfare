@@ -6116,12 +6116,72 @@ class RobloxAuto : Form
             int n = 0;
             bool gOk = false; float slope = 0f, icept = 0f; float conf = 0f;
 
-            // --- primary: GLOBAL line search. Score = ROBUST gradient (40th percentile, so a localized
+            // --- PRIMARY: BLURRED sky/ground transition (the "blur then find the medium in the centre"
+            // idea). Block-averaging the frame is a heavy blur that erases local detail - trees, roads,
+            // a smoke plume - leaving only the broad sky->ground change. In the CENTRE columns we find
+            // the row of the strongest vertical transition and fit a line through those points. Tested:
+            // a ~24px blur lands the horizon at y=233 / roll -1.7 on a frame where every full-res edge
+            // search locked onto the road. ---
+            {
+                int B = Math.Max(8, H / 25);
+                int gw = W / B, gh = H / B;
+                float[] lum = new float[gw * gh];
+                for (int gy = 0; gy < gh; gy++)
+                    for (int gx = 0; gx < gw; gx++)
+                    {
+                        long s = 0; int c = 0;
+                        for (int y = gy * B; y < gy * B + B && y < H; y++)
+                            for (int x = gx * B; x < gx * B + B && x < W; x++)
+                            { int p = px[y * W + x]; s += (((p >> 16) & 0xFF) * 299 + ((p >> 8) & 0xFF) * 587 + (p & 0xFF) * 114) / 1000; c++; }
+                        lum[gy * gw + gx] = c > 0 ? s / (float)c : 0f;
+                    }
+                int gx0 = gw * 30 / 100, gx1 = gw * 70 / 100, gy0 = gh * 15 / 100, gy1 = gh * 85 / 100;
+                float[] bx2 = new float[gw], by2 = new float[gw], bg2 = new float[gw];
+                int pn = 0;
+                for (int gx = gx0; gx < gx1; gx++)
+                {
+                    float best = -1f; int by = -1;
+                    for (int gy = gy0 + 1; gy < gy1 - 1; gy++)
+                    {
+                        float g = Math.Abs(lum[(gy + 1) * gw + gx] - lum[(gy - 1) * gw + gx]);
+                        if (g > best) { best = g; by = gy; }
+                    }
+                    if (by >= 0) { bx2[pn] = gx * B + B / 2f; by2[pn] = by * B + B / 2f; bg2[pn] = best; pn++; }
+                }
+                if (pn >= 12)
+                {
+                    float fm = 0f, fb = 0f;
+                    for (int pass = 0; pass < 2; pass++)     // fit, then one outlier-rejection refit
+                    {
+                        double sx = 0, sy = 0, sxy = 0, sxx = 0; int c = 0;
+                        for (int i = 0; i < pn; i++)
+                        {
+                            if (pass == 1 && Math.Abs(by2[i] - (fm * bx2[i] + fb)) > 24f) continue;
+                            sx += bx2[i]; sy += by2[i]; sxy += bx2[i] * by2[i]; sxx += bx2[i] * bx2[i]; c++;
+                        }
+                        double den = c * sxx - sx * sx;
+                        if (c < 8 || Math.Abs(den) < 1) break;
+                        fm = (float)((c * sxy - sx * sy) / den);
+                        fb = (float)((sy - fm * sx) / c);
+                    }
+                    if (Math.Abs(fm) <= 1.0f)
+                    {
+                        float gsum = 0f; int gc = 0;
+                        for (int i = 0; i < pn; i++) if (Math.Abs(by2[i] - (fm * bx2[i] + fb)) <= 24f) { gsum += bg2[i]; gc++; }
+                        float gm = gc > 0 ? gsum / gc : 0f;
+                        if (gm > 1.5f) { slope = fm; icept = fb; gOk = true; conf = Math.Min(1f, gm / 12f); }
+                    }
+                }
+            }
+
+            // --- FALLBACK (only if the blurred search found nothing): full-res gradient + sky term.
+            // Score = ROBUST gradient (40th percentile, so a localized
             // high-contrast streak - a smoke plume, a road - cannot win) PLUS a SKY/GROUND colour term:
             // the band ABOVE the line should match the sky reference, the band BELOW should not. That is
             // the logical definition of a horizon, and it is what separates the sky/ground edge from any
             // strong terrain edge. Coarse sweep, then fine sweep around the winner. ---
             float[] ns = new float[(W * 5 / 6 - W / 6) / 2 + 4];
+            if (!gOk)
             {
                 float bestScore = 0f; float bm = 0f; int bb = H / 2;
                 for (int m100 = -60; m100 <= 60; m100 += 4)
