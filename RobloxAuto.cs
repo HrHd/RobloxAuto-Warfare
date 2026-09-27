@@ -76,7 +76,7 @@ class RobloxAuto : Form
     Label lblKeyVal, lblNightVal;
     bool _capturingKey = false;
     ComboBox cmbTeam, cmbDrone, cmbBomb, cmbPadRejoin, cmbPadAuto, cmbPadStop, cmbPadLand, cmbPadReconnect;
-    CheckBox chkAsDrone, chkAutoRecon, chkOcrWatch, chkPadRejoin, chkPadAuto, chkPadStop, chkPadLand, chkPadReconnect, chkTop, chkNoAct, chkClickKey;
+    CheckBox chkAsDrone, chkAutoRecon, chkOcrWatch, chkPadRejoin, chkPadAuto, chkPadStop, chkPadLand, chkPadReconnect, chkTop, chkNoAct, chkClickKey, chkHudAuto;
     CheckBox chkStepTeam, chkStepDrone, chkStepDeploy, chkStepBase, chkStepBomb;
     CheckBox chkAutoAfterRejoin;
     NumericUpDown numAutoDelay;
@@ -85,6 +85,7 @@ class RobloxAuto : Form
     int _autoAfterRejoinMs = 5000;      // small settle so the reconnect begins before AUTO
     int _preRejoinMs = 0;               // hold this long (LAND NOW showing) before relaunching
     bool _watchHome = false;            // after Deploy As Drone, count down the distance to HOME
+    bool _hudAutoDetect = false;        // scan the screen for a drone view (only needed if you pick a drone BY HAND)
     CheckBox chkRfWatch;
     RFOverlayForm _rfForm = null;
     System.Windows.Forms.Timer _rfBlink = null;
@@ -130,7 +131,7 @@ class RobloxAuto : Form
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
     DateTime _leftAt = DateTime.MinValue;        // when the player voluntarily left a server
-    ConsoleForm _black = null;          // terminal-style cover shown while reconnecting
+        ConsoleForm _black = null;          // terminal-style cover shown while reconnecting
     volatile bool _blackWatch = false;
     float _flowPct = 0f;                // monotonic CLI progress across the whole flow
     bool _blackScreen = true;           // show the black cover while reconnecting
@@ -621,6 +622,14 @@ class RobloxAuto : Form
         lblHudStyle.SetBounds(x + 156, y + 3, 200, 20);
         Controls.Add(lblHudStyle);
         y += 26;
+
+        chkHudAuto = new CheckBox();
+        chkHudAuto.Text = "auto-detect drone view (only if you pick a drone by hand)";
+        chkHudAuto.SetBounds(x, y, 380, 22);
+        chkHudAuto.Checked = _hudAutoDetect;
+        chkHudAuto.CheckedChanged += delegate { _hudAutoDetect = chkHudAuto.Checked; SaveCfg(); };
+        Controls.Add(chkHudAuto);
+        y += 24;
 
         chkNight = new CheckBox();
         chkNight.Text = "Night vision (invert display)";
@@ -3602,6 +3611,10 @@ class RobloxAuto : Form
             if (_running) return;
             if (_rfForm != null) return;                     // already running
             if (!_hudOn && !_watchHome) return;              // nothing to show
+            // Normally the HUD starts from the flow (Deploy As Drone) - only scan the screen for a
+            // drone view when the user opts in, i.e. they picked a drone by hand. Otherwise the
+            // scan false-flagged on random UI text and popped the HUD up out of nowhere.
+            if (!_hudAutoDetect) return;
             if (DroneViewOnScreen())
             {
                 Log("drone view already on screen - starting the RF/HUD");
@@ -4113,6 +4126,7 @@ class RobloxAuto : Form
                 else if (k == "autoAfterRejoinMs") _autoAfterRejoinMs = int.Parse(v);
                 else if (k == "preRejoinMs") _preRejoinMs = int.Parse(v);
                 else if (k == "watchHome") _watchHome = v == "1";
+                else if (k == "hudAutoDetect") _hudAutoDetect = v == "1";
             else if (k == "hud") _hudOn = v == "1";
             else if (k == "hudPitch") _hudPitchRate = ParseF(v);
             else if (k == "hudRoll") _hudRollRate = ParseF(v);
@@ -4163,6 +4177,7 @@ class RobloxAuto : Form
                 "autoAfterRejoinMs=" + _autoAfterRejoinMs,
                 "preRejoinMs=" + _preRejoinMs,
             "watchHome=" + (_watchHome ? "1" : "0"),
+            "hudAutoDetect=" + (_hudAutoDetect ? "1" : "0"),
             "blackScreen=" + (_blackScreen ? "1" : "0"),
             "hud=" + (_hudOn ? "1" : "0"),
             "hudPitch=" + _hudPitchRate.ToString(System.Globalization.CultureInfo.InvariantCulture),
