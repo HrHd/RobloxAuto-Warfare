@@ -154,7 +154,7 @@ class RobloxAuto : Form
 
     // ================= win32 =================
     const int WM_HOTKEY = 0x0312;
-    const int HK_REJOIN = 0x5A01, HK_AUTO = 0x5A02, HK_NIGHT = 0x5A03, HK_STOP = 0x5A04;
+    const int HK_REJOIN = 0x5A01, HK_AUTO = 0x5A02, HK_NIGHT = 0x5A03, HK_STOP = 0x5A04, HK_INSTANT = 0x5A05;
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
     [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
 
@@ -4199,9 +4199,13 @@ class RobloxAuto : Form
         UnregisterHotKey(Handle, HK_AUTO);
         UnregisterHotKey(Handle, HK_NIGHT);
         UnregisterHotKey(Handle, HK_STOP);
+        UnregisterHotKey(Handle, HK_INSTANT);
         // F6 = STOP, so the flight stick can stop the flow (hotkey fires from any focus)
         if (!RegisterHotKey(Handle, HK_STOP, 0, 0x75))
             Log("WARNING: could not register F6 for STOP - another app already has it.");
+        // F9 = INSTANT RECONNECT - straight relaunch into the same server, NO "LAND NOW" text.
+        if (!RegisterHotKey(Handle, HK_INSTANT, 0, 0x78))
+            Log("WARNING: could not register F9 for instant reconnect - another app already has it.");
         if (!RegisterHotKey(Handle, HK_REJOIN, 0, _hkRejoinKey))
             Log("WARNING: could not register " + ((Keys)_hkRejoinKey) + " - another app already has it. Use 'Set key' to choose another.");
         if (!RegisterHotKey(Handle, HK_AUTO, 0, _hkAutoKey))
@@ -4253,6 +4257,7 @@ class RobloxAuto : Form
             else if (id == HK_AUTO) AutoRun();
             else if (id == HK_NIGHT) ToggleNightVision();
             else if (id == HK_STOP) { Log("hotkey F6 -> STOP"); StopAuto(); }
+            else if (id == HK_INSTANT) { Log("hotkey F9 -> instant reconnect (no LAND NOW)"); Rejoin("hotkey instant", false); }
         }
         base.WndProc(ref m);
     }
@@ -4273,7 +4278,7 @@ class RobloxAuto : Form
         RegisterHotkeys();
         lblKeyVal.Text = ((Keys)_hkRejoinKey).ToString();
         if (lblNightVal != null) lblNightVal.Text = ((Keys)_hkNightKey).ToString();
-        Log("ready.  " + ((Keys)_hkRejoinKey) + " = rejoin,  F5 = AUTO RUN,  " + ((Keys)_hkNightKey) + " = night vision.");
+        Log("ready.  " + ((Keys)_hkRejoinKey) + " = rejoin (LAND NOW),  F9 = instant reconnect (no LAND NOW),  F5 = AUTO RUN,  " + ((Keys)_hkNightKey) + " = night vision.");
         if (_placeId != "") Log("server ready: " + _serverId);
         else Log("no server detected yet - launch Roblox once, then Refresh");
         try { OverlayHub.I.SetMission(_team, _drone, _bomb); OverlayHub.I.Start(_appDir); Log("OBS overlay: add a Browser Source -> http://localhost:8730/"); } catch { }
@@ -5129,13 +5134,23 @@ class RobloxAuto : Form
     // down immediately; the 30s timeout only covers the case where the OSD simply reads blank.
     bool MenuOnScreen()
     {
+        // Chosen from real OCR of each screen. DELIBERATELY EXCLUDED because they appear on BOTH a
+        // menu and the drone OSD: POINT (map vs MAVIC "supply point"), RETURN (TEAM BASE vs MAVIC
+        // "Return to a supply point"), BASE (map "Base" vs "TEAM BASE"), and the warhead words
+        // FRAG/ROCKET/THERMO (TEAM BASE vs the FPV payload line).
         string[] keys = new string[] {
-            "LOADOUT", "SETTINGS", "DEPLOY", "WARHEAD", "SQUAD", "FEATURED",
-            "COMPLETED", "GHILLE", "GRILLE", "SECONDARY", "PRIMARY", "MARKSMAN",
-            "EQUIPMENT", "CUSTOMIZATION", "CHANGE TEAM", "TEAM BASE", "SELECT DRONE", "TOP KILLS",
-            // team select / respawn / loading / spectating - these screens have NO nav bar, so the
-            // nav words above never matched and the HUD used to linger on them for the full 30s
-            "PLAYERS", "JOINING", "RESPAWN", "SPECTAT", "DEPLOYING"
+            // nav bar / lobby / loadout / settings
+            "LOADOUT", "SETTINGS", "SHOP", "CHANGE TEAM", "SELECT DRONE",
+            "AUDIO", "GRAPHICS", "BINDINGS", "VIEWMODEL", "ATTACHMENTS", "EQUIPMENT", "CUSTOMIZATION",
+            // TEAM BASE panel
+            "TEAM BASE", "WARHEAD",
+            // the map's objective panel
+            "CAPTURE", "CONTROL", "ELIMINATE", "TOP KILLS", "COMPLETED",
+            // team select / respawn / loading / crash (these screens have NO nav bar, which is why
+            // the HUD used to linger on them)
+            "PLAYERS", "JOINING", "RESPAWN", "SPECTAT", "DEPLOYING", "SIGNAL",
+            // the persistent SQUAD box
+            "SQUAD"
         };
         try
         {
