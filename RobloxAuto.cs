@@ -4308,8 +4308,8 @@ class RobloxAuto : Form
 
         if (_hudFRoll > 180f) _hudFRoll = 180f;
         if (_hudFRoll < -180f) _hudFRoll = -180f;
-        if (_hudFPitch > 900f) _hudFPitch = 900f;    // was +-280px (~35deg) - it ran out of travel
-        if (_hudFPitch < -900f) _hudFPitch = -900f;
+        if (_hudFPitch > 1600f) _hudFPitch = 1600f;  // lots of travel so the horizon can leave the frame
+        if (_hudFPitch < -1600f) _hudFPitch = -1600f; // (pointed at the ground -> it runs off the top)
 
         _hudRoll = _hudFRoll + _hudRollOff;                 // + manual roll offset (dial)
         _hudPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff;   // + left-stick + right-stick pitch + manual offset
