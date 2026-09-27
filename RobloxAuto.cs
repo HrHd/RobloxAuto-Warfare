@@ -4072,7 +4072,7 @@ class RobloxAuto : Form
             SolidBrush white = new SolidBrush(Color.FromArgb(238, 255, 255, 255));
             SolidBrush dim = new SolidBrush(Color.FromArgb(205, 235, 235, 235));
             SolidBrush recB = new SolidBrush(Color.FromArgb(230, 226, 32, 32));
-            Pen grid = new Pen(Color.FromArgb(58, 255, 255, 255), 1);
+            Pen grid = new Pen(Color.FromArgb(115, 255, 255, 255), 3);
             Pen thin = new Pen(Color.FromArgb(150, 255, 255, 255), 1);
             Pen recP = new Pen(Color.FromArgb(230, 226, 32, 32), 2);
 
@@ -4089,21 +4089,19 @@ class RobloxAuto : Form
             // top-left under the game's phone icons
             g.DrawString("N Mode", _fm, white, 30, 76);
 
-            // top-right, under the game's "RC LIVE / MAVIC"
-            int rEdge = W - 22;
-            g.DrawString("RC", _fs, white, rEdge - 40, 70);
-            for (int i = 0; i < 4; i++) g.FillRectangle(white, rEdge - 44 + i * 8, 96 - i * 6, 5, 7 + i * 6);
+            // top-right, under the game's "RC LIVE": signal bars + a battery pill with a nub
+            int rEdge = W - 26;
+            for (int i = 0; i < 4; i++)
+                g.FillRectangle(white, rEdge - 150 + i * 8, 90 - i * 6, 5, 6 + i * 6);
             SizeF pct = g.MeasureString("96%", _fs);
-            g.DrawString("96%", _fs, white, rEdge - pct.Width, 70);
-            int bx = (int)(rEdge - pct.Width - 52);
-            g.DrawRectangle(thin, bx, 72, 40, 18);
-            g.FillRectangle(white, bx + 2, 74, 34, 14);
+            g.DrawString("96%", _fs, white, rEdge - 92 - pct.Width, 70);
+            g.DrawRectangle(thin, rEdge - 48, 72, 44, 20);
+            g.FillRectangle(white, rEdge - 45, 75, 32, 14);   // ~86% fill
+            g.FillRectangle(white, rEdge - 4, 78, 4, 8);      // nub
 
-            // telemetry to the LEFT-CENTRE - the game already prints H/D/H.S at the bottom-left,
-            // so drawing ours there just overlaid it. This column is empty sky/ground.
-            float altFt = Num(Alt) * 3.28084f, spdMph = Num(Spd) * 2.23694f, homeFt = Num(Home) * 3.28084f;
-            g.DrawString(altFt.ToString("0") + "ft   " + spdMph.ToString("0.0") + "mph", _fm, white, 44, H / 2 - 150);
-            g.DrawString("HOME " + (homeFt > 0 ? homeFt.ToString("0") + "ft" : "----"), _fm, white, 44, H / 2 - 118);
+            // just the height on the left - the game already prints speed + distance bottom-left
+            float altFt = Num(Alt) * 3.28084f;
+            g.DrawString("ALT " + altFt.ToString("0") + " ft", _fm, white, 44, H / 2 - 140);
 
             // bottom-centre (free): resolution + recording time
             g.DrawString("4K 30", _fm, white, W / 2 - 130, H - 94);

@@ -71,9 +71,9 @@ function drawMavic(s, W, H) {
   var sans = 'bold "Segoe UI", "Segoe UI Symbol", Arial, sans-serif';
   hctx.clearRect(0, 0, W, H);
 
-  // rule-of-thirds grid
-  hctx.strokeStyle = 'rgba(255,255,255,0.22)';
-  hctx.lineWidth = 1;
+  // rule-of-thirds grid (thicker so it reads on the OBS overlay)
+  hctx.strokeStyle = 'rgba(255,255,255,0.45)';
+  hctx.lineWidth = 3;
   for (var i = 1; i <= 2; i++) {
     hctx.beginPath(); hctx.moveTo(W * i / 3, 0); hctx.lineTo(W * i / 3, H); hctx.stroke();
     hctx.beginPath(); hctx.moveTo(0, H * i / 3); hctx.lineTo(W, H * i / 3); hctx.stroke();
@@ -90,24 +90,23 @@ function drawMavic(s, W, H) {
   hctx.font = 'bold 22px "Segoe UI", Arial, sans-serif';
   hctx.fillText('N Mode', 30, 76);          // under the game's phone icons
 
-  // top-right, under the game's "RC LIVE / MAVIC"
+  // top-right, under the game's "RC LIVE": signal bars + a battery pill with a nub
+  var rEdge = W - 26;
+  for (var b = 0; b < 4; b++) hctx.fillRect(rEdge - 150 + b * 8, 90 - b * 6, 5, 6 + b * 6);
   var pct = '96%';
-  var pw = hctx.measureText(pct).width;
-  hctx.fillText(pct, W - 22 - pw, 70);
-  var bx = W - 22 - pw - 52;
-  hctx.strokeStyle = 'rgba(255,255,255,0.6)'; hctx.lineWidth = 1;
-  hctx.strokeRect(bx, 72, 40, 18);
-  hctx.fillRect(bx + 2, 74, 34, 14);
   hctx.font = '17px "Segoe UI", Arial, sans-serif';
-  hctx.fillText('RC', W - 62, 68);
-  for (var b = 0; b < 4; b++) hctx.fillRect(W - 46 + b * 8, 96 - b * 6, 5, 7 + b * 6);
+  var pw = hctx.measureText(pct).width;
+  hctx.fillText(pct, rEdge - 92 - pw, 70);
+  hctx.strokeStyle = 'rgba(255,255,255,0.6)'; hctx.lineWidth = 1;
+  hctx.strokeRect(rEdge - 48, 72, 44, 20);
+  hctx.fillRect(rEdge - 45, 75, 32, 14);
+  hctx.fillRect(rEdge - 4, 78, 4, 8);
 
-  // telemetry at the LEFT-CENTRE (the game prints H/D/H.S at the bottom-left already)
-  var altFt = jnum(s.agl) * 3.28084, spdMph = jnum(s.spd) * 2.23694, homeFt = jmetres(s.home) * 3.28084;
+  // just the height on the left - the game already prints speed + distance bottom-left
+  var altFt = jnum(s.agl) * 3.28084;
   hctx.fillStyle = col;
   hctx.font = 'bold 24px "Segoe UI", Arial, sans-serif';
-  hctx.fillText(altFt.toFixed(0) + 'ft   ' + spdMph.toFixed(1) + 'mph', 44, H / 2 - 150);
-  hctx.fillText('HOME ' + (homeFt > 0 ? homeFt.toFixed(0) + 'ft' : '----'), 44, H / 2 - 118);
+  hctx.fillText('ALT ' + altFt.toFixed(0) + ' ft', 44, H / 2 - 140);
 
   // bottom-centre (free): resolution + recording time
   var secs = s.secs || 0, mm = Math.floor(secs / 60), ss = secs % 60;
@@ -234,8 +233,7 @@ function tick() {
 
     drawHud(s);
 
-    if (s.home && s.home !== '----') { home.style.display = 'block'; home.textContent = 'HOME ' + s.home; }
-    else        { home.style.display = 'none'; }
+    home.style.display = 'none';   // no big bottom-right HOME readout anymore
   }).catch(function(){});
 }
 setInterval(tick, 120);
