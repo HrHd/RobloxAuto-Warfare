@@ -5226,25 +5226,31 @@ class RobloxAuto : Form
         try
         {
             int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
-            List<string[]> ws = OcrMaskedRegion(2, 2, 340 * W / 1920, 64 * H / 1080, 4);
-            if (ws == null) return -1;
-            string all = "";
-            foreach (string[] w in ws) all += (w[4] ?? "") + " ";
-            string up = all.ToUpperInvariant();
-            // must actually say FLIGHT (fuzzy - the OCR mangles it) so we do not match a stray number
-            bool label = up.IndexOf("FLIGHT") >= 0 || up.IndexOf("FL1GHT") >= 0 ||
-                         up.IndexOf("FLGHT") >= 0 || up.IndexOf("FLIG") >= 0;
-            // mm:ss (the OCR often drops the colon - then take the 4 digits after the label)
-            Match m = Regex.Match(all, @"(\d{1,2})\s*[:.;]\s*(\d{2})");
-            if (m.Success) return int.Parse(m.Groups[1].Value) * 60 + int.Parse(m.Groups[2].Value);
-            if (label)
-            {
-                Match d = Regex.Match(all, @"(\d{1,2})\s?(\d{2})\b");
-                if (d.Success) return int.Parse(d.Groups[1].Value) * 60 + int.Parse(d.Groups[2].Value);
-            }
-            return -1;
+            // MAVIC prints "FLIGHT mm:ss" top-left; FPV prints "FLY mm:ss" BOTTOM-RIGHT. Read both.
+            int v = ParseFlight(OcrMaskedRegion(2, 2, 340 * W / 1920, 64 * H / 1080, 4));
+            if (v < 0) v = ParseFlight(OcrMaskedRegion(W * 88 / 100, H * 88 / 100, W, H - 2, 3));
+            return v;
         }
         catch { return -1; }
+    }
+
+    static int ParseFlight(List<string[]> ws)
+    {
+        if (ws == null) return -1;
+        string all = "";
+        foreach (string[] w in ws) all += (w[4] ?? "") + " ";
+        string up = all.ToUpperInvariant();
+        bool label = up.IndexOf("FLIGHT") >= 0 || up.IndexOf("FLY") >= 0 ||
+                     up.IndexOf("FL1GHT") >= 0 || up.IndexOf("FLGHT") >= 0 || up.IndexOf("FLIG") >= 0;
+        // mm:ss (colon may be dropped - then fall back to 4 digits, but only next to a FLIGHT label)
+        Match m = Regex.Match(all, @"(\d{1,2})\s*[:.;]\s*(\d{2})");
+        if (m.Success) return int.Parse(m.Groups[1].Value) * 60 + int.Parse(m.Groups[2].Value);
+        if (label)
+        {
+            Match d = Regex.Match(all, @"(\d{1,2})\s?(\d{2})\b");
+            if (d.Success) return int.Parse(d.Groups[1].Value) * 60 + int.Parse(d.Groups[2].Value);
+        }
+        return -1;
     }
 
     static string ValueAfterLabel(List<string[]> ws, string label)
