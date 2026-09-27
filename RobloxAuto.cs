@@ -3649,7 +3649,7 @@ class RobloxAuto : Form
         // Pitch = BOTH sticks' Y summed: in this game the camera pitch is on a stick Y and the other
         // Y is the throttle - both move the drone's pitch, so both must move the horizon.
         float sx = _padRx;
-        float sy = _padLy + _padRy;
+        float sy = _padLy * 0.3f + _padRy;   // left stick (throttle) only nudges the horizon a bit
         // kill stick rest/drift below 5% so "centred" actually happens - a stick sitting at 0.13
         // used to leave sx non-zero and the camera correction never ran (lines never levelled)
         if (sx > -0.05f && sx < 0.05f) sx = 0f;
