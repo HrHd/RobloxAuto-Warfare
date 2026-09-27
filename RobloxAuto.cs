@@ -2334,12 +2334,15 @@ class RobloxAuto : Form
             // markers (header / Deploy As Drone / WARHEAD) are absent.
             List<string[]> ws = OcrWords();
             List<string[]> ww = OcrWordsWhiten();
-            bool phrase = PhraseIn("lock in your choice", ws) || PhraseIn("Press Deploy button", ws)
-                       || PhraseIn("lock in your choice", ww) || PhraseIn("Press Deploy button", ww);
-            if (!phrase) return false;
             bool basePanel = PhraseIn("TEAM BASE", ws) || PhraseIn("DEPLOY AS DRONE", ws) || PhraseIn("WARHEAD", ws)
                           || PhraseIn("TEAM BASE", ww) || PhraseIn("DEPLOY AS DRONE", ww) || PhraseIn("WARHEAD", ww);
-            return !basePanel;
+            if (basePanel) return false;
+            // Easiest tell: a "POINT" label on screen with NO TEAM BASE panel = a map point got
+            // selected (misclick), so we must back out with Return.
+            if (PhraseIn("POINT", ws) || PhraseIn("POINT", ww)) return true;
+            bool phrase = PhraseIn("lock in your choice", ws) || PhraseIn("Press Deploy button", ws)
+                       || PhraseIn("lock in your choice", ww) || PhraseIn("Press Deploy button", ww);
+            return phrase;
         }
         catch { }
         return false;
