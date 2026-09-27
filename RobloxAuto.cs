@@ -4070,16 +4070,17 @@ class RobloxAuto : Form
         if (sx > -0.05f && sx < 0.05f) sx = 0f;
         if (sy > -0.05f && sy < 0.05f) sy = 0f;
 
-        // ACCELERATION model. The stick no longer sets the horizon's SPEED directly - it sets a
-        // TARGET speed, and the horizon's actual speed eases toward it. So a stick flick makes the
-        // line accelerate into motion and ease to a stop instead of snapping to a new speed and
-        // slamming to rest, which is what read as "jumpy". dt-correct so it is identical at any FPS.
-        float vTargetRoll = -sx * _hudRollRate;    // deg/s (roll)
+        // ROLL is a BANK ANGLE proportional to the right stick X - it turns a little and holds,
+        // then eases back to level when you centre the stick. A proportional angle (not a rate)
+        // is what matches the view: pushing the stick turns the lines a bit with the horizon
+        // instead of spinning them round.
+        float rollTarget = -sx * 45f;              // up to ~45 deg at full deflection
+        _hudFRoll += (rollTarget - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 0.15));
+
+        // PITCH keeps the acceleration model (stick sets a target speed, eased toward).
         float vTargetPitch = -sy * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
         float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
-        _hudRollVel += (vTargetRoll - _hudRollVel) * av;
         _hudPitchVel += (vTargetPitch - _hudPitchVel) * av;
-        _hudFRoll += _hudRollVel * dt;
         _hudFPitch += _hudPitchVel * dt;
 
         // The LEFT stick (throttle) is a small, BOUNDED proportional nudge, NOT integrated. Adding
@@ -4097,11 +4098,10 @@ class RobloxAuto : Form
             float a = 1f - (float)Math.Pow(0.5, dt / _hudFlyTau);
             _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
         }
-        if (sx == 0f)
+        if (!det && sx == 0f && sy == 0f)
         {
-            // hands off the roll stick: ease back to level (no camera roll reference)
-            _hudFRoll += (0f - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 0.6));
-            if (!det) _hudFPitch += (0f - _hudFPitch) * (1f - (float)Math.Pow(0.5, dt / 1.5));
+            // no camera fix and hands off: ease the pitch back to centre (roll self-levels above)
+            _hudFPitch += (0f - _hudFPitch) * (1f - (float)Math.Pow(0.5, dt / 1.5));
         }
 
         if (_hudFRoll > 180f) _hudFRoll = 180f;
@@ -6874,7 +6874,30 @@ class RobloxAuto : Form
     {
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        // A stray exception in any timer tick used to pop the ".NET Framework - Unhandled exception"
+        // dialog and take the whole tool down (e.g. Math.Abs on a full-deflection stick). Log it and
+        // keep running instead - one bad frame must never freeze the HUD or kill the app.
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += delegate (object s, System.Threading.ThreadExceptionEventArgs e)
+        {
+            SafeLog("WARNING: recovered from a UI error: " + e.Exception.Message);
+        };
+        AppDomain.CurrentDomain.UnhandledException += delegate (object s, UnhandledExceptionEventArgs e)
+        {
+            SafeLog("WARNING: recovered from an error: " + e.ExceptionObject);
+        };
         Application.Run(new RobloxAuto());
+    }
+
+    // main() is static, so the crash handlers cannot call the instance Log(). Append to error.log.
+    static void SafeLog(string msg)
+    {
+        try
+        {
+            string p = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "error.log");
+            System.IO.File.AppendAllText(p, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + msg + Environment.NewLine);
+        }
+        catch { }
     }
 }
 
