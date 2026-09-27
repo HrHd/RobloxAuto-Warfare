@@ -56,11 +56,86 @@ function sizeHud() { hc.width = window.innerWidth; hc.height = window.innerHeigh
 window.addEventListener('resize', sizeHud);
 sizeHud();
 
+function jnum(s) {
+  if (!s) return 0;
+  var m = String(s).match(/-?\d+(\.\d+)?/);
+  return m ? parseFloat(m[0]) : 0;
+}
+function jmetres(s) { var v = jnum(s); if (s && /km/i.test(s)) v *= 1000; return v; }
+
+// DJI-Fly style overlay for the MAVIC - mirrors the on-monitor Mavic HUD
+function drawMavic(s, W, H) {
+  var col = 'rgba(255,255,255,0.95)';
+  var sans = 'bold "Segoe UI", "Segoe UI Symbol", Arial, sans-serif';
+  hctx.clearRect(0, 0, W, H);
+
+  // rule-of-thirds grid
+  hctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  hctx.lineWidth = 1;
+  for (var i = 1; i <= 2; i++) {
+    hctx.beginPath(); hctx.moveTo(W * i / 3, 0); hctx.lineTo(W * i / 3, H); hctx.stroke();
+    hctx.beginPath(); hctx.moveTo(0, H * i / 3); hctx.lineTo(W, H * i / 3); hctx.stroke();
+  }
+  hctx.strokeStyle = 'rgba(255,255,255,0.6)';
+  hctx.beginPath();
+  hctx.moveTo(W / 2 - 24, H / 2); hctx.lineTo(W / 2 - 9, H / 2);
+  hctx.moveTo(W / 2 + 9, H / 2); hctx.lineTo(W / 2 + 24, H / 2);
+  hctx.moveTo(W / 2, H / 2 - 24); hctx.lineTo(W / 2, H / 2 - 9);
+  hctx.moveTo(W / 2, H / 2 + 9); hctx.lineTo(W / 2, H / 2 + 24);
+  hctx.stroke();
+
+  hctx.fillStyle = col;
+  hctx.font = 'bold 22px "Segoe UI", Arial, sans-serif';
+  hctx.fillText('N Mode', 26, 40);
+
+  // top-right: battery + RC signal
+  var pct = '96%';
+  var pw = hctx.measureText(pct).width;
+  hctx.fillText(pct, W - 22 - pw, 40);
+  var bx = W - 22 - pw - 52;
+  hctx.strokeStyle = 'rgba(255,255,255,0.6)'; hctx.lineWidth = 1;
+  hctx.strokeRect(bx, 22, 40, 18);
+  hctx.fillRect(bx + 2, 24, 34, 14);
+  hctx.font = '17px "Segoe UI", Arial, sans-serif';
+  hctx.fillText('RC', W - 62, 38);
+  for (var b = 0; b < 4; b++) hctx.fillRect(W - 46 + b * 8, 44 - b * 6, 5, 7 + b * 6);
+
+  // bottom-left: altitude / speed / HOME (imperial, like the app)
+  var altFt = jnum(s.agl) * 3.28084, spdMph = jnum(s.spd) * 2.23694, homeFt = jmetres(s.home) * 3.28084;
+  hctx.fillStyle = col;
+  hctx.font = 'bold 24px "Segoe UI", Arial, sans-serif';
+  hctx.fillText(altFt.toFixed(0) + 'ft   ' + spdMph.toFixed(1) + 'mph', 26, H - 74);
+  hctx.fillText('HOME ' + (homeFt > 0 ? homeFt.toFixed(0) + 'ft' : '----'), 26, H - 44);
+
+  // bottom-centre: resolution + recording time
+  var secs = s.secs || 0, mm = Math.floor(secs / 60), ss = secs % 60;
+  var t = (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss;
+  hctx.fillText('4K 30', W / 2 - 130, H - 74);
+  hctx.fillText(t, W / 2 + 4, H - 74);
+
+  // bottom-right: exposure
+  hctx.fillText('1/60', W - 260, H - 74);
+  hctx.fillText('F2.8', W - 178, H - 74);
+  hctx.font = '17px "Segoe UI", Arial, sans-serif';
+  hctx.fillText('ISO 100', W - 260, H - 42);
+  hctx.fillText('EV+0.3', W - 170, H - 42);
+
+  // record button
+  hctx.fillStyle = 'rgba(226,32,32,0.92)';
+  hctx.beginPath(); hctx.arc(W - 96, H / 2 - 3, 31, 0, Math.PI * 2); hctx.fill();
+  hctx.strokeStyle = 'rgba(226,32,32,0.92)'; hctx.lineWidth = 2;
+  hctx.beginPath(); hctx.arc(W - 96, H / 2 - 3, 19, 0, Math.PI * 2); hctx.stroke();
+  hctx.fillStyle = col; hctx.font = '17px "Segoe UI", Arial, sans-serif';
+  hctx.fillText('REC', W - 128, H / 2 - 46);
+}
+
 function drawHud(s) {
   var W = hc.width, H = hc.height, cx = W / 2, cy = H / 2;
   hctx.clearRect(0, 0, W, H);
   if (!s.hud) { hc.style.display = 'none'; return; }
   hc.style.display = 'block';
+
+  if (s.uav) { drawMavic(s, W, H); return; }   // DJI-Fly style for the MAVIC
 
   var col = 'rgba(255,255,255,0.92)';
   hctx.strokeStyle = col;
