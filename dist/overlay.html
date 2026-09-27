@@ -5,6 +5,9 @@
 <style>
   html, body { margin:0; height:100%; background:transparent; overflow:hidden;
                font-family: Consolas, "Courier New", monospace; }
+  #noise { position:fixed; inset:0; width:100%; height:100%; display:none;
+           image-rendering: pixelated; pointer-events:none; }
+  #hud  { position:fixed; inset:0; width:100%; height:100%; display:none; pointer-events:none; }
   #bg   { position:fixed; inset:0; background:#000; display:none; }
   #wrap { position:fixed; inset:0; color:#8cff9c; display:none; }
   #log  { position:absolute; left:56px; top:64px; font-size:30px; line-height:44px; white-space:pre; }
@@ -16,12 +19,11 @@
   #plabel { position:absolute; left:56px; bottom:100px; font-size:30px; }
   #home { position:absolute; right:56px; bottom:60px; font-size:36px; font-weight:bold;
           color:#8cff9c; text-shadow:0 0 8px #000; display:none; }
-  #noise { position:fixed; inset:0; width:100%; height:100%; display:none;
-           image-rendering: pixelated; pointer-events:none; }
 </style>
 </head>
 <body>
   <canvas id="noise"></canvas>
+  <canvas id="hud"></canvas>
   <div id="bg"></div>
   <div id="wrap">
     <div id="log"></div>
@@ -47,6 +49,90 @@ function drawNoise() {
 }
 setInterval(drawNoise, 70);
 
+// ---- FPV/UAV OSD ----
+var hc = document.getElementById('hud');
+var hctx = hc.getContext('2d');
+function sizeHud() { hc.width = window.innerWidth; hc.height = window.innerHeight; }
+window.addEventListener('resize', sizeHud);
+sizeHud();
+
+function drawHud(s) {
+  var W = hc.width, H = hc.height, cx = W / 2, cy = H / 2;
+  hctx.clearRect(0, 0, W, H);
+  if (!s.hud) { hc.style.display = 'none'; return; }
+  hc.style.display = 'block';
+
+  var col = 'rgba(150,255,170,0.92)';
+  hctx.strokeStyle = col;
+  hctx.fillStyle = col;
+  hctx.lineWidth = 2;
+  hctx.font = 'bold 16px Consolas, monospace';
+
+  var rad = (s.roll || 0) * Math.PI / 180;
+  var pit = (s.pit || 0) * (H / 1080);          // px were measured on the 1080 frame
+  function R(x, y) {
+    var dx = x - cx, dy = y - cy;
+    return [cx + dx * Math.cos(rad) - dy * Math.sin(rad), cy + dx * Math.sin(rad) + dy * Math.cos(rad)];
+  }
+
+  // artificial horizon + pitch ladder
+  for (var d = -30; d <= 30; d += 10) {
+    var yy = pit + d * 4, half = d === 0 ? 130 : 70;
+    var a = R(cx - half, cy + yy), b = R(cx + half, cy + yy);
+    hctx.beginPath(); hctx.moveTo(a[0], a[1]); hctx.lineTo(b[0], b[1]); hctx.stroke();
+    if (d !== 0) { var t = R(cx + half + 6, cy + yy - 8); hctx.fillText((d > 0 ? '+' : '') + d, t[0], t[1]); }
+  }
+
+  // centre reticle
+  hctx.beginPath();
+  hctx.moveTo(cx - 42, cy); hctx.lineTo(cx - 12, cy);
+  hctx.moveTo(cx + 12, cy); hctx.lineTo(cx + 42, cy);
+  hctx.moveTo(cx, cy - 42); hctx.lineTo(cx, cy - 12);
+  hctx.moveTo(cx, cy + 12); hctx.lineTo(cx, cy + 42);
+  hctx.stroke();
+
+  // compass tape, top-centre
+  var h = parseInt(s.hdg, 10);
+  if (!isNaN(h)) {
+    for (var d2 = -60; d2 <= 60; d2 += 10) {
+      var deg = ((h + d2) % 360 + 360) % 360, x = cx + d2 * 6;
+      if (d2 === 0) { hctx.fillText(h + '\u00b0', x - 16, 42); }
+      else {
+        hctx.beginPath(); hctx.moveTo(x, 26); hctx.lineTo(x, 40); hctx.stroke();
+        if (deg % 30 === 0) hctx.fillText(deg, x - 14, 58);
+      }
+    }
+  }
+
+  // speed (left) and altitude (right) ladders
+  function ladder(left, val) {
+    var lx = left ? 170 : W - 170;
+    for (var k = -5; k <= 5; k++) {
+      var y = cy + k * 40;
+      hctx.beginPath(); hctx.moveTo(left ? lx - 18 : lx, y); hctx.lineTo(left ? lx : lx + 18, y); hctx.stroke();
+    }
+    if (val) {
+      var w = hctx.measureText(val).width + 18;
+      var bx = left ? lx - w + 18 : lx - 18;
+      hctx.fillStyle = 'rgba(0,0,0,0.55)';
+      hctx.fillRect(bx, cy - 13, w, 26);
+      hctx.strokeStyle = 'rgba(150,255,170,0.6)';
+      hctx.strokeRect(bx, cy - 13, w, 26);
+      hctx.fillStyle = col;
+      hctx.fillText(val, bx + 9, cy + 6);
+    }
+  }
+  ladder(true, s.spd);
+  ladder(false, s.agl);
+
+  // home distance + timer
+  hctx.font = 'bold 20px Consolas, monospace';
+  hctx.fillText('HOME ' + s.home, cx - 70, cy + 130);
+  hctx.font = 'bold 16px Consolas, monospace';
+  var mm = Math.floor((s.secs || 0) / 60), ss = (s.secs || 0) % 60;
+  hctx.fillText((s.uav ? 'UAV' : 'FPV') + '   ' + (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss, 40, H - 40);
+}
+
 function tick() {
   fetch('http://localhost:8730/state').then(function(r){ return r.json(); }).then(function(s){
     var wrap = document.getElementById('wrap');
@@ -65,15 +151,17 @@ function tick() {
     document.getElementById('fill').style.width = Math.round(s.progress * 100) + '%';
     document.getElementById('plabel').textContent = Math.round(s.progress * 100) + '%   ' + s.label;
 
-    // RF static while flying: intensity comes from time since deploy
+    // RF static while flying: intensity follows the HOME distance (fullest at 1.20 km)
     nc.style.display = s.flight ? 'block' : 'none';
     nc.style.opacity = s.flight ? (s.level || 0) : 0;
 
-    if (s.home) { home.style.display = 'block'; home.textContent = 'HOME ' + s.home; }
+    drawHud(s);
+
+    if (s.home && s.home !== '----') { home.style.display = 'block'; home.textContent = 'HOME ' + s.home; }
     else        { home.style.display = 'none'; }
   }).catch(function(){});
 }
-setInterval(tick, 250);
+setInterval(tick, 120);
 tick();
 </script>
 </body>

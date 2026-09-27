@@ -88,6 +88,15 @@ class RobloxAuto : Form
     System.Windows.Forms.Timer _rfBlink = null;
     volatile bool _rfRun = false;
     string _rfHomeText = "----";
+    // live telemetry for the FPV/UAV HUD (read from the drone OSD)
+    string _hudHome = "----", _hudSpd = "", _hudAlt = "", _hudAgl = "", _hudHdg = "";
+    float _hudRoll = 0f, _hudRollTarget = 0f;     // horizon bank, degrees (eased)
+    float _hudPitch = 0f, _hudPitchTarget = 0f;   // horizon vertical offset, px (eased)
+    bool _hudStyleUav = false;                     // MAVIC gets the UAV-style layout
+    FpvHudForm _hudForm = null;
+    CheckBox chkHud, chkNight, chkUav;
+    bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
+    bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
     DateTime _leftAt = DateTime.MinValue;        // when the player voluntarily left a server
     ConsoleForm _black = null;          // terminal-style cover shown while reconnecting
@@ -144,6 +153,44 @@ class RobloxAuto : Form
     static void ExcludeFromCapture(IntPtr h)
     {
         try { SetWindowDisplayAffinity(h, 0x00000011); } catch { }   // WDA_EXCLUDEFROMCAPTURE
+    }
+
+    // ---- night vision ----
+    // There is no way for an overlay window to recolour the game pixels behind it, so a true
+    // invert is done with the Windows Magnification API: a colour matrix applied to the whole
+    // display. It also shows up in screen capture, so OBS records the inverted feed.
+    [StructLayout(LayoutKind.Sequential)]
+    struct MAGCOLOREFFECT
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 25)] public float[] transform;
+    }
+    [DllImport("Magnification.dll")] static extern bool MagInitialize();
+    [DllImport("Magnification.dll")] static extern bool MagSetFullscreenColorEffect(ref MAGCOLOREFFECT effect);
+
+    void ApplyNightVision(bool on)
+    {
+        try
+        {
+            if (!MagInitialize()) { Log("night vision: the Magnification API is unavailable"); return; }
+            MAGCOLOREFFECT e = new MAGCOLOREFFECT();
+            if (on)
+                e.transform = new float[] {
+                    -1, 0, 0, 0, 1,
+                     0,-1, 0, 0, 1,
+                     0, 0,-1, 0, 1,
+                     0, 0, 0, 1, 0,
+                     0, 0, 0, 0, 1 };
+            else
+                e.transform = new float[] {
+                     1, 0, 0, 0, 0,
+                     0, 1, 0, 0, 0,
+                     0, 0, 1, 0, 0,
+                     0, 0, 0, 1, 0,
+                     0, 0, 0, 0, 1 };
+            bool ok = MagSetFullscreenColorEffect(ref e);
+            Log("night vision " + (on ? "ON" : "OFF") + (ok ? "" : " - the call was refused"));
+        }
+        catch (Exception ex) { Log("night vision failed: " + ex.Message); }
     }
 
     const uint MOUSEEVENTF_LEFTDOWN = 0x0002, MOUSEEVENTF_LEFTUP = 0x0004;
@@ -445,6 +492,41 @@ class RobloxAuto : Form
             if (!_blackScreen) HideBlack();
         };
         Controls.Add(chkBlack);
+        y += 26;
+
+        chkHud = new CheckBox();
+        chkHud.Text = "FPV HUD overlay";
+        chkHud.SetBounds(x, y, 150, 22);
+        chkHud.Checked = _hudOn;
+        chkHud.CheckedChanged += delegate
+        {
+            _hudOn = chkHud.Checked; SaveCfg();
+            if (!_hudOn) StopHud();
+        };
+        Controls.Add(chkHud);
+
+        chkUav = new CheckBox();
+        chkUav.Text = "UAV style (MAVIC)";
+        chkUav.SetBounds(x + 156, y, 170, 22);
+        chkUav.Checked = _hudStyleUav;
+        chkUav.CheckedChanged += delegate
+        {
+            _hudStyleUav = chkUav.Checked; SaveCfg();
+            if (_hudForm != null) _hudForm.Uav = _hudStyleUav;
+        };
+        Controls.Add(chkUav);
+        y += 26;
+
+        chkNight = new CheckBox();
+        chkNight.Text = "Night vision (invert display)";
+        chkNight.SetBounds(x, y, 260, 22);
+        chkNight.Checked = _nightVision;
+        chkNight.CheckedChanged += delegate
+        {
+            _nightVision = chkNight.Checked; SaveCfg();
+            ApplyNightVision(_nightVision);
+        };
+        Controls.Add(chkNight);
         y += 26;
 
         chkAutoAfterRejoin = new CheckBox();
@@ -3524,6 +3606,9 @@ class RobloxAuto : Form
                 else if (k == "autoAfterRejoinMs") _autoAfterRejoinMs = int.Parse(v);
                 else if (k == "preRejoinMs") _preRejoinMs = int.Parse(v);
                 else if (k == "watchHome") _watchHome = v == "1";
+            else if (k == "hud") _hudOn = v == "1";
+            else if (k == "uav") _hudStyleUav = v == "1";
+            else if (k == "night") _nightVision = v == "1";
                 else if (k == "blackScreen") _blackScreen = v == "1";
                 else if (k == "lang") _lang = v;
             }
@@ -3564,8 +3649,11 @@ class RobloxAuto : Form
                 "autoAfterRejoin=" + (_autoAfterRejoin ? "1" : "0"),
                 "autoAfterRejoinMs=" + _autoAfterRejoinMs,
                 "preRejoinMs=" + _preRejoinMs,
-                "watchHome=" + (_watchHome ? "1" : "0"),
-                "blackScreen=" + (_blackScreen ? "1" : "0"),
+            "watchHome=" + (_watchHome ? "1" : "0"),
+            "blackScreen=" + (_blackScreen ? "1" : "0"),
+            "hud=" + (_hudOn ? "1" : "0"),
+            "uav=" + (_hudStyleUav ? "1" : "0"),
+            "night=" + (_nightVision ? "1" : "0"),
                 "lang=" + _lang
             });
         }
@@ -3666,6 +3754,136 @@ class RobloxAuto : Form
         }
     }
 
+    // The FPV/UAV OSD drawn over the game on the monitor: artificial horizon + pitch ladder,
+    // a compass tape, speed/altitude ladders, a centre reticle and the HOME readout.
+    class FpvHudForm : Form
+    {
+        public string Home = "----", Spd = "", Alt = "", Agl = "", Hdg = "", Timer = "00:00";
+        public float Roll = 0f, PitchPx = 0f;
+        public bool Uav = false;
+        readonly Font _f = new Font("Consolas", 12F, FontStyle.Bold);
+        readonly Font _fb = new Font("Consolas", 15F, FontStyle.Bold);
+        readonly SolidBrush _g = new SolidBrush(Color.FromArgb(230, 150, 255, 170));
+        readonly SolidBrush _gb = new SolidBrush(Color.FromArgb(210, 0, 0, 0));
+        readonly Pen _p = new Pen(Color.FromArgb(215, 150, 255, 170), 2);
+        readonly Pen _pt = new Pen(Color.FromArgb(150, 150, 255, 170), 1);
+
+        public FpvHudForm()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
+            DoubleBuffered = true;
+            Opacity = 0.99;
+        }
+        protected override bool ShowWithoutActivation { get { return true; } }
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                cp.ExStyle |= 0x08000000;   // WS_EX_NOACTIVATE
+                cp.ExStyle |= 0x00080000;   // WS_EX_LAYERED
+                cp.ExStyle |= 0x00000020;   // WS_EX_TRANSPARENT - click-through
+                return cp;
+            }
+        }
+
+        PointF R(float x, float y, int cx, int cy, float rad)
+        {
+            float dx = x - cx, dy = y - cy;
+            float cs = (float)Math.Cos(rad), sn = (float)Math.Sin(rad);
+            return new PointF(cx + dx * cs - dy * sn, cy + dx * sn + dy * cs);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            int W = Width, H = Height, cx = W / 2, cy = H / 2;
+            float rad = Roll * (float)Math.PI / 180f;
+
+            // artificial horizon + pitch ladder, banked with the horizon
+            for (int d = -30; d <= 30; d += 10)
+            {
+                float yy = PitchPx + d * 4f;
+                float half = d == 0 ? 130f : 70f;
+                Pen pen = d == 0 ? _p : _pt;
+                g.DrawLine(pen, R(cx - half, cy + yy, cx, cy, rad), R(cx + half, cy + yy, cx, cy, rad));
+                if (d != 0) g.DrawString((d > 0 ? "+" : "") + d, _f, _g, R(cx + half + 6, cy + yy - 8, cx, cy, rad));
+            }
+
+            // centre reticle
+            g.DrawLine(_p, cx - 42, cy, cx - 12, cy);
+            g.DrawLine(_p, cx + 12, cy, cx + 42, cy);
+            g.DrawLine(_p, cx, cy - 42, cx, cy - 12);
+            g.DrawLine(_p, cx, cy + 12, cx, cy + 42);
+            g.DrawEllipse(_pt, cx - 3, cy - 3, 6, 6);
+
+            // compass tape, top-centre
+            int hdg;
+            if (int.TryParse(Hdg, out hdg))
+            {
+                float pxDeg = 6f;
+                for (int d = -60; d <= 60; d += 10)
+                {
+                    int deg = ((hdg + d) % 360 + 360) % 360;
+                    float x = cx + d * pxDeg;
+                    if (d == 0) { g.FillRectangle(_gb, x - 24, 18, 48, 26); g.DrawRectangle(_pt, x - 24, 18, 48, 26); }
+                    else { g.DrawLine(_pt, x, 26, x, 40); if (deg % 30 == 0) g.DrawString(deg.ToString(), _f, _g, x - 14, 44); }
+                }
+                g.DrawString(hdg + "°", _f, _g, cx - 18, 22);
+            }
+
+            DrawLadder(g, W, cy, true, Spd);
+            DrawLadder(g, W, cy, false, Agl != "" ? Agl : Alt);
+
+            g.DrawString("HOME " + Home, _fb, _g, cx - 70, cy + 120);
+            g.DrawString((Uav ? "UAV" : "FPV") + "   " + Timer, _f, _g, 40, H - 60);
+            base.OnPaint(e);
+        }
+
+        void DrawLadder(Graphics g, int W, int cy, bool left, string val)
+        {
+            int lx = left ? 170 : W - 170;
+            for (int k = -5; k <= 5; k++)
+            {
+                int y = cy + k * 40;
+                g.DrawLine(_pt, left ? lx - 18 : lx, y, left ? lx : lx + 18, y);
+            }
+            if (!string.IsNullOrEmpty(val))
+            {
+                SizeF sz = g.MeasureString(val, _f);
+                int bw = (int)sz.Width + 18, bh = 26;
+                Rectangle box = new Rectangle(left ? lx - bw + 18 : lx - 18, cy - bh / 2, bw, bh);
+                g.FillRectangle(_gb, box);
+                g.DrawRectangle(_pt, box);
+                g.DrawString(val, _f, _g, box.X + 9, box.Y + 4);
+            }
+        }
+    }
+
+    void EnsureHud()
+    {
+        try
+        {
+            if (_hudForm != null) return;
+            _hudForm = new FpvHudForm();
+            _hudForm.FormBorderStyle = FormBorderStyle.None;
+            _hudForm.StartPosition = FormStartPosition.Manual;
+            _hudForm.TopMost = true;
+            _hudForm.ShowInTaskbar = false;
+            _hudForm.SetBounds(0, 0, Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
+            _hudForm.Uav = _hudStyleUav;
+            _hudForm.Show();
+            ExcludeFromCapture(_hudForm.Handle);   // keep the HUD out of the OCR's screen grabs
+        }
+        catch { }
+    }
+
+    void StopHud()
+    {
+        try { if (_hudForm != null) { _hudForm.Close(); _hudForm = null; } } catch { }
+    }
+
     // Poll the HUD for the HOME distance and drive the RF overlay. Runs until stopped.
     void StartRfWatch()
     {
@@ -3696,6 +3914,7 @@ class RobloxAuto : Form
                 float lastSet = -1f;
                 string lastTxt = null;
                 bool lastOk = false;
+                long lastHud = 0;
 
                 while (_rfRun)
                 {
@@ -3723,7 +3942,12 @@ class RobloxAuto : Form
                             shown = linked;
                             Log(linked ? "   RF feed: LINK detected - overlay on" : "   RF feed: no LINK - overlay off");
                         }
-                        string d = linked ? FindHomeDistance() : null;
+                        string d = null;
+                        if (linked)
+                        {
+                            d = ReadHudTelemetry();   // fills _hudSpd/_hudAlt/_hudAgl/_hudHdg/_hudHome
+                            DetectHorizon();          // bank the artificial horizon
+                        }
                         if (d != null && d != _rfHomeText) { _rfHomeText = d; Log("   RF HOME: " + d); }
                         OverlayHub.I.SetHome(d);
 
@@ -3767,6 +3991,46 @@ class RobloxAuto : Form
                         }
                         catch { }
                     }
+
+                    // ---- FPV/UAV HUD: ease the horizon and refresh ~6x/s (throttled so the
+                    // full-screen layered repaint cannot itself become the lag) ----
+                    if (Environment.TickCount - lastHud >= 160)
+                    {
+                        lastHud = Environment.TickCount;
+                        _hudRoll += (_hudRollTarget - _hudRoll) * 0.14f;
+                        _hudPitch += (_hudPitchTarget - _hudPitch) * 0.14f;
+                        bool wantHud = shown && _hudOn;
+                        string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
+                        OverlayHub.I.SetHud(wantHud, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudRoll, _hudPitch, _hudStyleUav);
+                        if (wantHud)
+                        {
+                            if (_hudForm == null)
+                            { try { BeginInvoke((MethodInvoker)delegate { EnsureHud(); }); } catch { } }
+                            else
+                            {
+                                string hh = _hudHome, hs = _hudSpd, ha = alt, hg = _hudHdg;
+                                float hr = _hudRoll, hp = _hudPitch;
+                                string ht = string.Format("{0:00}:{1:00}", secs / 60, secs % 60);
+                                bool hu = _hudStyleUav;
+                                try
+                                {
+                                    BeginInvoke((MethodInvoker)delegate
+                                    {
+                                        if (_hudForm != null)
+                                        {
+                                            _hudForm.Home = hh; _hudForm.Spd = hs; _hudForm.Agl = ha;
+                                            _hudForm.Hdg = hg; _hudForm.Roll = hr; _hudForm.PitchPx = hp;
+                                            _hudForm.Uav = hu; _hudForm.Timer = ht;
+                                            _hudForm.Invalidate();
+                                        }
+                                    });
+                                }
+                                catch { }
+                            }
+                        }
+                        else if (_hudForm != null)
+                        { try { BeginInvoke((MethodInvoker)delegate { StopHud(); }); } catch { } }
+                    }
                     Thread.Sleep(120);
                 }
             });
@@ -3790,8 +4054,10 @@ class RobloxAuto : Form
             _rfRun = false;
             OverlayHub.I.SetHome("");
             OverlayHub.I.SetFlight(false, 0f, 0);
+            OverlayHub.I.SetHud(false, "", "", "", 0f, 0f, false);
             if (_rfBlink != null) { _rfBlink.Stop(); _rfBlink.Dispose(); _rfBlink = null; }
             if (_rfForm != null) { _rfForm.Close(); _rfForm = null; }
+            StopHud();
             Log("RF watch stopped");
         }
         catch { }
@@ -3853,18 +4119,19 @@ class RobloxAuto : Form
     // spot in the bottom-left. Whole-screen OCR misses it once the terrain behind it is bright
     // or busy. So crop just that block, keep only near-white pixels that have a dark outline
     // pixel beside them, thicken them by a pixel, upscale and read - text stays, snow/grass go.
-    string ReadHomeHud()
+    // Crop a screen rectangle, keep only near-white text pixels that have a dark outline
+    // pixel beside them, thicken them 1px, upscale xS and OCR. Returns the OCR words with
+    // coordinates scaled back to the (unscaled) crop, or null when OCR is unavailable.
+    List<string[]> OcrMaskedRegion(int x0, int y0, int x1, int y1, int S)
     {
         string shot = null;
         try
         {
             int W, H; int[] px = Grab(out W, out H);
-            int x0 = 30 * W / 1920, x1 = 240 * W / 1920;
-            int y0 = H - 120 * H / 1080, y1 = H - 4 * H / 1080;
             if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0;
             if (x1 > W) x1 = W; if (y1 > H) y1 = H;
             int cw = x1 - x0, ch = y1 - y0;
-            if (cw < 20 || ch < 20) return null;
+            if (cw < 8 || ch < 8) return null;
 
             byte[] gray = new byte[cw * ch];
             bool[] bright = new bool[cw * ch];
@@ -3877,7 +4144,6 @@ class RobloxAuto : Form
                     gray[i] = (byte)((r * 299 + g * 587 + b * 114) / 1000);
                     bright[i] = r > 190 && g > 190 && b > 190;
                 }
-
             bool[] txt = new bool[cw * ch];
             for (int y = 0; y < ch; y++)
                 for (int x = 0; x < cw; x++)
@@ -3894,8 +4160,6 @@ class RobloxAuto : Form
                         }
                     txt[i] = outline;
                 }
-
-            const int S = 3;
             int OW = cw * S, OH = ch * S;
             int[] outPx = new int[OW * OH];
             int white = unchecked((int)0xFFFFFFFF), black = unchecked((int)0xFF000000);
@@ -3935,10 +4199,130 @@ class RobloxAuto : Form
 
             List<string[]> raw = OcrServerRead(shot);
             if (raw == null) return null;
-            return HomeFromHud(raw, S);
+            foreach (string[] p in raw)
+                for (int k = 0; k < 4; k++)
+                    try { p[k] = (int.Parse(p[k]) / S).ToString(); } catch { }
+            return raw;
         }
-        catch (Exception e) { Log("HUD read failed: " + e.Message); return null; }
+        catch (Exception e) { Log("HUD region read failed: " + e.Message); return null; }
         finally { try { if (shot != null && File.Exists(shot)) File.Delete(shot); } catch { } }
+    }
+
+    string ReadHomeHud()
+    {
+        int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
+        List<string[]> ws = OcrMaskedRegion(30 * W / 1920, H - 120 * H / 1080,
+                                           240 * W / 1920, H - 4 * H / 1080, 3);
+        if (ws == null) return null;
+        return HomeFromHud(ws, 1);
+    }
+
+    // Read the whole drone OSD: the bottom-left stats block (SPD/ALT/HOME) and the top-centre
+    // strip (heading + AGL). Fills the _hud* fields; returns the HOME text.
+    string ReadHudTelemetry()
+    {
+        try
+        {
+            int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
+            List<string[]> bot = OcrMaskedRegion(30 * W / 1920, H - 120 * H / 1080,
+                                                 240 * W / 1920, H - 4 * H / 1080, 3);
+            string home = bot != null ? HomeFromHud(bot, 1) : null;
+            _hudHome = home != null ? home : "----";
+            if (bot != null)
+            {
+                _hudSpd = ValueAfterLabel(bot, "SPD");
+                _hudAlt = ValueAfterLabel(bot, "ALT");
+            }
+            List<string[]> top = OcrMaskedRegion(W * 42 / 100, 14, W * 58 / 100, 100, 3);
+            if (top != null)
+            {
+                _hudAgl = ValueAfterLabel(top, "AGL");
+                _hudHdg = HeadingFrom(top);
+            }
+            return home;
+        }
+        catch { return null; }
+    }
+
+    static string ValueAfterLabel(List<string[]> ws, string label)
+    {
+        int lx = -1, ly = -1;
+        foreach (string[] w in ws)
+        {
+            string t = (w[4] ?? "").ToUpperInvariant();
+            if (t.IndexOf(label) >= 0 || SimPct(t, label) >= 70)
+            { try { lx = int.Parse(w[0]); ly = int.Parse(w[1]); } catch { continue; } break; }
+        }
+        if (lx < 0) return "";
+        string best = "";
+        foreach (string[] w in ws)
+        {
+            string t = (w[4] ?? "").ToUpperInvariant();
+            if (NumFromToken(t) == null) continue;
+            int wx, wy;
+            try { wx = int.Parse(w[0]); wy = int.Parse(w[1]); } catch { continue; }
+            if (Math.Abs(wy - ly) > 16) continue;
+            if (wx < lx) continue;
+            best = NumFromToken(t);
+            if (t.IndexOf('.') >= 0) break;
+        }
+        return best;
+    }
+
+    static string HeadingFrom(List<string[]> ws)
+    {
+        int bestY = int.MaxValue; string best = "";
+        foreach (string[] w in ws)
+        {
+            string t = (w[4] ?? "").ToUpperInvariant();
+            string n = NumFromToken(t);
+            if (n == null) continue;
+            int v; if (!int.TryParse(n, out v)) continue;
+            if (v < 1 || v > 359) continue;
+            int wy;
+            try { wy = int.Parse(w[1]); } catch { continue; }
+            if (wy < bestY) { bestY = wy; best = n; }
+        }
+        return best;
+    }
+
+    // The horizon is the strongest near-horizontal edge in the upper frame. Fit a line through
+    // the per-column edge points to get bank (roll) and the vertical offset (pitch). Only accept
+    // a confident fit, otherwise ease back to level so a forest filling the frame does not
+    // throw the HUD around.
+    void DetectHorizon()
+    {
+        try
+        {
+            int W, H; int[] px = Grab(out W, out H);
+            int yTop = H / 12, yBot = H * 62 / 100;
+            float sx = 0, sy = 0, sxy = 0, sxx = 0; int n = 0, sumG = 0;
+            for (int x = W / 10; x < W * 9 / 10; x += 8)
+            {
+                int bestY = -1, bestG = 60;
+                for (int y = yTop; y < yBot; y += 3)
+                {
+                    int c1 = px[(y - 3) * W + x], c2 = px[(y + 3) * W + x];
+                    int g1 = ((c1 >> 8) & 0xFF) + (c1 & 0xFF) + ((c1 >> 16) & 0xFF);
+                    int g2 = ((c2 >> 8) & 0xFF) + (c2 & 0xFF) + ((c2 >> 16) & 0xFF);
+                    int d = Math.Abs(g2 - g1);
+                    if (d > bestG) { bestG = d; bestY = y; }
+                }
+                if (bestY >= 0) { sx += x; sy += bestY; sxy += (float)x * bestY; sxx += (float)x * x; n++; sumG += bestG; }
+            }
+            if (n < 30 || sumG / n < 90) { _hudRollTarget = 0f; _hudPitchTarget = 0f; return; }
+            float denom = n * sxx - sx * sx;
+            if (Math.Abs(denom) < 1f) return;
+            float slope = (n * sxy - sx * sy) / denom;
+            float icept = (sy - slope * sx) / n;
+            float roll = (float)(Math.Atan(slope) * 180.0 / Math.PI);
+            if (roll > 40f) roll = 40f; if (roll < -40f) roll = -40f;
+            float pitch = (slope * (W / 2f) + icept) - H / 2f;
+            if (pitch > H / 5f) pitch = H / 5f; if (pitch < -H / 5f) pitch = -H / 5f;
+            _hudRollTarget = roll;
+            _hudPitchTarget = pitch;
+        }
+        catch { }
     }
 
     // "0.2 m" / "560.7 m" / "1.20 km" -> metres as a float, or -1 when nothing readable
@@ -4084,6 +4468,10 @@ class RobloxAuto : Form
         bool _flight = false;            // drone deployed - show RF static in the stream overlay
         float _level = 0f;               // static intensity, based on time since deploy
         int _secs = 0;
+        bool _hud = false;               // draw the FPV/UAV HUD in the stream overlay
+        string _hdg = "", _spd = "", _agl = "";
+        float _roll = 0f, _pit = 0f;
+        bool _uav = false;
         System.Net.HttpListener _lis;
         System.Windows.Forms.Timer _tick;
         string _dir = "";
@@ -4114,6 +4502,8 @@ class RobloxAuto : Form
         public void SetProgress(float pct, string label) { lock (_lock) { _target = pct; _label = label ?? ""; } }
         public void SetHome(string h) { lock (_lock) _home = h ?? ""; }
         public void SetFlight(bool f, float level, int secs) { lock (_lock) { _flight = f; _level = level; _secs = secs; } }
+        public void SetHud(bool on, string hdg, string spd, string agl, float roll, float pit, bool uav)
+        { lock (_lock) { _hud = on; _hdg = hdg ?? ""; _spd = spd ?? ""; _agl = agl ?? ""; _roll = roll; _pit = pit; _uav = uav; } }
         void Step() { lock (_lock) { _progress += (_target - _progress) * 0.12f; if (Math.Abs(_target - _progress) < 0.002f) _progress = _target; } }
 
         static string Esc(string s)
@@ -4138,6 +4528,13 @@ class RobloxAuto : Form
                     sb.Append(",\"flight\":").Append(_flight ? "true" : "false");
                     sb.Append(",\"level\":").Append(_level.ToString("0.###"));
                     sb.Append(",\"secs\":").Append(_secs);
+                    sb.Append(",\"hud\":").Append(_hud ? "true" : "false");
+                    sb.Append(",\"hdg\":\"").Append(Esc(_hdg)).Append("\"");
+                    sb.Append(",\"spd\":\"").Append(Esc(_spd)).Append("\"");
+                    sb.Append(",\"agl\":\"").Append(Esc(_agl)).Append("\"");
+                    sb.Append(",\"roll\":").Append(_roll.ToString("0.#"));
+                    sb.Append(",\"pit\":").Append(_pit.ToString("0.#"));
+                    sb.Append(",\"uav\":").Append(_uav ? "true" : "false");
                     sb.Append(",\"lines\":[");
                     for (int i = 0; i < _lines.Count; i++)
                     {
