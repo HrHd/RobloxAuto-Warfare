@@ -241,6 +241,23 @@ function drawHud(s, glitching) {
   // No compass tape any more - the pitch ladder's roll (the whole ladder spins about the centre
   // from the right-stick X) is the heading/attitude cue now.
 
+  // Battery row - two packs, each a pack icon + "15.02V", like a real FPV OSD. Driven by throttle
+  // on the tool side (v1/v2 in /state).
+  function drawBatt(bx, by, volts) {
+    var bw = 16 * sc, bh = 24 * sc;
+    hctx.strokeStyle = col; hctx.lineWidth = 2 * sc;
+    hctx.strokeRect(bx, by, bw, bh);
+    hctx.fillStyle = col; hctx.fillRect(bx + bw / 2 - 4 * sc, by - 4 * sc, 8 * sc, 4 * sc);   // nub
+    var frac = (volts - 13.2) / 3.6; if (frac < 0.06) frac = 0.06; if (frac > 1) frac = 1;
+    var inner = bh - 6 * sc, fh = inner * frac;
+    hctx.fillStyle = frac <= 0.16 ? 'rgba(235,60,60,0.95)' : col;
+    hctx.fillRect(bx + 3 * sc, by + 3 * sc + (inner - fh), bw - 6 * sc, fh);
+    hctx.fillStyle = col;
+    hctx.font = 'bold ' + Math.round(15 * sc) + 'px Consolas, monospace';
+    hctx.fillText(volts.toFixed(2) + 'V', bx + bw + 8 * sc, by + 19 * sc);
+  }
+  if (typeof s.v1 === 'number') { drawBatt(40 * sc, 74 * sc, s.v1); drawBatt(40 * sc, 108 * sc, s.v2); }
+
   // speed (left) and altitude (right) ladders with a backed readout box
   function ladder(left, val) {
     var lx = left ? 170 * sc : W - 170 * sc;

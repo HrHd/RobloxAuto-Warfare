@@ -133,6 +133,8 @@ class RobloxAuto : Form
     float _hudRollRate = 220f;                     // deg/s per unit of stick roll
     float _hudPitchVel = 0f, _hudRollVel = 0f;     // current horizon velocity (px/s, deg/s) - the ACCEL model
     float _hudAccelTau = 0.12f;                    // s - how fast the velocity chases the stick (accel/brake)
+    float _hudV1 = 15.0f, _hudV2 = 15.0f;          // simulated FPV pack voltages (4S), driven by throttle
+    float _hudVBat = 0.5f, _hudVVel = 0f;          // internal spring state of the battery sim
     float _hudLockTau = 0.25f;                     // s - camera lock time constant when centred (small = snappy)
     float _hudFlyTau = 0.9f;                       // s - camera correction while flying
     float _hudBias = 6f;                           // px - constant downward offset of the detected line
@@ -4038,7 +4040,7 @@ class RobloxAuto : Form
             // Tell the OBS overlay too, not just the on-monitor form - otherwise /state keeps
             // reporting hud:true and the stream stays stuck on the last HUD frame instead of
             // falling back to the CLI terminal.
-            OverlayHub.I.SetHud(false, "", "", "", 0f, 0f, false);
+            OverlayHub.I.SetHud(false, "", "", "", 0f, 0f, false, 0f, 0f);
             if (_hudForm != null) StopHud();
             return;
         }
@@ -4106,8 +4108,23 @@ class RobloxAuto : Form
         _hudRoll = _hudFRoll;
         _hudPitch = _hudFPitch + leftPitch;   // right-stick rate + small bounded left-stick offset
 
+        // Simulated FPV pack voltage. It starts at half, rises with throttle (left stick Y up), and
+        // a spring + ripple gives the sag/bounce of a real pack under load. 4S range 13.2V..16.8V.
+        float thr = _padLy > 0f ? _padLy : 0f;
+        float vTarget = 0.5f + 0.5f * thr;
+        _hudVVel += ((vTarget - _hudVBat) * 26f - _hudVVel * 7f) * dt;   // underdamped -> it bounces
+        _hudVBat += _hudVVel * dt;
+        if (_hudVBat < 0.26f) { _hudVBat = 0.26f; _hudVVel = 0f; }
+        if (_hudVBat > 1f) { _hudVBat = 1f; _hudVVel = 0f; }
+        float ripple = 0.010f * (float)Math.Sin(now * 0.021) * (0.35f + thr);
+        float chg = _hudVBat + ripple;
+        if (chg < 0.26f) chg = 0.26f;
+        if (chg > 1f) chg = 1f;
+        _hudV1 = 13.2f + chg * 3.6f;             // 13.2 .. 16.8
+        _hudV2 = 13.2f + (chg * 0.992f) * 3.6f;  // second pack reads a hair lower
+
         string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
-        OverlayHub.I.SetHud(true, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudFRoll, _hudPitch, _hudStyleUav);
+        OverlayHub.I.SetHud(true, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudFRoll, _hudPitch, _hudStyleUav, _hudV1, _hudV2);
 
         if (_hudForm == null) EnsureHud();          // UI thread - safe to create here
         if (_hudForm != null)
@@ -4119,6 +4136,7 @@ class RobloxAuto : Form
             _hudForm.Roll = _hudFRoll;
             _hudForm.PitchPx = _hudPitch;
             _hudForm.Uav = _hudStyleUav;
+            _hudForm.V1 = _hudV1; _hudForm.V2 = _hudV2;
             _hudForm.Timer = string.Format("{0:00}:{1:00}", _hudSecs / 60, _hudSecs % 60);
             _hudForm.Secs = _hudSecs;
             _hudForm.Invalidate();
@@ -4879,6 +4897,7 @@ class RobloxAuto : Form
     class FpvHudForm : Form
     {
         public string Home = "----", Spd = "", Alt = "", Agl = "", Hdg = "", Timer = "00:00";
+        public float V1 = 0f, V2 = 0f;      // simulated pack voltages for the battery row
         public int Secs = 0;   // flight seconds - drives the draining battery readout
         public float Roll = 0f, PitchPx = 0f;
         public bool Uav = false;
@@ -5058,10 +5077,32 @@ class RobloxAuto : Form
             // No compass tape any more - the pitch ladder's roll (the whole ladder spins about the
             // centre from the right-stick X) is the attitude cue now.
 
+            // Battery row (with a real FPV look): two packs, each a pack icon + a 2-decimal voltage
+            DrawBatt(g, 40, 74, V1);
+            DrawBatt(g, 40, 108, V2);
+
             DrawLadder(g, W, cy, true, Spd);                       // speed on the left
-            DrawLadder(g, W, cy, false, Alt != "" ? Alt : Agl);     // ALT on the right
+            DrawLadder(g, W, cy, false, Alt != "" ? Alt : Agl);    // ALT on the right
             // no centre HOME, no fly timer / style text - the game already prints those
             base.OnPaint(e);
+        }
+
+        // A single pack: vertical battery icon (terminal nub + bar) then "15.02V", like the OSD.
+        void DrawBatt(Graphics g, int x, int y, float volts)
+        {
+            int bw = 16, bh = 24;
+            g.DrawRectangle(_p, x, y, bw, bh);
+            g.FillRectangle(_g, x + bw / 2 - 4, y - 4, 8, 4);          // terminal nub
+            float frac = (volts - 13.2f) / 3.6f;                        // 4S 13.2..16.8V
+            if (frac < 0.06f) frac = 0.06f;
+            if (frac > 1f) frac = 1f;
+            int inner = bh - 6;
+            int fh = (int)(inner * frac);
+            SolidBrush fill = frac <= 0.16f ? new SolidBrush(Color.FromArgb(235, 235, 60, 60)) : _g;
+            g.FillRectangle(fill, x + 3, y + 3 + (inner - fh), bw - 6, fh);
+            if (fill != _g) fill.Dispose();
+            g.DrawString(volts.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "V",
+                         _fb, _g, x + bw + 8, y + 2);
         }
 
         void DrawLadder(Graphics g, int W, int cy, bool left, string val)
@@ -5358,7 +5399,7 @@ class RobloxAuto : Form
             _hudShown = false;
             OverlayHub.I.SetHome("");
             OverlayHub.I.SetFlight(false, 0f, 0);
-            OverlayHub.I.SetHud(false, "", "", "", 0f, 0f, false);
+            OverlayHub.I.SetHud(false, "", "", "", 0f, 0f, false, 0f, 0f);
             if (_rfBlink != null) { _rfBlink.Stop(); _rfBlink.Dispose(); _rfBlink = null; }
             if (_rfForm != null) { _rfForm.Close(); _rfForm = null; }
             StopHud();
@@ -6353,6 +6394,7 @@ class RobloxAuto : Form
         string _hdg = "", _spd = "", _agl = "";
         float _roll = 0f, _pit = 0f;
         bool _uav = false;
+        float _v1 = 0f, _v2 = 0f;
         System.Net.HttpListener _lis;
         System.Windows.Forms.Timer _tick;
         string _dir = "";
@@ -6384,8 +6426,8 @@ class RobloxAuto : Form
         public void SetHome(string h) { lock (_lock) _home = h ?? ""; }
         public void SetMission(string team, string drone, string bomb) { lock (_lock) { _team = team ?? ""; _drone = drone ?? ""; _bomb = bomb ?? ""; } }
         public void SetFlight(bool f, float level, int secs) { lock (_lock) { _flight = f; _level = level; _secs = secs; } }
-        public void SetHud(bool on, string hdg, string spd, string agl, float roll, float pit, bool uav)
-        { lock (_lock) { _hud = on; _hdg = hdg ?? ""; _spd = spd ?? ""; _agl = agl ?? ""; _roll = roll; _pit = pit; _uav = uav; } }
+        public void SetHud(bool on, string hdg, string spd, string agl, float roll, float pit, bool uav, float v1, float v2)
+        { lock (_lock) { _hud = on; _hdg = hdg ?? ""; _spd = spd ?? ""; _agl = agl ?? ""; _roll = roll; _pit = pit; _uav = uav; _v1 = v1; _v2 = v2; } }
         void Step() { lock (_lock) { _progress += (_target - _progress) * 0.12f; if (Math.Abs(_target - _progress) < 0.002f) _progress = _target; } }
 
         static string Esc(string s)
@@ -6420,6 +6462,8 @@ class RobloxAuto : Form
                     sb.Append(",\"roll\":").Append(_roll.ToString("0.#"));
                     sb.Append(",\"pit\":").Append(_pit.ToString("0.#"));
                     sb.Append(",\"uav\":").Append(_uav ? "true" : "false");
+                    sb.Append(",\"v1\":").Append(_v1.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"v2\":").Append(_v2.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"lines\":[");
                     for (int i = 0; i < _lines.Count; i++)
                     {
