@@ -4127,8 +4127,12 @@ class RobloxAuto : Form
         // Any one of them means we are in a drone. The loadout / menus have neither.
         bool flight = ReadFlightSecs() >= 0;
         bool linked = !flight && CornerLinked();
-        _detDbg = "flightClock=" + (flight ? "yes" : "no") + "  rcL live=" + (linked ? "yes" : "no");
-        return flight || linked;
+        // White OSD text over a bright/hazy sky is low-contrast and the OCR often drops the FLY
+        // clock and the LINK LIVE badge. MOUNTED (bottom-right, drone-only) and AGL (top-centre)
+        // survive far more often, so use them as a third tell.
+        bool kw = !flight && !linked && DroneKeyword();
+        _detDbg = "flightClock=" + (flight ? "yes" : "no") + "  rcL live=" + (linked ? "yes" : "no") + "  kw=" + (kw ? "yes" : "no");
+        return flight || linked || kw;
     }
 
     // 50fps horizon fusion on the UI thread. A complementary filter: the CONTROLLER is the
