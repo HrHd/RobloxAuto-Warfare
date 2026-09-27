@@ -124,6 +124,7 @@ class RobloxAuto : Form
     float _hudLockTau = 0.25f;                     // s - camera lock time constant when centred (small = snappy)
     float _hudFlyTau = 0.9f;                       // s - camera correction while flying
     float _hudBias = 6f;                           // px - constant downward offset of the detected line
+    float _hudLeftPx = 50f;                        // px - max horizon offset from the LEFT stick (bounded)
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
@@ -3646,20 +3647,22 @@ class RobloxAuto : Form
         // fallback meant turning the drone rolled the whole horizon ladder. Pitch = right stick Y
         // (the left stick Y is throttle).
         // Roll = RIGHT stick X only (the left stick X is YAW - adding it made turning roll the HUD).
-        // Pitch = BOTH sticks' Y summed: in this game the camera pitch is on a stick Y and the other
-        // Y is the throttle - both move the drone's pitch, so both must move the horizon.
+        // Pitch RATE = right stick Y only.
         float sx = _padRx;
-        float sy = _padLy * 0.3f + _padRy;   // left stick (throttle) only nudges the horizon a bit
+        float sy = _padRy;
         // kill stick rest/drift below 5% so "centred" actually happens - a stick sitting at 0.13
         // used to leave sx non-zero and the camera correction never ran (lines never levelled)
         if (sx > -0.05f && sx < 0.05f) sx = 0f;
         if (sy > -0.05f && sy < 0.05f) sy = 0f;
-        if (sy > 1f) sy = 1f; if (sy < -1f) sy = -1f;
 
         // controller priority: integrate the stick every frame (rate -> angle)
         _hudFRoll += -sx * _hudRollRate * dt;    // tunable (roll deg/s)
         _hudFPitch -= sy * _hudPitchRate * dt;   // tunable (pitch px/s); inverted on purpose:
                                                  // pitching up must move the horizon DOWN
+
+        // The LEFT stick (throttle) is a small, BOUNDED proportional nudge, NOT integrated. Adding
+        // it to the rate meant holding throttle walked the horizon clean off the screen.
+        float leftPitch = -_padLy * _hudLeftPx;
 
         // Complementary filter: the STICK is the fast rate input, the CAMERA is the slow absolute
         // reference - so the correction runs ALWAYS, not only when centred (gating it meant that
@@ -3688,10 +3691,10 @@ class RobloxAuto : Form
         if (_hudFPitch < -900f) _hudFPitch = -900f;
 
         _hudRoll = _hudFRoll;
-        _hudPitch = _hudFPitch;
+        _hudPitch = _hudFPitch + leftPitch;   // right-stick rate + small bounded left-stick offset
 
         string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
-        OverlayHub.I.SetHud(true, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudFRoll, _hudFPitch, _hudStyleUav);
+        OverlayHub.I.SetHud(true, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudFRoll, _hudPitch, _hudStyleUav);
 
         if (_hudForm == null) EnsureHud();          // UI thread - safe to create here
         if (_hudForm != null)
@@ -3701,7 +3704,7 @@ class RobloxAuto : Form
             _hudForm.Agl = alt;
             _hudForm.Hdg = _hudHdg;
             _hudForm.Roll = _hudFRoll;
-            _hudForm.PitchPx = _hudFPitch;
+            _hudForm.PitchPx = _hudPitch;
             _hudForm.Uav = _hudStyleUav;
             _hudForm.Timer = string.Format("{0:00}:{1:00}", _hudSecs / 60, _hudSecs % 60);
             _hudForm.Invalidate();
