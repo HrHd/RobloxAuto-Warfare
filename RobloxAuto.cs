@@ -1,4 +1,4 @@
-// RobloxAuto.cs - one window for the Warfare loop.
+﻿// RobloxAuto.cs - one window for the Warfare loop.
 //
 //   REJOIN      rejoin the last server (deep link), auto-reconnect, OCR loading watch
 //   AUTO RUN    wait for load -> team -> drone -> DEPLOY -> Base -> Deploy As Drone
@@ -326,7 +326,7 @@ class RobloxAuto : Form
         new Dictionary<string, Dictionary<string, string>>
     {
         { "English",  new Dictionary<string, string>() },
-        { "Español",  new Dictionary<string, string> {
+        { "EspaÃ±ol",  new Dictionary<string, string> {
             {"REJOIN NOW","RECONECTAR"},{"Refresh","Actualizar"},{"AUTO RUN","AUTO"},{"Open log","Abrir registro"},
             {"Keybind:","Tecla:"},{"Set key...","Fijar tecla..."},{"controller:","mando:"},{"land now:","aterrizar:"},
             {"reconnect:","reconectar:"},{"stuck","atascado"},{"sec -> reconnect","s -> reconectar"},
@@ -334,33 +334,33 @@ class RobloxAuto : Form
             {"RF watch (HOME)","RF (CASA)"},{"Black screen while reconnecting","Pantalla negra al reconectar"},
             {"s delay","s retraso"},{"Show LAND NOW, hold","Mostrar LAND NOW, esperar"},{"s before reconnect","s antes de reconectar"} } },
         { "Deutsch",  new Dictionary<string, string> {
-            {"REJOIN NOW","NEU VERBINDEN"},{"Refresh","Aktualisieren"},{"AUTO RUN","AUTO"},{"Open log","Log öffnen"},
+            {"REJOIN NOW","NEU VERBINDEN"},{"Refresh","Aktualisieren"},{"AUTO RUN","AUTO"},{"Open log","Log Ã¶ffnen"},
             {"Keybind:","Taste:"},{"Set key...","Taste setzen..."},{"controller:","Controller:"},{"land now:","landen:"},
-            {"reconnect:","verbinden:"},{"stuck","hängt"},{"sec -> reconnect","s -> neu verbinden"},
+            {"reconnect:","verbinden:"},{"stuck","hÃ¤ngt"},{"sec -> reconnect","s -> neu verbinden"},
             {"Team:","Team:"},{"Drone:","Drohne:"},{"Bomb:","Bombe:"},{"AUTO after rejoin","AUTO nach Neuverb."},
             {"RF watch (HOME)","RF (BASIS)"},{"Black screen while reconnecting","Schwarzer Bildschirm"},
-            {"s delay","s Verzögerung"},{"Show LAND NOW, hold","LAND NOW zeigen, warten"},{"s before reconnect","s vor Neuverb."} } },
-        { "Français", new Dictionary<string, string> {
+            {"s delay","s VerzÃ¶gerung"},{"Show LAND NOW, hold","LAND NOW zeigen, warten"},{"s before reconnect","s vor Neuverb."} } },
+        { "FranÃ§ais", new Dictionary<string, string> {
             {"REJOIN NOW","RECONNECTER"},{"Refresh","Actualiser"},{"AUTO RUN","AUTO"},{"Open log","Ouvrir log"},
-            {"Keybind:","Touche:"},{"Set key...","Définir touche..."},{"controller:","manette:"},{"land now:","atterrir:"},
-            {"reconnect:","reconnecter:"},{"stuck","bloqué"},{"sec -> reconnect","s -> reconnecter"},
-            {"Team:","Équipe:"},{"Drone:","Drone:"},{"Bomb:","Bombe:"},{"AUTO after rejoin","AUTO après reconnexion"},
-            {"RF watch (HOME)","RF (BASE)"},{"Black screen while reconnecting","Écran noir en reconnexion"},
-            {"s delay","s délai"},{"Show LAND NOW, hold","Afficher LAND NOW, attendre"},{"s before reconnect","s avant reconnexion"} } },
-        { "Português", new Dictionary<string, string> {
+            {"Keybind:","Touche:"},{"Set key...","DÃ©finir touche..."},{"controller:","manette:"},{"land now:","atterrir:"},
+            {"reconnect:","reconnecter:"},{"stuck","bloquÃ©"},{"sec -> reconnect","s -> reconnecter"},
+            {"Team:","Ã‰quipe:"},{"Drone:","Drone:"},{"Bomb:","Bombe:"},{"AUTO after rejoin","AUTO aprÃ¨s reconnexion"},
+            {"RF watch (HOME)","RF (BASE)"},{"Black screen while reconnecting","Ã‰cran noir en reconnexion"},
+            {"s delay","s dÃ©lai"},{"Show LAND NOW, hold","Afficher LAND NOW, attendre"},{"s before reconnect","s avant reconnexion"} } },
+        { "PortuguÃªs", new Dictionary<string, string> {
             {"REJOIN NOW","RECONECTAR"},{"Refresh","Atualizar"},{"AUTO RUN","AUTO"},{"Open log","Abrir log"},
             {"Keybind:","Tecla:"},{"Set key...","Definir tecla..."},{"controller:","controle:"},{"land now:","aterrissar:"},
             {"reconnect:","reconectar:"},{"stuck","travado"},{"sec -> reconnect","s -> reconectar"},
-            {"Team:","Equipe:"},{"Drone:","Drone:"},{"Bomb:","Bomba:"},{"AUTO after rejoin","AUTO após reconectar"},
+            {"Team:","Equipe:"},{"Drone:","Drone:"},{"Bomb:","Bomba:"},{"AUTO after rejoin","AUTO apÃ³s reconectar"},
             {"RF watch (HOME)","RF (BASE)"},{"Black screen while reconnecting","Tela preta ao reconectar"},
             {"s delay","s atraso"},{"Show LAND NOW, hold","Mostrar LAND NOW, esperar"},{"s before reconnect","s antes de reconectar"} } },
-        { "Русский",  new Dictionary<string, string> {
-            {"REJOIN NOW","ПЕРЕПОДКЛЮЧИТЬСЯ"},{"Refresh","Обновить"},{"AUTO RUN","АВТО"},{"Open log","Открыть лог"},
-            {"Keybind:","Клавиша:"},{"Set key...","Задать клавишу..."},{"controller:","геймпад:"},{"land now:","посадка:"},
-            {"reconnect:","переподключить:"},{"stuck","завис"},{"sec -> reconnect","с -> переподключение"},
-            {"Team:","Команда:"},{"Drone:","Дрон:"},{"Bomb:","Бомба:"},{"AUTO after rejoin","АВТО после переподключения"},
-            {"RF watch (HOME)","RF (БАЗА)"},{"Black screen while reconnecting","Чёрный экран при переподключении"},
-            {"s delay","с задержка"},{"Show LAND NOW, hold","Показать LAND NOW, пауза"},{"s before reconnect","с до переподключения"} } },
+        { "Ð ÑƒÑÑÐºÐ¸Ð¹",  new Dictionary<string, string> {
+            {"REJOIN NOW","ÐŸÐ•Ð Ð•ÐŸÐžÐ”ÐšÐ›Ð®Ð§Ð˜Ð¢Ð¬Ð¡Ð¯"},{"Refresh","ÐžÐ±Ð½Ð¾Ð²Ð¸Ñ‚ÑŒ"},{"AUTO RUN","ÐÐ’Ð¢Ðž"},{"Open log","ÐžÑ‚ÐºÑ€Ñ‹Ñ‚ÑŒ Ð»Ð¾Ð³"},
+            {"Keybind:","ÐšÐ»Ð°Ð²Ð¸ÑˆÐ°:"},{"Set key...","Ð—Ð°Ð´Ð°Ñ‚ÑŒ ÐºÐ»Ð°Ð²Ð¸ÑˆÑƒ..."},{"controller:","Ð³ÐµÐ¹Ð¼Ð¿Ð°Ð´:"},{"land now:","Ð¿Ð¾ÑÐ°Ð´ÐºÐ°:"},
+            {"reconnect:","Ð¿ÐµÑ€ÐµÐ¿Ð¾Ð´ÐºÐ»ÑŽÑ‡Ð¸Ñ‚ÑŒ:"},{"stuck","Ð·Ð°Ð²Ð¸Ñ"},{"sec -> reconnect","Ñ -> Ð¿ÐµÑ€ÐµÐ¿Ð¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ðµ"},
+            {"Team:","ÐšÐ¾Ð¼Ð°Ð½Ð´Ð°:"},{"Drone:","Ð”Ñ€Ð¾Ð½:"},{"Bomb:","Ð‘Ð¾Ð¼Ð±Ð°:"},{"AUTO after rejoin","ÐÐ’Ð¢Ðž Ð¿Ð¾ÑÐ»Ðµ Ð¿ÐµÑ€ÐµÐ¿Ð¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ñ"},
+            {"RF watch (HOME)","RF (Ð‘ÐÐ—Ð)"},{"Black screen while reconnecting","Ð§Ñ‘Ñ€Ð½Ñ‹Ð¹ ÑÐºÑ€Ð°Ð½ Ð¿Ñ€Ð¸ Ð¿ÐµÑ€ÐµÐ¿Ð¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ð¸"},
+            {"s delay","Ñ Ð·Ð°Ð´ÐµÑ€Ð¶ÐºÐ°"},{"Show LAND NOW, hold","ÐŸÐ¾ÐºÐ°Ð·Ð°Ñ‚ÑŒ LAND NOW, Ð¿Ð°ÑƒÐ·Ð°"},{"s before reconnect","Ñ Ð´Ð¾ Ð¿ÐµÑ€ÐµÐ¿Ð¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ñ"} } },
         { "Italiano", new Dictionary<string, string> {
             {"REJOIN NOW","RICONNETTI"},{"Refresh","Aggiorna"},{"AUTO RUN","AUTO"},{"Open log","Apri log"},
             {"Keybind:","Tasto:"},{"Set key...","Imposta tasto..."},{"controller:","controller:"},{"land now:","atterra:"},
@@ -4327,7 +4327,7 @@ class RobloxAuto : Form
                     if (d == 0) { g.FillRectangle(_gb, x - 24, 18, 48, 26); g.DrawRectangle(_pt, x - 24, 18, 48, 26); }
                     else { g.DrawLine(_pt, x, 26, x, 40); if (deg % 30 == 0) g.DrawString(deg.ToString(), _f, _g, x - 14, 44); }
                 }
-                g.DrawString(hdg + "°", _f, _g, cx - 18, 22);
+                g.DrawString(hdg + "Â°", _f, _g, cx - 18, 22);
             }
 
             DrawLadder(g, W, cy, true, Spd);                       // speed on the left
@@ -5015,7 +5015,7 @@ class RobloxAuto : Form
                                 int c2 = px[(yl + kk) * W + x];
                                 below += Math.Abs(((c2 >> 16) & 0xFF) - sr) + Math.Abs(((c2 >> 8) & 0xFF) - sg) + Math.Abs((c2 & 0xFF) - sb);
                             }
-                            tot += below - above; cnt++;
+                            tot += below - above - (above >> 1); cnt++;   // weight the sky above heavier
                         }
                         if (cnt >= 12) { float s2 = tot / cnt; if (s2 > bestScore) { bestScore = s2; bm10 = m10; bb = b; } }
                     }
@@ -5042,7 +5042,7 @@ class RobloxAuto : Form
                                     int c2 = px[(yl + kk) * W + x];
                                     below += Math.Abs(((c2 >> 16) & 0xFF) - sr) + Math.Abs(((c2 >> 8) & 0xFF) - sg) + Math.Abs((c2 & 0xFF) - sb);
                                 }
-                                tot += below - above; cnt++;
+                                tot += below - above - (above >> 1); cnt++;   // weight the sky above heavier
                             }
                             if (cnt >= 12) { float s2 = tot / cnt; if (s2 > bestScore) { bestScore = s2; slope = m; icept = b; gOk = true; } }
                         }
@@ -5640,10 +5640,15 @@ class RobloxAuto : Form
                 AddBlackLine("standby - awaiting command", "");
                 OverlayHub.I.SetProgress(_flowPct, "standby");
 
-                // hold at the standby prompt until the flow is actually started (or 20s), so the
-                // viewers see the idle console blink, then the connect command is typed live
+                // Stay at the login/standby prompt until the operator has locked a team (the flow
+                // reaches "team locked"), THEN type the connect command - so "connecting" only
+                // shows up after the team step is pressed, which reads logically for viewers.
                 int w0 = 0;
-                while (_blackWatch && !_running && !IsLinked() && w0 < 20000) { Thread.Sleep(150); w0 += 150; }
+                while (_blackWatch && !IsLinked() && _flowPct < 0.30f && w0 < 90000)
+                {
+                    Thread.Sleep(150); w0 += 150;
+                    if (!_running && w0 > 15000) break;   // no AUTO run in flight: don't hold the cover
+                }
 
                 string ip = RandIp();
                 AddBlackLine("> connect " + ip + ":47320", "");
@@ -5656,15 +5661,14 @@ class RobloxAuto : Form
                     Thread.Sleep(240);
                 }
                 AddBlackLine("resolving ground station " + ip, "OK");
+                AddBlackLine("calibrating inertial nav (imu)", "OK");
+                AddBlackLine("spooling gyro stabiliser", "OK");
                 // each line waits for the REAL flow to reach its milestone (BootWait), so the
                 // terminal narrates what is happening instead of racing ahead on a fixed timer
-                BootWait("opening encrypted uplink", "OK", 0.08f, "uplink", 12000);
-                BootWait("syncing telemetry stream", "OK", 0.12f, "telemetry", 12000);
-                BootWait("opening battle-net relay", "OK", 0.15f, "relay", 12000);
-                BootWait("requesting team assignment", "OK", 0.18f, "team", 40000);
-                BootWait("team locked", "OK", 0.30f, "team locked", 40000);
+                BootWait("negotiating encrypted uplink", "OK", 0.32f, "uplink", 12000);
                 BootWait("selecting airframe  [" + _drone + "]", "OK", 0.40f, "airframe", 40000);
                 BootWait("checking warhead rack", "OK", 0.62f, "payload", 40000);
+                BootWait("syncing telemetry stream", "OK", 0.70f, "telemetry", 40000);
                 BootWait("running pre-flight checks", "OK", 0.75f, "preflight", 40000);
                 BootWait("arming flight controller", "OK", 0.84f, "arm", 40000);
                 BootWait("signal check - uplink degraded", "BAD", 0.88f, "degraded", 40000);
