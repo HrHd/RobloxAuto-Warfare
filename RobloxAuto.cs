@@ -4003,6 +4003,7 @@ class RobloxAuto : Form
                 string lastTxt = null;
                 bool lastOk = false;
                 long lastHud = 0;
+                int linkMiss = 0;   // consecutive reads without LINK, so one miss does not drop it
 
                 while (_rfRun)
                 {
@@ -4025,10 +4026,16 @@ class RobloxAuto : Form
                         // the top-right "LINK LIVE" indicator is the proof we are actually in
                         // the drone view - without it the feed should not run at all
                         bool linked = IsLinked();
-                        if (linked != shown)
+                        if (linked) linkMiss = 0; else linkMiss++;
+                        if (linked && !shown)
                         {
-                            shown = linked;
-                            Log(linked ? "   RF feed: LINK detected - overlay on" : "   RF feed: no LINK - overlay off");
+                            shown = true;
+                            Log("   RF feed: LINK detected - overlay on");
+                        }
+                        else if (!linked && shown && linkMiss >= 3)
+                        {
+                            shown = false;
+                            Log("   RF feed: no LINK - overlay off");
                         }
                         string d = null;
                         if (linked)
@@ -4156,22 +4163,28 @@ class RobloxAuto : Form
     // view, so the RF feed only runs when it is present.
     bool IsLinked()
     {
+        // The top-right "LINK LIVE" is small white text; the whole-screen read drops it once the
+        // foliage behind it is busy, which made the feed flicker off a second after it started.
+        // Read that corner on its own with the outlined-text mask, then fall back to a plain read.
         try
         {
             int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
-            List<string[]> ws = OcrWords();          // plain read - the HUD text is bright
-            foreach (string[] w in ws)
-            {
-                string t = (w[4] ?? "").ToUpperInvariant();
-                if (t.IndexOf("LINK") >= 0 || SimPct(t, "LINK") >= 70)
-                {
-                    int wx = int.Parse(w[0]), wy = int.Parse(w[1]);
-                    if (wx > W * 0.6 && wy < H * 0.2) return true;
-                }
-            }
-            return false;
+            List<string[]> ws = OcrMaskedRegion(W * 82 / 100, 4, W, 96, 3);
+            if (LinkWords(ws)) return true;
         }
-        catch { return false; }
+        catch { }
+        return LinkWords(OcrWords());
+    }
+
+    static bool LinkWords(List<string[]> ws)
+    {
+        if (ws == null) return false;
+        foreach (string[] w in ws)
+        {
+            string t = (w[4] ?? "").ToUpperInvariant();
+            if (t.IndexOf("LINK") >= 0 || t.IndexOf("LIVE") >= 0 || SimPct(t, "LINK") >= 70) return true;
+        }
+        return false;
     }
 
     // The crash screen is a big white "NO SIGNAL" on light grey - the plain read sees it, the
@@ -4367,10 +4380,11 @@ class RobloxAuto : Form
             string n = NumFromToken(t);
             if (n == null) continue;
             int v; if (!int.TryParse(n, out v)) continue;
-            if (v < 1 || v > 359) continue;
+            if (v < 0 || v > 399) continue;          // the OSD can print e.g. 364
+            if (v > 359) v -= 360;
             int wy;
             try { wy = int.Parse(w[1]); } catch { continue; }
-            if (wy < bestY) { bestY = wy; best = n; }
+            if (wy < bestY) { bestY = wy; best = v.ToString(); }
         }
         return best;
     }
