@@ -1069,6 +1069,16 @@ class RobloxAuto : Form
                 tb.MouseDown += delegate { BeginEdit(tb); };
                 tb.Leave += delegate { ApplyNoActivate(); };
             }
+            // NumericUpDown keeps its edit box as a child that is not always reachable, and its
+            // spin arrows are not TextBoxes at all - wire the whole control so it can be typed in
+            // and clicked while the panel is WS_EX_NOACTIVATE.
+            NumericUpDown nud = c as NumericUpDown;
+            if (nud != null)
+            {
+                nud.Enter += delegate { BeginEdit(nud); };
+                nud.MouseDown += delegate { BeginEdit(nud); };
+                nud.Leave += delegate { ApplyNoActivate(); };
+            }
             if (c.Controls.Count > 0) WireEditables(c);
         }
     }
@@ -5647,10 +5657,13 @@ class RobloxAuto : Form
                 // reaches "team locked"), THEN type the connect command - so "connecting" only
                 // shows up after the team step is pressed, which reads logically for viewers.
                 int w0 = 0;
-                while (_blackWatch && !IsLinked() && _flowPct < 0.30f && w0 < 90000)
+                while (_blackWatch && _flowPct < 0.30f && w0 < 60000)
                 {
                     Thread.Sleep(150); w0 += 150;
                     if (!_running && w0 > 15000) break;   // no AUTO run in flight: don't hold the cover
+                    // poll the (expensive) OCR link check sparingly - hammering it here stole the
+                    // OCR from the AUTO flow and could make its team step fail
+                    if ((w0 % 1500) == 0 && IsLinked()) break;
                 }
 
                 string ip = RandIp();
