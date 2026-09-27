@@ -6656,6 +6656,11 @@ class RobloxAuto : Form
                     sb.Append(",\"dpp\":").Append(_dpp.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"shear\":").Append(_shear.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"len\":").Append(_len.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                    // overlay.html version = its last-write time; the page reloads itself when it changes
+                    // so OBS can never sit on a stale render again
+                    string oVer = "0";
+                    try { string of = Path.Combine(_dir, "overlay.html"); if (File.Exists(of)) oVer = File.GetLastWriteTimeUtc(of).Ticks.ToString(); } catch { }
+                    sb.Append(",\"ver\":\"").Append(oVer).Append("\"");
                     sb.Append(",\"lines\":[");
                     for (int i = 0; i < _lines.Count; i++)
                     {
@@ -6693,7 +6698,15 @@ class RobloxAuto : Form
             else
             {
                 string f = Path.Combine(_dir, "overlay.html");
-                try { body = File.Exists(f) ? File.ReadAllText(f) : "<html><body style='background:#000;color:#8cff9c;font-family:Consolas;font-size:28px'>overlay.html missing</body></html>"; }
+                try
+                {
+                    if (File.Exists(f))
+                    {
+                        // stamp the page with its own version so its JS can detect a newer file and reload
+                        body = File.ReadAllText(f).Replace("__OVERLAY_VER__", File.GetLastWriteTimeUtc(f).Ticks.ToString());
+                    }
+                    else body = "<html><body style='background:#000;color:#8cff9c;font-family:Consolas;font-size:28px'>overlay.html missing</body></html>";
+                }
                 catch { body = "<html><body style='background:#000'></body></html>"; }
                 ctype = "text/html";
             }

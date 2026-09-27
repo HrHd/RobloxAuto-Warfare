@@ -61,6 +61,10 @@ function drawNoise() {
 }
 setInterval(drawNoise, 70);
 
+// Version of THIS loaded file. The tool replaces the placeholder with the file's timestamp; if the
+// running tool reports a newer one, we reload so OBS can never sit on a stale overlay again.
+var OVERLAY_VER = "__OVERLAY_VER__";
+
 // ---- FPV/UAV OSD ----
 var hc = document.getElementById('hud');
 var hctx = hc.getContext('2d');
@@ -303,6 +307,7 @@ var prevLast = '', lastAt = 0;   // for the console type-out effect
 
 function tick() {
   fetch('http://localhost:8730/state').then(function(r){ return r.json(); }).then(function(s){
+    if (s.ver && OVERLAY_VER !== '__OVERLAY_VER__' && s.ver !== OVERLAY_VER) { location.reload(); return; }
     var wrap = document.getElementById('wrap');
     var bg   = document.getElementById('bg');
     var home = document.getElementById('home');
