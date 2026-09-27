@@ -3500,22 +3500,23 @@ class RobloxAuto : Form
         _hudFPitch -= sy * 660f * dt;   // inverted on purpose: pitching up must move the horizon
                                         // DOWN (against the input), not with it; doubled for speed
 
-        // camera correction only when the sticks are centred, so input is never cancelled out.
-        // A fix older than 1.5s is not trusted - the drone may have turned since it was taken.
+        // Complementary filter: the STICK is the fast rate input, the CAMERA is the slow absolute
+        // reference - so the correction runs ALWAYS, not only when centred (gating it meant that
+        // during flight, when a stick is nearly always held, the roll was pure stick drift and
+        // never levelled onto the real horizon). Slow tau while flying so it does not fight the
+        // stick, quicker once centred. A fix older than 1.5s is not trusted.
         bool det = _hudDetValid && (now - _hudDetAt) < 1500;
-        if (sx == 0f && sy == 0f)
+        if (det)
         {
-            if (det)
-            {
-                float a = 1f - (float)Math.Pow(0.5, dt / 0.25);   // quicker lock onto the camera
-                _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
-                _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
-            }
-            else
-            {
-                // centring with no camera fix: level the roll back so it never stays stuck banked
-                _hudFRoll += (0f - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 0.6));
-            }
+            float tau = (sx == 0f && sy == 0f) ? 0.3f : 0.9f;
+            float a = 1f - (float)Math.Pow(0.5, dt / tau);
+            _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
+            _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
+        }
+        else if (sx == 0f && sy == 0f)
+        {
+            // no camera fix and hands off: level the roll back
+            _hudFRoll += (0f - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 0.6));
         }
 
         if (_hudFRoll > 85f) _hudFRoll = 85f;
@@ -4469,7 +4470,7 @@ class RobloxAuto : Form
 
                     // ---- horizon measurement (~3x/s) + spawn lock. The smooth 50fps fusion runs
                     // in HudTick on the UI thread so it can drive the layered repaint. ----
-                    if (shown && Environment.TickCount - lastDet >= 330)
+                    if (shown && Environment.TickCount - lastDet >= 250)
                     {
                         lastDet = Environment.TickCount;
                         DetectHorizon();
