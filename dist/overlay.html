@@ -71,12 +71,17 @@ function drawMavic(s, W, H) {
   var sans = 'bold "Segoe UI", "Segoe UI Symbol", Arial, sans-serif';
   hctx.clearRect(0, 0, W, H);
 
-  // rule-of-thirds grid (thicker so it reads on the OBS overlay)
-  hctx.strokeStyle = 'rgba(255,255,255,0.45)';
-  hctx.lineWidth = 3;
+  // rule-of-thirds grid: a dark line with a light core on top, so it stays visible on both the
+  // bright sky and the dark ground in the OBS overlay
+  function gridLine(x1, y1, x2, y2) {
+    hctx.strokeStyle = 'rgba(0,0,0,0.45)'; hctx.lineWidth = 5;
+    hctx.beginPath(); hctx.moveTo(x1, y1); hctx.lineTo(x2, y2); hctx.stroke();
+    hctx.strokeStyle = 'rgba(255,255,255,0.65)'; hctx.lineWidth = 2;
+    hctx.beginPath(); hctx.moveTo(x1, y1); hctx.lineTo(x2, y2); hctx.stroke();
+  }
   for (var i = 1; i <= 2; i++) {
-    hctx.beginPath(); hctx.moveTo(W * i / 3, 0); hctx.lineTo(W * i / 3, H); hctx.stroke();
-    hctx.beginPath(); hctx.moveTo(0, H * i / 3); hctx.lineTo(W, H * i / 3); hctx.stroke();
+    gridLine(W * i / 3, 0, W * i / 3, H);
+    gridLine(0, H * i / 3, W, H * i / 3);
   }
   hctx.strokeStyle = 'rgba(255,255,255,0.6)';
   hctx.beginPath();

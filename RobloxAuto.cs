@@ -4072,7 +4072,7 @@ class RobloxAuto : Form
             SolidBrush white = new SolidBrush(Color.FromArgb(238, 255, 255, 255));
             SolidBrush dim = new SolidBrush(Color.FromArgb(205, 235, 235, 235));
             SolidBrush recB = new SolidBrush(Color.FromArgb(230, 226, 32, 32));
-            Pen grid = new Pen(Color.FromArgb(115, 255, 255, 255), 3);
+            Pen grid = new Pen(Color.FromArgb(58, 255, 255, 255), 1);
             Pen thin = new Pen(Color.FromArgb(150, 255, 255, 255), 1);
             Pen recP = new Pen(Color.FromArgb(230, 226, 32, 32), 2);
 
