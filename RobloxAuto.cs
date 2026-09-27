@@ -3645,12 +3645,16 @@ class RobloxAuto : Form
         // Roll = RIGHT stick X ONLY. The left stick X is YAW (turning), and the old "else _padLx"
         // fallback meant turning the drone rolled the whole horizon ladder. Pitch = right stick Y
         // (the left stick Y is throttle).
+        // Roll = RIGHT stick X only (the left stick X is YAW - adding it made turning roll the HUD).
+        // Pitch = BOTH sticks' Y summed: in this game the camera pitch is on a stick Y and the other
+        // Y is the throttle - both move the drone's pitch, so both must move the horizon.
         float sx = _padRx;
-        float sy = _padRy;
+        float sy = _padLy + _padRy;
         // kill stick rest/drift below 5% so "centred" actually happens - a stick sitting at 0.13
         // used to leave sx non-zero and the camera correction never ran (lines never levelled)
         if (sx > -0.05f && sx < 0.05f) sx = 0f;
         if (sy > -0.05f && sy < 0.05f) sy = 0f;
+        if (sy > 1f) sy = 1f; if (sy < -1f) sy = -1f;
 
         // controller priority: integrate the stick every frame (rate -> angle)
         _hudFRoll += -sx * _hudRollRate * dt;    // tunable (roll deg/s)
