@@ -4239,7 +4239,12 @@ class RobloxAuto : Form
         // pull BACK -> it drops. Bounded (not integrated) so holding the stick holds the offset and
         // releasing returns it - the pilot's pitch input visibly drives the horizon.
         // SMOOTHED so the line glides to the new height instead of snapping when the stick moves.
-        float stickPitchTarget = -sy * _hudPitStick;
+        // EXPO (acceleration): more % input = faster travel. A light touch barely moves the line, a full
+        // stick sends it at full speed - a quadratic curve on the stick magnitude (with a linear floor
+        // so small inputs still do something). The glide below turns "further target" into "faster move".
+        float syM = Math.Abs(sy);
+        float syShaped = sy * (0.35f + 0.65f * syM * syM);
+        float stickPitchTarget = -syShaped * _hudPitStick;
         float pv = 1f - (float)Math.Pow(0.5, dt / 0.22f);      // ~0.22s glide
         _hudPitStickSm += (stickPitchTarget - _hudPitStickSm) * pv;
         float stickPitch = _hudPitStickSm;
