@@ -5046,15 +5046,18 @@ class RobloxAuto : Form
             if (Uav) { DrawMavic(g, W, H); base.OnPaint(e); return; }   // DJI-Fly style
 
             // artificial horizon + pitch ladder - every endpoint is rotated about the centre by
-            // the bank, so the whole ladder rolls with the controller input. Runs out to +-90 deg
-            // and fades with distance from the centre so it never hard-stops or clutters the view.
+            // the bank, so the whole ladder rolls (tilts diagonally) with the controller input.
+            // It also SPREADS as it tilts: the rungs fan out with pitch (plus a little for roll),
+            // so the ladder opens up like a drone HUD and you can read the dive/climb angle to aim.
+            float tilt = Math.Min(1f, Math.Abs(PitchPx) / 900f + Math.Abs(Roll) / 240f);
+            float spread = 1f + 0.9f * tilt;
             for (int d = -90; d <= 90; d += 10)
             {
-                float yy = PitchPx + d * 8f;                 // 10 deg = 8px
+                float yy = PitchPx + d * 8f * spread;        // 10 deg = 8px, fanned by the tilt
                 float dist = Math.Abs(yy);
                 float af = dist <= 200f ? 1f : 1f - (dist - 200f) / 320f;   // fade 200px -> 520px
                 if (af <= 0.02f) continue;
-                float half = d == 0 ? 150f : 70f;
+                float half = (d == 0 ? 150f : 70f) * (1f + 0.35f * tilt);
                 int aMain = (int)(230 * af), aThin = (int)(165 * af), aTxt = (int)(235 * af);
                 Pen pen = d == 0
                     ? new Pen(Color.FromArgb(aMain, 255, 255, 255), 2)
