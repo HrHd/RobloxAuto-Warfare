@@ -32,6 +32,8 @@ class RobloxAuto : Form
 
     uint _hkRejoinKey = 0x77;   // F8
     uint _hkAutoKey = 0x74;     // F5
+    uint _hkNightKey = 0x76;    // F7 - toggles night vision
+    bool _capturingNight = false;
 
     string _padRejoin = "BACK";
     string _padAuto = "LB";
@@ -70,8 +72,8 @@ class RobloxAuto : Form
 
     // ================= ui =================
     TextBox txtServer, txtLog;
-    Button btnRejoin, btnRefresh, btnAuto, btnSetKey, btnStop, btnOpenLog, btnHighPrio;
-    Label lblKeyVal;
+    Button btnRejoin, btnRefresh, btnAuto, btnSetKey, btnStop, btnOpenLog, btnHighPrio, btnSetNight;
+    Label lblKeyVal, lblNightVal;
     bool _capturingKey = false;
     ComboBox cmbTeam, cmbDrone, cmbBomb, cmbPadRejoin, cmbPadAuto, cmbPadStop, cmbPadLand, cmbPadReconnect;
     CheckBox chkAsDrone, chkAutoRecon, chkOcrWatch, chkPadRejoin, chkPadAuto, chkPadStop, chkPadLand, chkPadReconnect, chkTop, chkNoAct, chkClickKey;
@@ -94,7 +96,7 @@ class RobloxAuto : Form
     float _hudPitch = 0f, _hudPitchTarget = 0f;   // horizon vertical offset, px (eased)
     bool _hudStyleUav = false;                     // MAVIC gets the UAV-style layout
     FpvHudForm _hudForm = null;
-    CheckBox chkHud, chkNight, chkUav;
+    CheckBox chkHud, chkNight;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
@@ -117,7 +119,7 @@ class RobloxAuto : Form
 
     // ================= win32 =================
     const int WM_HOTKEY = 0x0312;
-    const int HK_REJOIN = 0x5A01, HK_AUTO = 0x5A02;
+    const int HK_REJOIN = 0x5A01, HK_AUTO = 0x5A02, HK_NIGHT = 0x5A03;
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
     [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
 
@@ -174,12 +176,16 @@ class RobloxAuto : Form
             if (!MagInitialize()) { Log("night vision: the Magnification API is unavailable"); return; }
             MAGCOLOREFFECT e = new MAGCOLOREFFECT();
             if (on)
+                // The Magnification colour matrix is applied as a ROW vector (v * M), so the
+                // translation lives in the LAST ROW - exactly like Direct2D/WPF ColorMatrix.
+                // Putting the "+1" in the last column instead makes every channel (1 - v) come
+                // out negative, clamps to 0, and blacks the whole screen out. This is that bug.
                 e.transform = new float[] {
-                    -1, 0, 0, 0, 1,
-                     0,-1, 0, 0, 1,
-                     0, 0,-1, 0, 1,
+                    -1, 0, 0, 0, 0,
+                     0,-1, 0, 0, 0,
+                     0, 0,-1, 0, 0,
                      0, 0, 0, 1, 0,
-                     0, 0, 0, 0, 1 };
+                     1, 1, 1, 0, 1 };
             else
                 e.transform = new float[] {
                      1, 0, 0, 0, 0,
@@ -191,6 +197,14 @@ class RobloxAuto : Form
             Log("night vision " + (on ? "ON" : "OFF") + (ok ? "" : " - the call was refused"));
         }
         catch (Exception ex) { Log("night vision failed: " + ex.Message); }
+    }
+
+    // Hotkey + button entry point: flips the flag and drives the checkbox so both stay in sync.
+    void ToggleNightVision()
+    {
+        _nightVision = !_nightVision;
+        if (chkNight != null) chkNight.Checked = _nightVision;   // fires the handler, applies it
+        else ApplyNightVision(_nightVision);
     }
 
     const uint MOUSEEVENTF_LEFTDOWN = 0x0002, MOUSEEVENTF_LEFTUP = 0x0004;
@@ -505,16 +519,11 @@ class RobloxAuto : Form
         };
         Controls.Add(chkHud);
 
-        chkUav = new CheckBox();
-        chkUav.Text = "UAV style (MAVIC)";
-        chkUav.SetBounds(x + 156, y, 170, 22);
-        chkUav.Checked = _hudStyleUav;
-        chkUav.CheckedChanged += delegate
-        {
-            _hudStyleUav = chkUav.Checked; SaveCfg();
-            if (_hudForm != null) _hudForm.Uav = _hudStyleUav;
-        };
-        Controls.Add(chkUav);
+        var lblHudStyle = new Label();
+        lblHudStyle.Text = "OSD style follows the drone";
+        lblHudStyle.ForeColor = Color.Silver;
+        lblHudStyle.SetBounds(x + 156, y + 3, 200, 20);
+        Controls.Add(lblHudStyle);
         y += 26;
 
         chkNight = new CheckBox();
@@ -596,6 +605,35 @@ class RobloxAuto : Form
         lblKeyHint.SetBounds(x + 268, y + 4, 140, 20);
         lblKeyHint.ForeColor = Color.Silver;
         Controls.Add(lblKeyHint);
+        y += 34;
+
+        var lblNightKey = new Label();
+        lblNightKey.Text = "Night vision:";
+        lblNightKey.SetBounds(x, y + 4, 86, 20);
+        Controls.Add(lblNightKey);
+
+        lblNightVal = new Label();
+        lblNightVal.SetBounds(x + 88, y + 3, 76, 20);
+        lblNightVal.ForeColor = Color.Khaki;
+        lblNightVal.Font = new Font("Consolas", 10F, FontStyle.Bold);
+        Controls.Add(lblNightVal);
+
+        btnSetNight = new Button();
+        btnSetNight.Text = "Set key...";
+        btnSetNight.SetBounds(x + 168, y, 92, 26);
+        btnSetNight.Click += delegate
+        {
+            _capturingNight = true;
+            btnSetNight.Text = "press...";
+            Log("press the key for NIGHT VISION  (Esc cancels)");
+        };
+        Controls.Add(btnSetNight);
+
+        var lblNightHint = new Label();
+        lblNightHint.Text = "toggles the invert";
+        lblNightHint.SetBounds(x + 268, y + 4, 160, 20);
+        lblNightHint.ForeColor = Color.Silver;
+        Controls.Add(lblNightHint);
         y += 34;
 
         // ---- reconnect options ----
@@ -727,6 +765,8 @@ class RobloxAuto : Form
             if (cmbDrone.SelectedItem != null)
             {
                 _drone = cmbDrone.SelectedItem.ToString();
+                _hudStyleUav = _drone == "MAVIC";   // MAVIC gets the UAV-style OSD, FPV the FPV one
+                if (_hudForm != null) _hudForm.Uav = _hudStyleUav;
                 FillBombs();          // MAVIC and FPV carry different warheads
                 SaveCfg();
             }
@@ -1462,8 +1502,10 @@ class RobloxAuto : Form
         Thread.Sleep(500);
         HideBlack();
 
-        // now that we are flying, keep reading the HOME distance and show the fake RF feed
-        if (_watchHome && _asDrone) StartRfWatch();
+        // now that we are flying, keep reading the HOME distance / telemetry. The loop drives
+        // the fake RF feed (if RF watch is on) and the FPV/UAV HUD (if the HUD is on), so it
+        // starts when EITHER is wanted.
+        if ((_watchHome || _hudOn) && _asDrone) StartRfWatch();
 
         Thread.Sleep(150);
         Log("AUTO sequence complete.");
@@ -3481,33 +3523,48 @@ class RobloxAuto : Form
     {
         UnregisterHotKey(Handle, HK_REJOIN);
         UnregisterHotKey(Handle, HK_AUTO);
+        UnregisterHotKey(Handle, HK_NIGHT);
         if (!RegisterHotKey(Handle, HK_REJOIN, 0, _hkRejoinKey))
             Log("WARNING: could not register " + ((Keys)_hkRejoinKey) + " - another app already has it. Use 'Set key' to choose another.");
         if (!RegisterHotKey(Handle, HK_AUTO, 0, _hkAutoKey))
             Log("WARNING: could not register F5 - another app already has it.");
+        if (!RegisterHotKey(Handle, HK_NIGHT, 0, _hkNightKey))
+            Log("WARNING: could not register " + ((Keys)_hkNightKey) + " for night vision - another app already has it.");
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
-        if (_capturingKey)
+        if (_capturingKey || _capturingNight)
         {
             e.SuppressKeyPress = true;
             if (e.KeyCode == Keys.Escape)
             {
-                _capturingKey = false; btnSetKey.Text = "Set key...";
+                _capturingKey = false; _capturingNight = false;
+                btnSetKey.Text = "Set key..."; btnSetNight.Text = "Set key...";
                 Log("key capture cancelled");
                 return;
             }
             if (e.KeyCode == Keys.ControlKey || e.KeyCode == Keys.ShiftKey || e.KeyCode == Keys.Menu) return;
             if (e.Control || e.Shift || e.Alt) { Log("use a single key with no modifiers"); return; }
 
-            _hkRejoinKey = (uint)e.KeyCode;
-            _capturingKey = false;
-            btnSetKey.Text = "Set key...";
-            lblKeyVal.Text = e.KeyCode.ToString();
+            if (_capturingNight)
+            {
+                _hkNightKey = (uint)e.KeyCode;
+                _capturingNight = false;
+                btnSetNight.Text = "Set key...";
+                lblNightVal.Text = e.KeyCode.ToString();
+                Log("night vision keybind set to " + e.KeyCode);
+            }
+            else
+            {
+                _hkRejoinKey = (uint)e.KeyCode;
+                _capturingKey = false;
+                btnSetKey.Text = "Set key...";
+                lblKeyVal.Text = e.KeyCode.ToString();
+                Log("rejoin keybind set to " + e.KeyCode);
+            }
             RegisterHotkeys();
             SaveCfg();
-            Log("rejoin keybind set to " + e.KeyCode);
             return;
         }
         base.OnKeyDown(e);
@@ -3520,6 +3577,7 @@ class RobloxAuto : Form
             int id = m.WParam.ToInt32();
             if (id == HK_REJOIN) { Log("hotkey " + ((Keys)_hkRejoinKey) + " pressed"); Rejoin("hotkey"); }
             else if (id == HK_AUTO) AutoRun();
+            else if (id == HK_NIGHT) ToggleNightVision();
         }
         base.WndProc(ref m);
     }
@@ -3528,9 +3586,15 @@ class RobloxAuto : Form
     {
         base.OnShown(e);
         ApplyNoActivate();
+        _hudStyleUav = _drone == "MAVIC";   // the OSD style is set by the chosen drone
+        // Always start with a clean display: if a previous run died while the colour effect was
+        // on (the invert bug), this clears it so a restart is never needed.
+        _nightVision = false;
+        ApplyNightVision(false);
         RegisterHotkeys();
         lblKeyVal.Text = ((Keys)_hkRejoinKey).ToString();
-        Log("ready.  " + ((Keys)_hkRejoinKey) + " = rejoin,  F5 = AUTO RUN.");
+        if (lblNightVal != null) lblNightVal.Text = ((Keys)_hkNightKey).ToString();
+        Log("ready.  " + ((Keys)_hkRejoinKey) + " = rejoin,  F5 = AUTO RUN,  " + ((Keys)_hkNightKey) + " = night vision.");
         if (_placeId != "") Log("server ready: " + _serverId);
         else Log("no server detected yet - launch Roblox once, then Refresh");
         try { OverlayHub.I.Start(_appDir); Log("OBS overlay: add a Browser Source -> http://localhost:8730/"); } catch { }
@@ -3542,6 +3606,8 @@ class RobloxAuto : Form
         KillOcrServer();       // do not leave the resident helper behind
         UnregisterHotKey(Handle, HK_REJOIN);
         UnregisterHotKey(Handle, HK_AUTO);
+        UnregisterHotKey(Handle, HK_NIGHT);
+        ApplyNightVision(false);   // never leave the display inverted after exit
         SaveCfg();
         base.OnFormClosing(e);
     }
@@ -3609,6 +3675,7 @@ class RobloxAuto : Form
             else if (k == "hud") _hudOn = v == "1";
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
+            else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
                 else if (k == "blackScreen") _blackScreen = v == "1";
                 else if (k == "lang") _lang = v;
             }
@@ -3654,6 +3721,7 @@ class RobloxAuto : Form
             "hud=" + (_hudOn ? "1" : "0"),
             "uav=" + (_hudStyleUav ? "1" : "0"),
             "night=" + (_nightVision ? "1" : "0"),
+            "nightKey=" + _hkNightKey,
                 "lang=" + _lang
             });
         }
@@ -3772,7 +3840,10 @@ class RobloxAuto : Form
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
             DoubleBuffered = true;
-            Opacity = 0.99;
+            // no global Opacity here - that would paint the form's grey background over the whole
+            // screen and hide the RF static underneath. Key out black so only the drawn HUD shows.
+            BackColor = Color.Black;
+            TransparencyKey = Color.Black;
         }
         protected override bool ShowWithoutActivation { get { return true; } }
         protected override CreateParams CreateParams
@@ -3971,10 +4042,11 @@ class RobloxAuto : Form
 
                     // only touch the window when something actually changed; the 180ms blink
                     // timer does the repaint, so the overlay is not recomposited every tick
-                    if (Math.Abs(lvl - lastSet) > 0.01f || txt != lastTxt || shown != lastOk)
+                    bool rfVis = shown && _watchHome;   // the RF feed only when RF watch is on
+                    if (Math.Abs(lvl - lastSet) > 0.01f || txt != lastTxt || rfVis != lastOk)
                     {
-                        lastSet = lvl; lastTxt = txt; lastOk = shown;
-                        bool ok = shown;
+                        lastSet = lvl; lastTxt = txt; lastOk = rfVis;
+                        bool ok = rfVis;
                         float lc = lvl;
                         string tc = txt;
                         try
