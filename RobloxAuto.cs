@@ -101,6 +101,8 @@ class RobloxAuto : Form
     float _hudRoll = 0f, _hudRollTarget = 0f;     // horizon bank, degrees (eased)
     float _hudPitch = 0f, _hudPitchTarget = 0f;   // horizon vertical offset, px (eased)
     float _hudDetRoll = 0f, _hudDetPitch = 0f;    // what DetectHorizon last measured (image-based)
+    float _hudSmRoll = 0f, _hudSmPitch = 0f;      // smoothed across measurements
+    bool _hudSmSeeded = false;
     float _padLx = 0f, _padLy = 0f, _padRx = 0f, _padRy = 0f;   // sticks, -1..1, dead-zoned
     float _hudLockRoll = 0f, _hudLockPitch = 0f;  // base horizon (image-derived, corrected over time)
     float _hudCtrlRoll = 0f, _hudCtrlPitch = 0f;  // stick rotation integrated on top of the base
@@ -3487,9 +3489,9 @@ class RobloxAuto : Form
         float sy = _padRy;
 
         // controller priority: integrate the stick every frame (rate -> angle)
-        _hudFRoll += -sx * 150f * dt;
-        _hudFPitch -= sy * 330f * dt;   // inverted on purpose: pitching up must move the horizon
-                                        // DOWN (against the input), not with it
+        _hudFRoll += -sx * 300f * dt;   // doubled - it lagged behind the stick input
+        _hudFPitch -= sy * 660f * dt;   // inverted on purpose: pitching up must move the horizon
+                                        // DOWN (against the input), not with it; doubled for speed
 
         // camera correction only when the sticks are centred, so input is never cancelled out.
         // Time constant ~0.35s: slow enough to let the controller lead, fast enough to kill drift.
@@ -3497,7 +3499,7 @@ class RobloxAuto : Form
         {
             if (_hudDetValid)
             {
-                float a = 1f - (float)Math.Pow(0.5, dt / 0.35);
+                float a = 1f - (float)Math.Pow(0.5, dt / 0.25);   // quicker lock onto the camera
                 _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
                 _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
             }
@@ -4333,6 +4335,7 @@ class RobloxAuto : Form
             _flightStart = DateTime.Now;
             _rfHomeText = "----";
             _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
+            _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
             OverlayHub.I.SetFlight(true, 0.18f, 0);
 
             Thread t = new Thread(delegate ()
@@ -4903,10 +4906,10 @@ class RobloxAuto : Form
             int W, H; int[] px = Grab(out W, out H);
             int yTop = H / 10, yBot = H * 70 / 100;
 
-            int maxPts = (W * 11) / 12 / 6 + 2;
+            int maxPts = W / 4 + 4;
             float[] pxs = new float[maxPts], pys = new float[maxPts];
             int n = 0;
-            for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 6)
+            for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)   // dense columns = accurate
             {
                 // signed step: sky is ABOVE the horizon and brighter, so look for the strongest
                 // downward brightness drop, not any edge - an arbitrary terrain edge used to win
@@ -4922,12 +4925,12 @@ class RobloxAuto : Form
                 }
                 if (bestY >= 0) { pxs[n] = x; pys[n] = bestY; n++; }
             }
-            if (n < 40) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
+            if (n < 60) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
 
             // RANSAC: a horizon is near-horizontal, so reject steep candidate lines outright
             Random rng = new Random();
             float bs = 0f, bi = 0f; int bestIn = -1;
-            for (int it = 0; it < 160; it++)
+            for (int it = 0; it < 240; it++)
             {
                 int i1 = rng.Next(n), i2 = rng.Next(n);
                 if (i1 == i2) continue;
@@ -4938,16 +4941,16 @@ class RobloxAuto : Form
                 float b = y1 - m * x1;
                 int inl = 0;
                 for (int i = 0; i < n; i++)
-                    if (Math.Abs(pys[i] - (m * pxs[i] + b)) < 8f) inl++;
+                    if (Math.Abs(pys[i] - (m * pxs[i] + b)) < 6f) inl++;   // tighter inlier band
                 if (inl > bestIn) { bestIn = inl; bs = m; bi = b; }
             }
-            if (bestIn < n * 4 / 10) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
+            if (bestIn < n * 45 / 100) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
 
             // least-squares refit on the RANSAC inliers only
             float sx = 0, sy = 0, sxy = 0, sxx = 0; int k = 0;
             for (int i = 0; i < n; i++)
             {
-                if (Math.Abs(pys[i] - (bs * pxs[i] + bi)) >= 8f) continue;
+                if (Math.Abs(pys[i] - (bs * pxs[i] + bi)) >= 6f) continue;
                 sx += pxs[i]; sy += pys[i]; sxy += pxs[i] * pys[i]; sxx += pxs[i] * pxs[i]; k++;
             }
             float den = k * sxx - sx * sx;
@@ -4960,8 +4963,16 @@ class RobloxAuto : Form
             pitch += 22f;   // bias down a touch: the strongest step is often the treetops, not the
                             // true ground line, so sit just below them
             if (pitch > H / 4f) pitch = H / 4f; if (pitch < -H / 4f) pitch = -H / 4f;
-            _hudDetRoll = roll;
-            _hudDetPitch = pitch;
+            // smooth across measurements (measurements are only ~3/s, so a single noisy fit would
+            // make the lock twitch) - seeded on the first good fix so it is not biased to 0
+            if (!_hudSmSeeded) { _hudSmRoll = roll; _hudSmPitch = pitch; _hudSmSeeded = true; }
+            else
+            {
+                _hudSmRoll = _hudSmRoll * 0.55f + roll * 0.45f;
+                _hudSmPitch = _hudSmPitch * 0.55f + pitch * 0.45f;
+            }
+            _hudDetRoll = _hudSmRoll;
+            _hudDetPitch = _hudSmPitch;
             _hudDetValid = true;
         }
         catch { }
