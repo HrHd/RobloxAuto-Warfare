@@ -3962,6 +3962,9 @@ class RobloxAuto : Form
         public bool Uav = false;
         readonly Font _f = new Font("Consolas", 12F, FontStyle.Bold);
         readonly Font _fb = new Font("Consolas", 15F, FontStyle.Bold);
+        // DJI-Fly style fonts for the MAVIC (UAV) layout
+        readonly Font _fm = new Font("Segoe UI", 16F, FontStyle.Bold);
+        readonly Font _fs = new Font("Segoe UI", 13F, FontStyle.Regular);
         // black/white only, like a real monochrome FPV OSD (no green tint)
         readonly SolidBrush _g = new SolidBrush(Color.FromArgb(235, 255, 255, 255));
         readonly SolidBrush _gb = new SolidBrush(Color.FromArgb(205, 0, 0, 0));
@@ -3997,12 +4000,82 @@ class RobloxAuto : Form
             return new PointF(cx + dx * cs - dy * sn, cy + dx * sn + dy * cs);
         }
 
+        static float Num(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return 0f;
+            string n = "";
+            foreach (char c in s)
+            {
+                if ((c >= '0' && c <= '9') || c == '.' || c == '-') n += c;
+                else if (n.Length > 0) break;
+            }
+            float v;
+            return float.TryParse(n, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out v) ? v : 0f;
+        }
+
+        // DJI-Fly style overlay for the MAVIC: rule-of-thirds grid, mode/status up top,
+        // telemetry + exposure along the bottom, and a record button. Clean phone-recording look.
+        void DrawMavic(Graphics g, int W, int H)
+        {
+            SolidBrush white = new SolidBrush(Color.FromArgb(238, 255, 255, 255));
+            SolidBrush dim = new SolidBrush(Color.FromArgb(205, 235, 235, 235));
+            SolidBrush recB = new SolidBrush(Color.FromArgb(230, 226, 32, 32));
+            Pen grid = new Pen(Color.FromArgb(58, 255, 255, 255), 1);
+            Pen thin = new Pen(Color.FromArgb(150, 255, 255, 255), 1);
+            Pen recP = new Pen(Color.FromArgb(230, 226, 32, 32), 2);
+
+            for (int i = 1; i <= 2; i++)
+            {
+                g.DrawLine(grid, W * i / 3, 0, W * i / 3, H);
+                g.DrawLine(grid, 0, H * i / 3, W, H * i / 3);
+            }
+            g.DrawLine(thin, W / 2 - 24, H / 2, W / 2 - 9, H / 2);
+            g.DrawLine(thin, W / 2 + 9, H / 2, W / 2 + 24, H / 2);
+            g.DrawLine(thin, W / 2, H / 2 - 24, W / 2, H / 2 - 9);
+            g.DrawLine(thin, W / 2, H / 2 + 9, W / 2, H / 2 + 24);
+
+            g.DrawString("N Mode", _fm, white, 26, 12);
+
+            // top-right: RC signal bars, battery pill + %
+            int rEdge = W - 22;
+            g.DrawString("RC", _fs, white, rEdge - 40, 14);
+            for (int i = 0; i < 4; i++) g.FillRectangle(white, rEdge - 44 + i * 8, 42 - i * 6, 5, 7 + i * 6);
+            SizeF pct = g.MeasureString("96%", _fs);
+            g.DrawString("96%", _fs, white, rEdge - pct.Width, 14);
+            int bx = (int)(rEdge - pct.Width - 52);
+            g.DrawRectangle(thin, bx, 16, 40, 18);
+            g.FillRectangle(white, bx + 2, 18, 34, 14);
+
+            // bottom-left: altitude / speed / HOME (imperial, like the app)
+            float altFt = Num(Alt) * 3.28084f, spdMph = Num(Spd) * 2.23694f, homeFt = Num(Home) * 3.28084f;
+            g.DrawString(altFt.ToString("0") + "ft   " + spdMph.ToString("0.0") + "mph", _fm, white, 26, H - 94);
+            g.DrawString("HOME " + (homeFt > 0 ? homeFt.ToString("0") + "ft" : "----"), _fm, white, 26, H - 66);
+
+            // bottom-centre: resolution + recording time
+            g.DrawString("4K 30", _fm, white, W / 2 - 120, H - 94);
+            g.DrawString(string.IsNullOrEmpty(Timer) ? "00:00" : Timer, _fm, white, W / 2 + 4, H - 94);
+
+            // bottom-right: exposure
+            g.DrawString("1/60", _fm, white, W - 250, H - 94);
+            g.DrawString("F2.8", _fm, white, W - 168, H - 94);
+            g.DrawString("ISO 100", _fs, white, W - 250, H - 64);
+            g.DrawString("EV+0.3", _fs, white, W - 160, H - 64);
+
+            // record button
+            g.FillEllipse(recB, W - 126, H / 2 - 34, 62, 62);
+            g.DrawEllipse(recP, W - 114, H / 2 - 22, 38, 38);
+            g.DrawString("REC", _fs, white, W - 128, H / 2 - 58);
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             int W = Width, H = Height, cx = W / 2, cy = H / 2;
             float rad = Roll * (float)Math.PI / 180f;
+
+            if (Uav) { DrawMavic(g, W, H); base.OnPaint(e); return; }   // DJI-Fly style
 
             // artificial horizon + pitch ladder, banked with the horizon
             for (int d = -30; d <= 30; d += 10)
