@@ -3816,8 +3816,166 @@ class RobloxAuto : Form
     string FindHomeDistance()
     {
         string r = FindHomeIn(OcrWords());
+        if (r == null) r = ReadHomeHud();          // crop the HUD and isolate the text
         if (r == null) r = FindHomeIn(OcrWordsWhiten());
         return r;
+    }
+
+    // The drone HUD (SPD/ALT/HOME/V-S) is white text with a black outline drawn at a fixed
+    // spot in the bottom-left. Whole-screen OCR misses it once the terrain behind it is bright
+    // or busy. So crop just that block, keep only near-white pixels that have a dark outline
+    // pixel beside them, thicken them by a pixel, upscale and read - text stays, snow/grass go.
+    string ReadHomeHud()
+    {
+        string shot = null;
+        try
+        {
+            int W, H; int[] px = Grab(out W, out H);
+            int x0 = 30 * W / 1920, x1 = 240 * W / 1920;
+            int y0 = H - 120 * H / 1080, y1 = H - 4 * H / 1080;
+            if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0;
+            if (x1 > W) x1 = W; if (y1 > H) y1 = H;
+            int cw = x1 - x0, ch = y1 - y0;
+            if (cw < 20 || ch < 20) return null;
+
+            byte[] gray = new byte[cw * ch];
+            bool[] bright = new bool[cw * ch];
+            for (int y = 0; y < ch; y++)
+                for (int x = 0; x < cw; x++)
+                {
+                    int c = px[(y0 + y) * W + (x0 + x)];
+                    int b = c & 0xFF, g = (c >> 8) & 0xFF, r = (c >> 16) & 0xFF;
+                    int i = y * cw + x;
+                    gray[i] = (byte)((r * 299 + g * 587 + b * 114) / 1000);
+                    bright[i] = r > 190 && g > 190 && b > 190;
+                }
+
+            bool[] txt = new bool[cw * ch];
+            for (int y = 0; y < ch; y++)
+                for (int x = 0; x < cw; x++)
+                {
+                    int i = y * cw + x;
+                    if (!bright[i]) continue;
+                    bool outline = false;
+                    for (int dy = -1; dy <= 1 && !outline; dy++)
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            int nx = x + dx, ny = y + dy;
+                            if (nx < 0 || ny < 0 || nx >= cw || ny >= ch) continue;
+                            if (gray[ny * cw + nx] < 90) { outline = true; break; }
+                        }
+                    txt[i] = outline;
+                }
+
+            const int S = 3;
+            int OW = cw * S, OH = ch * S;
+            int[] outPx = new int[OW * OH];
+            int white = unchecked((int)0xFFFFFFFF), black = unchecked((int)0xFF000000);
+            for (int y = 0; y < ch; y++)
+                for (int x = 0; x < cw; x++)
+                {
+                    bool on = txt[y * cw + x];
+                    if (!on)
+                        for (int dy = -1; dy <= 1 && !on; dy++)
+                            for (int dx = -1; dx <= 1; dx++)
+                            {
+                                int nx = x + dx, ny = y + dy;
+                                if (nx < 0 || ny < 0 || nx >= cw || ny >= ch) continue;
+                                if (txt[ny * cw + nx]) { on = true; break; }
+                            }
+                    int col = on ? white : black;
+                    int ox = x * S, oy = y * S;
+                    for (int yy = 0; yy < S; yy++)
+                    {
+                        int row = (oy + yy) * OW + ox;
+                        for (int xx = 0; xx < S; xx++) outPx[row + xx] = col;
+                    }
+                }
+
+            shot = Path.Combine(Path.GetTempPath(),
+                "robloxauto-hud-" + System.Threading.Thread.CurrentThread.ManagedThreadId +
+                "-" + (++_ocrShotSeq) + ".bmp");
+            using (Bitmap bmp = new Bitmap(OW, OH, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            {
+                System.Drawing.Imaging.BitmapData bd = bmp.LockBits(new Rectangle(0, 0, OW, OH),
+                    System.Drawing.Imaging.ImageLockMode.WriteOnly,
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                Marshal.Copy(outPx, 0, bd.Scan0, outPx.Length);
+                bmp.UnlockBits(bd);
+                bmp.Save(shot, System.Drawing.Imaging.ImageFormat.Bmp);
+            }
+
+            List<string[]> raw = OcrServerRead(shot);
+            if (raw == null) return null;
+            return HomeFromHud(raw, S);
+        }
+        catch (Exception e) { Log("HUD read failed: " + e.Message); return null; }
+        finally { try { if (shot != null && File.Exists(shot)) File.Delete(shot); } catch { } }
+    }
+
+    static string NumFromToken(string t)
+    {
+        string s = (t ?? "").Replace(",", ".");
+        int start = -1;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c >= '0' && c <= '9') { if (start < 0) start = i; }
+            else if (c == '.' && start >= 0) { }
+            else if (start >= 0) break;
+        }
+        if (start < 0) return null;
+        string n = "";
+        for (int i = start; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c >= '0' && c <= '9') n += c;
+            else if (c == '.' && n.IndexOf('.') < 0) n += c;
+            else break;
+        }
+        return n.Length > 0 ? n : null;
+    }
+
+    string HomeFromHud(List<string[]> ws, int scale)
+    {
+        int hx = -1, hy = -1;
+        foreach (string[] w in ws)
+        {
+            string t = (w[4] ?? "").ToUpperInvariant();
+            if (t.IndexOf("HOM") >= 0 || t.IndexOf("H0M") >= 0 || SimPct(t, "HOME") >= 65)
+            {
+                try { hx = int.Parse(w[0]); hy = int.Parse(w[1]); } catch { continue; }
+                break;
+            }
+        }
+        if (hx < 0)
+        {
+            // the HOME word was not read - fall back to its fixed row (3rd of SPD/ALT/HOME/V-S)
+            List<int> ys = new List<int>();
+            foreach (string[] w in ws) { int wy; try { wy = int.Parse(w[1]); } catch { continue; } ys.Add(wy); }
+            ys.Sort();
+            List<int> rows = new List<int>();
+            foreach (int ry in ys)
+                if (rows.Count == 0 || ry - rows[rows.Count - 1] > 10 * scale) rows.Add(ry);
+            if (rows.Count < 3) return null;
+            hy = rows[2];
+            hx = 0;
+        }
+
+        string best = null;
+        foreach (string[] w in ws)
+        {
+            string t = (w[4] ?? "").ToUpperInvariant();
+            string n = NumFromToken(t);
+            if (n == null) continue;
+            int wx, wy;
+            try { wx = int.Parse(w[0]); wy = int.Parse(w[1]); } catch { continue; }
+            if (Math.Abs(wy - hy) > 14 * scale) continue;      // must be on the HOME line
+            if (wx < hx - 4 * scale) continue;                 // and to its right
+            best = n;
+            if (t.IndexOf('.') >= 0) break;
+        }
+        return best == null ? null : best + " m";
     }
 
     string FindHomeIn(List<string[]> ws)
