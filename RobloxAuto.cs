@@ -152,13 +152,6 @@ class RobloxAuto : Form
     // ================= win32 =================
     const int WM_HOTKEY = 0x0312;
     const int HK_REJOIN = 0x5A01, HK_AUTO = 0x5A02, HK_NIGHT = 0x5A03;
-    // live HUD tuning hotkeys (Ctrl+Alt+...)
-    const int HK_TUN_PU = 0x5A10, HK_TUN_PD = 0x5A11;   // Up / Down    -> pitch px/s
-    const int HK_TUN_RU = 0x5A12, HK_TUN_RD = 0x5A13;   // Right / Left -> roll deg/s
-    const int HK_TUN_BU = 0x5A14, HK_TUN_BD = 0x5A15;   // O / P        -> bias px
-    const int HK_TUN_LU = 0x5A16, HK_TUN_LD = 0x5A17;   // K / L        -> lock seconds
-    const uint MOD_CA = 0x1 | 0x2;                       // ALT | CONTROL
-    const uint VK_UP = 0x26, VK_DOWN = 0x28, VK_LEFT = 0x25, VK_RIGHT = 0x27;
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
     [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
 
@@ -523,7 +516,7 @@ class RobloxAuto : Form
 
         // ---- HUD tuning dials, at the very top so they are easy to reach and see ----
         var lblTune = new Label();
-        lblTune.Text = "HUD TUNING  (arrows / PgUp PgDn / Home End = nudge live)";
+        lblTune.Text = "HUD TUNING";
         lblTune.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
         lblTune.ForeColor = Color.FromArgb(120, 200, 255);
         lblTune.SetBounds(x, y, w, 18);
@@ -3976,42 +3969,6 @@ class RobloxAuto : Form
             Log("WARNING: could not register F5 - another app already has it.");
         if (!RegisterHotKey(Handle, HK_NIGHT, 0, _hkNightKey))
             Log("WARNING: could not register " + ((Keys)_hkNightKey) + " for night vision - another app already has it.");
-
-        // HUD tuning nudge hotkeys
-        UnregisterHotKey(Handle, HK_TUN_PU); UnregisterHotKey(Handle, HK_TUN_PD);
-        UnregisterHotKey(Handle, HK_TUN_RU); UnregisterHotKey(Handle, HK_TUN_RD);
-        UnregisterHotKey(Handle, HK_TUN_BU); UnregisterHotKey(Handle, HK_TUN_BD);
-        UnregisterHotKey(Handle, HK_TUN_LU); UnregisterHotKey(Handle, HK_TUN_LD);
-        // plain single keys, no modifier - easy to hit mid-flight (controller does the flying)
-        RegisterHotKey(Handle, HK_TUN_PU, 0, VK_UP);       // Up    pitch +
-        RegisterHotKey(Handle, HK_TUN_PD, 0, VK_DOWN);     // Down  pitch -
-        RegisterHotKey(Handle, HK_TUN_RU, 0, VK_RIGHT);    // Right roll +
-        RegisterHotKey(Handle, HK_TUN_RD, 0, VK_LEFT);     // Left  roll -
-        RegisterHotKey(Handle, HK_TUN_BU, 0, 0x21);        // PageUp   bias +
-        RegisterHotKey(Handle, HK_TUN_BD, 0, 0x22);        // PageDown bias -
-        RegisterHotKey(Handle, HK_TUN_LU, 0, 0x24);        // Home  lock snappier
-        RegisterHotKey(Handle, HK_TUN_LD, 0, 0x23);        // End   lock smoother
-    }
-
-    // nudge a HUD dial by d, clamp, sync the spinner and the config
-    void NudgePitch(float d) { _hudPitchRate = ClampF(_hudPitchRate + d, 80f, 4000f); SyncDials(); }
-    void NudgeRoll(float d) { _hudRollRate = ClampF(_hudRollRate + d, 20f, 900f); SyncDials(); }
-    void NudgeBias(float d) { _hudBias = ClampF(_hudBias + d, -120f, 120f); SyncDials(); }
-    void NudgeLock(float d) { _hudLockTau = ClampF(_hudLockTau + d, 0.05f, 2f); SyncDials(); }
-    static float ClampF(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
-    void SyncDials()
-    {
-        try
-        {
-            if (numPitch != null) numPitch.Value = (decimal)ClampF(_hudPitchRate, 80f, 4000f);
-            if (numRoll != null) numRoll.Value = (decimal)ClampF(_hudRollRate, 20f, 900f);
-            if (numBias != null) numBias.Value = (decimal)ClampF(_hudBias, -120f, 120f);
-            if (numLock != null) numLock.Value = (decimal)ClampF(_hudLockTau, 0.05f, 2f);
-        }
-        catch { }
-        SaveCfg();
-        Log("HUD tune: pitch " + _hudPitchRate.ToString("0") + " px/s, roll " + _hudRollRate.ToString("0") +
-            " deg/s, bias " + _hudBias.ToString("0") + " px, lock " + _hudLockTau.ToString("0.00") + " s");
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -4056,14 +4013,6 @@ class RobloxAuto : Form
             if (id == HK_REJOIN) { Log("hotkey " + ((Keys)_hkRejoinKey) + " pressed"); Rejoin("hotkey"); }
             else if (id == HK_AUTO) AutoRun();
             else if (id == HK_NIGHT) ToggleNightVision();
-            else if (id == HK_TUN_PU) NudgePitch(+40f);
-            else if (id == HK_TUN_PD) NudgePitch(-40f);
-            else if (id == HK_TUN_RU) NudgeRoll(+10f);
-            else if (id == HK_TUN_RD) NudgeRoll(-10f);
-            else if (id == HK_TUN_BU) NudgeBias(+2f);
-            else if (id == HK_TUN_BD) NudgeBias(-2f);
-            else if (id == HK_TUN_LU) NudgeLock(-0.05f);   // smaller = snappier lock
-            else if (id == HK_TUN_LD) NudgeLock(+0.05f);
         }
         base.WndProc(ref m);
     }
@@ -4093,10 +4042,6 @@ class RobloxAuto : Form
         UnregisterHotKey(Handle, HK_REJOIN);
         UnregisterHotKey(Handle, HK_AUTO);
         UnregisterHotKey(Handle, HK_NIGHT);
-        UnregisterHotKey(Handle, HK_TUN_PU); UnregisterHotKey(Handle, HK_TUN_PD);
-        UnregisterHotKey(Handle, HK_TUN_RU); UnregisterHotKey(Handle, HK_TUN_RD);
-        UnregisterHotKey(Handle, HK_TUN_BU); UnregisterHotKey(Handle, HK_TUN_BD);
-        UnregisterHotKey(Handle, HK_TUN_LU); UnregisterHotKey(Handle, HK_TUN_LD);
         ApplyNightVision(false);   // never leave the display inverted after exit
         SaveCfg();
         base.OnFormClosing(e);
@@ -4493,7 +4438,7 @@ class RobloxAuto : Form
             int fw = (int)(32 * bat / 100f);
             if (fw > 0) g.FillRectangle(batB, rEdge - 45, 73, fw, 14);
             g.FillRectangle(batB, rEdge - 4, 76, 4, 8);      // nub
-            g.DrawString(pctTxt, _fs, batB, rEdge - 56 - pct.Width, 74);
+            g.DrawString(pctTxt, _fs, batB, rEdge - 56 - pct.Width, 72);   // centred on the pill
             // signal bars track the distance to HOME (4 close -> 1 far), like a real RC link
             float dm = DistMetres();
             int bars = 4 - (int)(dm / 300f);

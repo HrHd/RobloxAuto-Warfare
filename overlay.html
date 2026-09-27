@@ -117,7 +117,7 @@ function drawMavic(s, W, H) {
   var bfw = Math.round(32 * bat / 100);
   if (bfw > 0) hctx.fillRect(rEdge - 45, 73, bfw, 14);
   hctx.fillRect(rEdge - 4, 76, 4, 8);
-  hctx.fillText(ptxt, rEdge - 56 - pw, 74);
+  hctx.fillText(ptxt, rEdge - 56 - pw, 86);   // baseline, so it centres on the pill like the monitor
   // signal bars track the distance to HOME (4 close -> 1 far)
   var dm = jmetres(s.home || '');
   var bars = 4 - Math.floor(dm / 300);
