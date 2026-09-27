@@ -4270,7 +4270,8 @@ class RobloxAuto : Form
                     if (shown && Environment.TickCount - lastHome >= 700)
                     {
                         lastHome = Environment.TickCount;
-                        string dh = FilterHome(ReadHudBottom());
+                        // MAVIC uses the H/D/H.S/V.S layout, FPV uses SPD/ALT/HOME
+                        string dh = FilterHome(_hudStyleUav ? ReadMavicBottom() : ReadHudBottom());
                         if (dh != null && dh != _rfHomeText) { _rfHomeText = dh; Log("   RF HOME: " + dh); }
                         OverlayHub.I.SetHome(dh);
                         float hm = HomeMetres(dh);
@@ -4684,6 +4685,50 @@ class RobloxAuto : Form
             if (_hudSpd == "") _hudSpd = ValueAfterLabel(OcrWords(), "SPD");
             if (_hudAlt == "") _hudAlt = ValueAfterLabel(OcrWords(), "ALT");
             return home;
+        }
+        catch { return null; }
+    }
+
+    // MAVIC OSD is laid out differently: "AGL <n> m" on its own line, then a row of four numbers
+    // under the labels H / D / H.S / V.S (height, distance to HOME, horizontal & vertical speed).
+    // The FPV labels (SPD/ALT/HOME) never appear, so read the row left-to-right instead.
+    string ReadMavicBottom()
+    {
+        try
+        {
+            int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
+            List<string[]> ws = OcrMaskedRegion(4 * W / 1920, H - 140 * H / 1080,
+                                                620 * W / 1920, H - 4 * H / 1080, 2);
+            if (ws == null) return null;
+            string dbg = DumpWords(ws);
+            if (dbg != _lastHudDbg) { _lastHudDbg = dbg; Log("   MAVIC HUD read: " + dbg); }
+
+            string agl = ValueAfterLabel(ws, "AGL");
+            if (agl != "") _hudAgl = agl;
+
+            int maxY = -1;
+            foreach (string[] w in ws) { int wy; try { wy = int.Parse(w[1]); } catch { continue; } if (wy > maxY) maxY = wy; }
+            List<string[]> row = new List<string[]>();
+            foreach (string[] w in ws)
+            {
+                int wy; try { wy = int.Parse(w[1]); } catch { continue; }
+                if (Math.Abs(wy - maxY) > 24) continue;
+                row.Add(w);
+            }
+            row.Sort(delegate (string[] a, string[] b) { return int.Parse(a[0]).CompareTo(int.Parse(b[0])); });
+            List<string> nums = new List<string>();
+            foreach (string[] w in row)
+            {
+                string n = NumFromToken(w[4] ?? "");
+                if (n != null) nums.Add(n);
+            }
+            if (nums.Count >= 3)
+            {
+                _hudAlt = nums[0];              // H   = height
+                _hudHome = nums[1] + " m";      // D   = distance to HOME
+                _hudSpd = nums[2];              // H.S = horizontal speed
+            }
+            return _hudHome;
         }
         catch { return null; }
     }
