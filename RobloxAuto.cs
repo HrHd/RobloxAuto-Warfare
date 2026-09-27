@@ -92,6 +92,8 @@ class RobloxAuto : Form
     string _rfHomeText = "----";
     // live telemetry for the FPV/UAV HUD (read from the drone OSD)
     string _hudHome = "----", _hudSpd = "", _hudAlt = "", _hudAgl = "", _hudHdg = "";
+    string _lastHudDbg = "";
+    bool _ulwLogged = false;
     float _hudRoll = 0f, _hudRollTarget = 0f;     // horizon bank, degrees (eased)
     float _hudPitch = 0f, _hudPitchTarget = 0f;   // horizon vertical offset, px (eased)
     float _hudDetRoll = 0f, _hudDetPitch = 0f;    // what DetectHorizon last measured (image-based)
@@ -3807,6 +3809,7 @@ class RobloxAuto : Form
         Bitmap[] _frames;
         float _baked = -1f;
         int _bw, _bh;
+        public bool UlwFailed = false;   // set if UpdateLayeredWindow refuses, so the caller can log
 
         public RFOverlayForm()
         {
@@ -3835,8 +3838,8 @@ class RobloxAuto : Form
             int w = Width, h = Height;
             if (w <= 0 || h <= 0) return;
             Random r = new Random();
-            int aMax = (int)(8 + 46 * lvl);         // the whole point: keep this LOW
-            if (aMax < 4) aMax = 4;
+            int aMax = (int)(14 + 70 * lvl);        // grain strength: visible, but the game shows
+            if (aMax < 4) aMax = 4;                 // through it (a full-opacity cover is the bug)
             Bitmap[] fr = new Bitmap[4];
             for (int f = 0; f < 4; f++)
             {
@@ -3932,7 +3935,8 @@ class RobloxAuto : Form
                 POINT src = new POINT { X = 0, Y = 0 };
                 SIZE sz = new SIZE { cx = bmp.Width, cy = bmp.Height };
                 BLENDFUNCTION blend = new BLENDFUNCTION { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = 255, AlphaFormat = 1 };
-                UpdateLayeredWindow(Handle, screen, ref dst, ref sz, mem, ref src, 0, ref blend, 2);
+                if (!UpdateLayeredWindow(Handle, screen, ref dst, ref sz, mem, ref src, 0, ref blend, 2))
+                    UlwFailed = true;
 
                 SelectObject(mem, old);
                 DeleteObject(dib);
@@ -4026,11 +4030,11 @@ class RobloxAuto : Form
                 g.DrawString(hdg + "°", _f, _g, cx - 18, 22);
             }
 
-            DrawLadder(g, W, cy, true, Spd);
-            DrawLadder(g, W, cy, false, Agl != "" ? Agl : Alt);
+            DrawLadder(g, W, cy, true, Spd);                       // speed on the left
+            DrawLadder(g, W, cy, false, Alt != "" ? Alt : Agl);     // ALT on the right
 
             g.DrawString("HOME " + Home, _fb, _g, cx - 70, cy + 120);
-            g.DrawString((Uav ? "UAV" : "FPV") + "   " + Timer, _f, _g, 40, H - 60);
+            // no fly timer / style text - the game already prints those; we only ADD to the OSD
             base.OnPaint(e);
         }
 
@@ -4194,6 +4198,9 @@ class RobloxAuto : Form
                         }
                         catch { }
                     }
+
+                    if (_rfForm != null && _rfForm.UlwFailed && !_ulwLogged)
+                    { _ulwLogged = true; Log("RF overlay: UpdateLayeredWindow failed - static will not show"); }
 
                     // ---- FPV/UAV HUD: ease the horizon and refresh ~6x/s (throttled so the
                     // full-screen layered repaint cannot itself become the lag) ----
@@ -4450,13 +4457,24 @@ class RobloxAuto : Form
             int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
             List<string[]> bot = OcrMaskedRegion(6 * W / 1920, H - 120 * H / 1080,
                                                  260 * W / 1920, H - 4 * H / 1080, 4);
+
+            // diagnostic: show exactly what the bottom-left read produced when it changes
+            string dbg = DumpWords(bot);
+            if (dbg != _lastHudDbg) { _lastHudDbg = dbg; Log("   HUD read: " + dbg); }
+
             string home = bot != null ? HomeFromHud(bot, 1) : null;
+            if (home == null) home = FindHomeIn(OcrWords());          // full-screen fallback 1
+            if (home == null) home = FindHomeIn(OcrWordsWhiten());    // and the whitened pass
             _hudHome = home != null ? home : "----";
+
             if (bot != null)
             {
                 _hudSpd = ValueAfterLabel(bot, "SPD");
                 _hudAlt = ValueAfterLabel(bot, "ALT");
             }
+            if (_hudSpd == "") _hudSpd = ValueAfterLabel(OcrWords(), "SPD");
+            if (_hudAlt == "") _hudAlt = ValueAfterLabel(OcrWords(), "ALT");
+
             List<string[]> top = OcrMaskedRegion(W * 42 / 100, 14, W * 58 / 100, 100, 3);
             if (top != null)
             {
@@ -4466,6 +4484,18 @@ class RobloxAuto : Form
             return home;
         }
         catch { return null; }
+    }
+
+    static string DumpWords(List<string[]> ws)
+    {
+        if (ws == null) return "(null)";
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        foreach (string[] w in ws)
+        {
+            if (sb.Length > 0) sb.Append(" | ");
+            sb.Append(w.Length > 4 ? w[4] : "?");
+        }
+        return sb.ToString();
     }
 
     static string ValueAfterLabel(List<string[]> ws, string label)
