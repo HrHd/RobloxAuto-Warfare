@@ -4259,8 +4259,11 @@ class RobloxAuto : Form
         // read that pad the sticks looked dead - no roll/pitch reached the HUD and the ladder never
         // tilted. Taking the largest |value| across all pads means it always follows the pad you
         // are actually moving, whichever XInput index it lands on.
+        // Use ints for the running max: Math.Abs(short) THROWS on short.MinValue (-32768), which
+        // some pads report at full deflection - that was the "negating the minimum value of a
+        // two's complement number" crash dialog. int Math.Abs cannot overflow here.
         ushort buttons = 0; bool conn = false;
-        short lx = 0, ly = 0, rx = 0, ry = 0;
+        int lx = 0, ly = 0, rx = 0, ry = 0;
         for (int i = 0; i < 4; i++)
         {
             XINPUT_STATE st;
@@ -4268,16 +4271,16 @@ class RobloxAuto : Form
             {
                 conn = true;
                 buttons |= st.Gamepad.wButtons;
-                if (Math.Abs(st.Gamepad.lx) > Math.Abs(lx)) lx = st.Gamepad.lx;
-                if (Math.Abs(st.Gamepad.ly) > Math.Abs(ly)) ly = st.Gamepad.ly;
-                if (Math.Abs(st.Gamepad.rx) > Math.Abs(rx)) rx = st.Gamepad.rx;
-                if (Math.Abs(st.Gamepad.ry) > Math.Abs(ry)) ry = st.Gamepad.ry;
+                if (Math.Abs((int)st.Gamepad.lx) > Math.Abs(lx)) lx = st.Gamepad.lx;
+                if (Math.Abs((int)st.Gamepad.ly) > Math.Abs(ly)) ly = st.Gamepad.ly;
+                if (Math.Abs((int)st.Gamepad.rx) > Math.Abs(rx)) rx = st.Gamepad.rx;
+                if (Math.Abs((int)st.Gamepad.ry) > Math.Abs(ry)) ry = st.Gamepad.ry;
             }
         }
         if (conn)
         {
-            _padLx = NormStick(lx); _padLy = NormStick(ly);
-            _padRx = NormStick(rx); _padRy = NormStick(ry);
+            _padLx = NormStick((short)lx); _padLy = NormStick((short)ly);
+            _padRx = NormStick((short)rx); _padRy = NormStick((short)ry);
             try { OverlayHub.I.SetPad(_padLx, _padLy, _padRx, _padRy); } catch { }
         }
 
