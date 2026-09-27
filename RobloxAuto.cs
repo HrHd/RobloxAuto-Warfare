@@ -4077,15 +4077,28 @@ class RobloxAuto : Form
 
             if (Uav) { DrawMavic(g, W, H); base.OnPaint(e); return; }   // DJI-Fly style
 
-            // artificial horizon + pitch ladder, banked with the horizon
+            // artificial horizon + pitch ladder - every endpoint is rotated about the centre by
+            // the bank, so the whole ladder rolls with the controller input
             for (int d = -30; d <= 30; d += 10)
             {
-                float yy = PitchPx + d * 4f;
-                float half = d == 0 ? 130f : 70f;
+                float yy = PitchPx + d * 8f;                 // 10 deg = 8px
+                float half = d == 0 ? 150f : 70f;
                 Pen pen = d == 0 ? _p : _pt;
-                g.DrawLine(pen, R(cx - half, cy + yy, cx, cy, rad), R(cx + half, cy + yy, cx, cy, rad));
-                if (d != 0) g.DrawString((d > 0 ? "+" : "") + d, _f, _g, R(cx + half + 6, cy + yy - 8, cx, cy, rad));
+                PointF a = R(cx - half, cy + yy, cx, cy, rad), b = R(cx + half, cy + yy, cx, cy, rad);
+                g.DrawLine(pen, a, b);
+                if (d == 0)
+                {
+                    g.DrawLine(pen, a, R(cx - half, cy + yy + 12, cx, cy, rad));   // end caps
+                    g.DrawLine(pen, b, R(cx + half, cy + yy + 12, cx, cy, rad));
+                }
+                else
+                    g.DrawString((d > 0 ? "+" : "") + d, _f, _g, R(cx + half + 6, cy + yy - 8, cx, cy, rad));
             }
+
+            // bank indicator: fixed tick at the top, marker swings with the roll
+            g.DrawLine(_pt, cx, 26, cx, 40);
+            PointF bm = R(cx, 34, cx, cy, rad);
+            g.FillEllipse(_g, bm.X - 5, bm.Y - 5, 10, 10);
 
             // centre reticle
             g.DrawLine(_p, cx - 42, cy, cx - 12, cy);
@@ -4250,6 +4263,12 @@ class RobloxAuto : Form
                         {
                             ReadHudTop();             // heading + AGL
                             DetectHorizon();          // bank the artificial horizon
+                            bool mavic = PayloadLooksMavic();
+                            if (mavic != _hudStyleUav)
+                            {
+                                _hudStyleUav = mavic;
+                                Log("   payload on screen -> " + (mavic ? "UAV (DJI)" : "FPV") + " HUD");
+                            }
                         }
                     }
 
@@ -4404,6 +4423,29 @@ class RobloxAuto : Form
         }
         catch { }
         return LinkWords(OcrWords());
+    }
+
+    // The game prints the payload bottom-right ("LIGHT ROCKET MOUNTED"). Rockets / RPG-type
+    // payloads mean the FPV drone, rack/grenade payloads mean the MAVIC - so the OSD itself
+    // tells us which HUD to draw, no matter what the dropdown says.
+    bool PayloadLooksMavic()
+    {
+        try
+        {
+            int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
+            List<string[]> ws = OcrMaskedRegion(W * 62 / 100, H - 60 * H / 1080, W, H - 6 * H / 1080, 3);
+            string all = "";
+            if (ws != null)
+                foreach (string[] w in ws) all += (w[4] ?? "").ToUpperInvariant() + " ";
+            if (all.IndexOf("MOUNT") < 0 && all.IndexOf("ROCKET") < 0 && all.IndexOf("RGO") < 0)
+                return _hudStyleUav;                     // nothing readable - keep the current style
+            foreach (string k in new string[] { "RGO", "RACK", "GRENADE", "M67" })
+                if (all.IndexOf(k) >= 0) return true;    // MAVIC
+            foreach (string k in new string[] { "ROCKET", "PG-7", "PG7", "TBG", "THERMO", "SHAPED", "FRAG", "RPG" })
+                if (all.IndexOf(k) >= 0) return false;   // FPV
+            return _hudStyleUav;
+        }
+        catch { return _hudStyleUav; }
     }
 
     static bool LinkWords(List<string[]> ws)
