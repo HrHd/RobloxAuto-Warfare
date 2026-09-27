@@ -4928,10 +4928,37 @@ class RobloxAuto : Form
         catch { return _hudStyleUav; }
     }
 
+    // Which drone, from the clock LABEL alone: MAVIC prints "FLIGHT mm:ss" (top-left),
+    // FPV prints "FLY mm:ss" (bottom-right). 1 = MAVIC, 0 = FPV, -1 = not read.
+    int StyleByClock()
+    {
+        try
+        {
+            int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
+            string a = "";
+            List<string[]> wa = OcrMaskedRegion(2, 2, 340 * W / 1920, 64 * H / 1080, 4);
+            if (wa != null) foreach (string[] w in wa) a += (w[4] ?? "").ToUpperInvariant() + " ";
+            if (a.IndexOf("FLIGHT") >= 0 || a.IndexOf("FL1GHT") >= 0) return 1;
+            if (a.IndexOf("FLY") >= 0) return 0;
+
+            string b = "";
+            List<string[]> wb = OcrMaskedRegion(W * 88 / 100, H * 88 / 100, W, H - 2, 3);
+            if (wb != null) foreach (string[] w in wb) b += (w[4] ?? "").ToUpperInvariant() + " ";
+            if (b.IndexOf("FLIGHT") >= 0 || b.IndexOf("FL1GHT") >= 0) return 1;
+            if (b.IndexOf("FLY") >= 0) return 0;
+        }
+        catch { }
+        return -1;
+    }
+
     // 1 = MAVIC, 0 = FPV, -1 = could not tell. Only a POSITIVE read may change the HUD style, so a
     // failed read can never flip a MAVIC into the FPV layout (which is what happened in the drone).
     int DroneStyle()
     {
+        // 0) the CLEANEST tell, no overlap: the flight clock label. MAVIC prints "FLIGHT mm:ss",
+        //    FPV prints "FLY mm:ss". "FLY" is not part of "FLIGHT", so these are unambiguous.
+        int byClock = StyleByClock();
+        if (byClock >= 0) return byClock;
         try
         {
             int W = Screen.PrimaryScreen.Bounds.Width;
