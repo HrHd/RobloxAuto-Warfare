@@ -4424,9 +4424,11 @@ class RobloxAuto : Form
                         if (_hudCtrlPitch > 220f) _hudCtrlPitch = 220f;
                         if (_hudCtrlPitch < -220f) _hudCtrlPitch = -220f;
 
-                        if (_hudDetValid)
+                        // Only re-correct the base when the sticks are CENTRED. Otherwise the
+                        // correction instantly absorbs whatever the player just input and the
+                        // horizon looks like it ignores the controller.
+                        if (_hudDetValid && sx == 0f && sy == 0f)
                         {
-                            // the camera sees a horizon - pull the base so base+ctrl matches it
                             _hudLockRoll += (_hudDetRoll - (_hudLockRoll + _hudCtrlRoll)) * 0.28f;
                             _hudLockPitch += (_hudDetPitch - (_hudLockPitch + _hudCtrlPitch)) * 0.28f;
                         }
@@ -4945,6 +4947,8 @@ class RobloxAuto : Form
             float roll = (float)(Math.Atan(slope) * 180.0 / Math.PI);
             if (roll > 45f) roll = 45f; if (roll < -45f) roll = -45f;
             float pitch = (slope * (W / 2f) + icept) - H / 2f;
+            pitch += 22f;   // bias down a touch: the strongest step is often the treetops, not the
+                            // true ground line, so sit just below them
             if (pitch > H / 4f) pitch = H / 4f; if (pitch < -H / 4f) pitch = -H / 4f;
             _hudDetRoll = roll;
             _hudDetPitch = pitch;
