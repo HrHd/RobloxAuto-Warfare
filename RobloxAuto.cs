@@ -3488,7 +3488,8 @@ class RobloxAuto : Form
 
         // controller priority: integrate the stick every frame (rate -> angle)
         _hudFRoll += -sx * 150f * dt;
-        _hudFPitch += sy * 330f * dt;
+        _hudFPitch -= sy * 330f * dt;   // inverted on purpose: pitching up must move the horizon
+                                        // DOWN (against the input), not with it
 
         // camera correction only when the sticks are centred, so input is never cancelled out.
         // Time constant ~0.35s: slow enough to let the controller lead, fast enough to kill drift.
