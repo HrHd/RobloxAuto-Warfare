@@ -138,75 +138,108 @@ function drawHud(s) {
 
   if (s.uav) { drawMavic(s, W, H); return; }   // DJI-Fly style for the MAVIC
 
-  var col = 'rgba(255,255,255,0.92)';
-  hctx.strokeStyle = col;
-  hctx.fillStyle = col;
-  hctx.lineWidth = 2;
-  hctx.font = 'bold 16px Consolas, monospace';
+  // The monitor FpvHudForm is authored on a 1920x1080 frame, so scale everything by H/1080 and
+  // the two renders stay pixel-for-pixel the same at any OBS browser-source size.
+  var sc = H / 1080;
+  var col  = 'rgba(255,255,255,0.92)';   // main lines / text  (monitor _p / _g)
+  var thin = 'rgba(230,230,230,0.65)';   // secondary ticks    (monitor _pt)
+  var box  = 'rgba(0,0,0,0.8)';          // readout backing    (monitor _gb)
+  var font = 'bold ' + Math.round(16 * sc) + 'px Consolas, monospace';
+
+  hctx.lineCap = 'round';
 
   var rad = (s.roll || 0) * Math.PI / 180;
-  var pit = (s.pit || 0) * (H / 1080);          // px were measured on the 1080 frame
+  var pit = (s.pit || 0) * sc;                    // px were measured on the 1080 frame
   function R(x, y) {
     var dx = x - cx, dy = y - cy;
     return [cx + dx * Math.cos(rad) - dy * Math.sin(rad), cy + dx * Math.sin(rad) + dy * Math.cos(rad)];
   }
 
-  // artificial horizon + pitch ladder
+  // artificial horizon + pitch ladder: 10 deg = 8px, horizon line longest and capped at both ends
+  hctx.font = font;
   for (var d = -30; d <= 30; d += 10) {
-    var yy = pit + d * 4, half = d === 0 ? 130 : 70;
+    var yy = pit + d * 8 * sc, half = (d === 0 ? 150 : 70) * sc;
     var a = R(cx - half, cy + yy), b = R(cx + half, cy + yy);
+    hctx.strokeStyle = d === 0 ? col : thin;
+    hctx.lineWidth = (d === 0 ? 2 : 1) * sc;
     hctx.beginPath(); hctx.moveTo(a[0], a[1]); hctx.lineTo(b[0], b[1]); hctx.stroke();
-    if (d !== 0) { var t = R(cx + half + 6, cy + yy - 8); hctx.fillText((d > 0 ? '+' : '') + d, t[0], t[1]); }
+    if (d === 0) {
+      var e1 = R(cx - half, cy + yy + 12 * sc), e2 = R(cx + half, cy + yy + 12 * sc);
+      hctx.beginPath();
+      hctx.moveTo(a[0], a[1]); hctx.lineTo(e1[0], e1[1]);
+      hctx.moveTo(b[0], b[1]); hctx.lineTo(e2[0], e2[1]);
+      hctx.stroke();
+    } else {
+      var t = R(cx + half + 6 * sc, cy + yy + 5 * sc);
+      hctx.fillStyle = col;
+      hctx.fillText((d > 0 ? '+' : '') + d, t[0], t[1]);
+    }
   }
 
-  // centre reticle
-  hctx.beginPath();
-  hctx.moveTo(cx - 42, cy); hctx.lineTo(cx - 12, cy);
-  hctx.moveTo(cx + 12, cy); hctx.lineTo(cx + 42, cy);
-  hctx.moveTo(cx, cy - 42); hctx.lineTo(cx, cy - 12);
-  hctx.moveTo(cx, cy + 12); hctx.lineTo(cx, cy + 42);
-  hctx.stroke();
+  // bank indicator: fixed tick at the top, marker swings with the bank
+  hctx.strokeStyle = thin; hctx.lineWidth = 1 * sc;
+  hctx.beginPath(); hctx.moveTo(cx, 26 * sc); hctx.lineTo(cx, 40 * sc); hctx.stroke();
+  var bm = R(cx, 34 * sc);
+  hctx.fillStyle = col;
+  hctx.beginPath(); hctx.arc(bm[0], bm[1], 5 * sc, 0, Math.PI * 2); hctx.fill();
 
-  // compass tape, top-centre
+  // centre reticle (with the small ring the monitor draws)
+  hctx.strokeStyle = col; hctx.lineWidth = 2 * sc;
+  hctx.beginPath();
+  hctx.moveTo(cx - 42 * sc, cy); hctx.lineTo(cx - 12 * sc, cy);
+  hctx.moveTo(cx + 12 * sc, cy); hctx.lineTo(cx + 42 * sc, cy);
+  hctx.moveTo(cx, cy - 42 * sc); hctx.lineTo(cx, cy - 12 * sc);
+  hctx.moveTo(cx, cy + 12 * sc); hctx.lineTo(cx, cy + 42 * sc);
+  hctx.stroke();
+  hctx.strokeStyle = thin; hctx.lineWidth = 1 * sc;
+  hctx.beginPath(); hctx.arc(cx, cy, 3 * sc, 0, Math.PI * 2); hctx.stroke();
+
+  // compass tape, top-centre (current heading sits in the monitor's black box)
   var h = parseInt(s.hdg, 10);
   if (!isNaN(h)) {
     for (var d2 = -60; d2 <= 60; d2 += 10) {
-      var deg = ((h + d2) % 360 + 360) % 360, x = cx + d2 * 6;
-      if (d2 === 0) { hctx.fillText(h + '\u00b0', x - 16, 42); }
-      else {
-        hctx.beginPath(); hctx.moveTo(x, 26); hctx.lineTo(x, 40); hctx.stroke();
-        if (deg % 30 === 0) hctx.fillText(deg, x - 14, 58);
+      var deg = ((h + d2) % 360 + 360) % 360, x = cx + d2 * 6 * sc;
+      if (d2 === 0) {
+        hctx.fillStyle = box;
+        hctx.fillRect(x - 24 * sc, 18 * sc, 48 * sc, 26 * sc);
+        hctx.strokeStyle = thin; hctx.lineWidth = 1 * sc;
+        hctx.strokeRect(x - 24 * sc, 18 * sc, 48 * sc, 26 * sc);
+        hctx.fillStyle = col;
+        hctx.fillText(h + '\u00b0', cx - 18 * sc, 38 * sc);
+      } else {
+        hctx.strokeStyle = thin; hctx.lineWidth = 1 * sc;
+        hctx.beginPath(); hctx.moveTo(x, 26 * sc); hctx.lineTo(x, 40 * sc); hctx.stroke();
+        if (deg % 30 === 0) { hctx.fillStyle = col; hctx.fillText(deg, x - 14 * sc, 56 * sc); }
       }
     }
   }
 
-  // speed (left) and altitude (right) ladders
+  // speed (left) and altitude (right) ladders with a backed readout box
   function ladder(left, val) {
-    var lx = left ? 170 : W - 170;
+    var lx = left ? 170 * sc : W - 170 * sc;
+    hctx.strokeStyle = thin; hctx.lineWidth = 1 * sc;
     for (var k = -5; k <= 5; k++) {
-      var y = cy + k * 40;
-      hctx.beginPath(); hctx.moveTo(left ? lx - 18 : lx, y); hctx.lineTo(left ? lx : lx + 18, y); hctx.stroke();
+      var y = cy + k * 40 * sc;
+      hctx.beginPath();
+      hctx.moveTo(left ? lx - 18 * sc : lx, y);
+      hctx.lineTo(left ? lx : lx + 18 * sc, y);
+      hctx.stroke();
     }
     if (val) {
-      var w = hctx.measureText(val).width + 18;
-      var bx = left ? lx - w + 18 : lx - 18;
-      hctx.fillStyle = 'rgba(0,0,0,0.55)';
-      hctx.fillRect(bx, cy - 13, w, 26);
-      hctx.strokeStyle = 'rgba(255,255,255,0.6)';
-      hctx.strokeRect(bx, cy - 13, w, 26);
+      hctx.font = font;
+      var w = hctx.measureText(val).width + 18 * sc;
+      var bx = left ? lx - w + 18 * sc : lx - 18 * sc;
+      hctx.fillStyle = box;
+      hctx.fillRect(bx, cy - 13 * sc, w, 26 * sc);
+      hctx.strokeStyle = thin; hctx.lineWidth = 1 * sc;
+      hctx.strokeRect(bx, cy - 13 * sc, w, 26 * sc);
       hctx.fillStyle = col;
-      hctx.fillText(val, bx + 9, cy + 6);
+      hctx.fillText(val, bx + 9 * sc, cy + 4 * sc);
     }
   }
   ladder(true, s.spd);
   ladder(false, s.agl);
-
-  // home distance + timer
-  hctx.font = 'bold 20px Consolas, monospace';
-  hctx.fillText('HOME ' + s.home, cx - 70, cy + 130);
-  hctx.font = 'bold 16px Consolas, monospace';
-  var mm = Math.floor((s.secs || 0) / 60), ss = (s.secs || 0) % 60;
-  hctx.fillText((s.uav ? 'UAV' : 'FPV') + '   ' + (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss, 40, H - 40);
+  // no centre HOME and no fly timer - the monitor FPV HUD leaves those to the game
 }
 
 function tick() {
