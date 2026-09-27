@@ -94,6 +94,9 @@ class RobloxAuto : Form
     string _hudHome = "----", _hudSpd = "", _hudAlt = "", _hudAgl = "", _hudHdg = "";
     string _lastHudDbg = "";
     bool _ulwLogged = false;
+    string _homeLastText = null;              // last accepted HOME, for the jump filter
+    float _homeLastM = -1f;
+    long _homeLastAt = 0;
     float _hudRoll = 0f, _hudRollTarget = 0f;     // horizon bank, degrees (eased)
     float _hudPitch = 0f, _hudPitchTarget = 0f;   // horizon vertical offset, px (eased)
     float _hudDetRoll = 0f, _hudDetPitch = 0f;    // what DetectHorizon last measured (image-based)
@@ -4101,12 +4104,16 @@ class RobloxAuto : Form
                                                   // the feed never flashes up during the deploy
             _rfRun = true;
             _flightStart = DateTime.Now;
+            _rfHomeText = "----";
+            _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
             OverlayHub.I.SetFlight(true, 0.18f, 0);
 
             Thread t = new Thread(delegate ()
             {
                 bool shown = false;
-                long lastOcr = 0;
+                long lastOcr = 0;      // slower cadence: NO SIGNAL / LINK / heading / AGL
+                long lastHome = 0;     // faster cadence: HOME / SPD / ALT
+                long lastLink = 0;     // when LINK was last seen (for the 10s hold)
                 float targetLvl = 0.2f;      // from the last HOME read (the "true" value)
                 float shownLvl = 0.2f;       // eased toward the target every tick
                 string txt = "RF LINK   HOME  ----";
@@ -4114,12 +4121,25 @@ class RobloxAuto : Form
                 string lastTxt = null;
                 bool lastOk = false;
                 long lastHud = 0;
-                int linkMiss = 0;   // consecutive reads without LINK, so one miss does not drop it
 
                 while (_rfRun)
                 {
-                    // ---- slow path: the only screen reads, every ~1.5s. Everything between
-                    // them is pure maths, so we are not grabbing the screen 8x a second. ----
+                    // ---- HOME / SPD / ALT on their own faster cadence so the distance keeps up
+                    // (everything here is one small cropped read, not a full-screen grab) ----
+                    if (shown && Environment.TickCount - lastHome >= 700)
+                    {
+                        lastHome = Environment.TickCount;
+                        string dh = FilterHome(ReadHudBottom());
+                        if (dh != null && dh != _rfHomeText) { _rfHomeText = dh; Log("   RF HOME: " + dh); }
+                        OverlayHub.I.SetHome(dh);
+                        float hm = HomeMetres(dh);
+                        targetLvl = (hm < 0f) ? 0.2f : hm / 1200f;      // faintest at HOME, full at 1.2 km
+                        if (targetLvl < 0.08f) targetLvl = 0.08f;
+                        if (targetLvl > 1f) targetLvl = 1f;
+                        txt = "RF LINK   HOME  " + (dh != null ? dh : "----");
+                    }
+
+                    // ---- slower path, every ~1.5s ----
                     if (Environment.TickCount - lastOcr >= 1500)
                     {
                         lastOcr = Environment.TickCount;
@@ -4137,32 +4157,23 @@ class RobloxAuto : Form
                         // the top-right "LINK LIVE" indicator is the proof we are actually in
                         // the drone view - without it the feed should not run at all
                         bool linked = IsLinked();
-                        if (linked) linkMiss = 0; else linkMiss++;
+                        if (linked) lastLink = Environment.TickCount;
                         if (linked && !shown)
                         {
                             shown = true;
                             Log("   RF feed: LINK detected - overlay on");
                         }
-                        else if (!linked && shown && linkMiss >= 3)
+                        else if (!linked && shown && Environment.TickCount - lastLink >= 10000)
                         {
+                            // hold the last readout for 10s before giving up on the feed
                             shown = false;
-                            Log("   RF feed: no LINK - overlay off");
+                            Log("   RF feed: no LINK for 10s - overlay off (kept the last reading)");
                         }
-                        string d = null;
                         if (linked)
                         {
-                            d = ReadHudTelemetry();   // fills _hudSpd/_hudAlt/_hudAgl/_hudHdg/_hudHome
+                            ReadHudTop();             // heading + AGL
                             DetectHorizon();          // bank the artificial horizon
                         }
-                        if (d != null && d != _rfHomeText) { _rfHomeText = d; Log("   RF HOME: " + d); }
-                        OverlayHub.I.SetHome(d);
-
-                        // target static from the distance: faintest at HOME, full at 1.20 km
-                        float metres = HomeMetres(d);
-                        targetLvl = (metres < 0f) ? 0.2f : metres / 1200f;
-                        if (targetLvl < 0.08f) targetLvl = 0.08f;
-                        if (targetLvl > 1f) targetLvl = 1f;
-                        txt = "RF LINK   HOME  " + (d != null ? d : "----");
                     }
 
                     // ---- fast path: ease toward the target, so when the distance is climbing
@@ -4448,9 +4459,9 @@ class RobloxAuto : Form
         return HomeFromHud(ws, 1);
     }
 
-    // Read the whole drone OSD: the bottom-left stats block (SPD/ALT/HOME) and the top-centre
-    // strip (heading + AGL). Fills the _hud* fields; returns the HOME text.
-    string ReadHudTelemetry()
+    // Read the bottom-left stats block (HOME returned; SPD/ALT into fields). Runs on its own,
+    // faster cadence so the HOME distance updates quickly.
+    string ReadHudBottom()
     {
         try
         {
@@ -4458,7 +4469,6 @@ class RobloxAuto : Form
             List<string[]> bot = OcrMaskedRegion(6 * W / 1920, H - 120 * H / 1080,
                                                  260 * W / 1920, H - 4 * H / 1080, 4);
 
-            // diagnostic: show exactly what the bottom-left read produced when it changes
             string dbg = DumpWords(bot);
             if (dbg != _lastHudDbg) { _lastHudDbg = dbg; Log("   HUD read: " + dbg); }
 
@@ -4466,7 +4476,6 @@ class RobloxAuto : Form
             if (home == null) home = FindHomeIn(OcrWords());          // full-screen fallback 1
             if (home == null) home = FindHomeIn(OcrWordsWhiten());    // and the whitened pass
             _hudHome = home != null ? home : "----";
-
             if (bot != null)
             {
                 _hudSpd = ValueAfterLabel(bot, "SPD");
@@ -4474,16 +4483,48 @@ class RobloxAuto : Form
             }
             if (_hudSpd == "") _hudSpd = ValueAfterLabel(OcrWords(), "SPD");
             if (_hudAlt == "") _hudAlt = ValueAfterLabel(OcrWords(), "ALT");
+            return home;
+        }
+        catch { return null; }
+    }
 
+    // top-centre strip: heading + AGL (slower cadence)
+    void ReadHudTop()
+    {
+        try
+        {
+            int W = Screen.PrimaryScreen.Bounds.Width;
             List<string[]> top = OcrMaskedRegion(W * 42 / 100, 14, W * 58 / 100, 100, 3);
             if (top != null)
             {
                 _hudAgl = ValueAfterLabel(top, "AGL");
                 _hudHdg = HeadingFrom(top);
             }
-            return home;
         }
-        catch { return null; }
+        catch { }
+    }
+
+    // HOME cannot change much between reads (the drone is ~20 m/s), so a wildly different number
+    // is an OCR misread - keep the previous one instead of jumping. Gives up and accepts after
+    // 8s so a genuine reset (new drone) is not blocked forever.
+    string FilterHome(string d)
+    {
+        if (d == null) return null;
+        float m = HomeMetres(d);
+        if (m < 0f) return null;
+        long now = Environment.TickCount;
+        if (_homeLastM >= 0f)
+        {
+            long dt = now - _homeLastAt;
+            float maxJump = 120f + 0.12f * dt;      // comfortably above the drone's travel speed
+            if (Math.Abs(m - _homeLastM) > maxJump && dt < 8000)
+            {
+                Log("   HOME " + _homeLastM.ToString("0") + " -> " + m.ToString("0") + " looks wrong - keeping " + _homeLastText);
+                return _homeLastText;
+            }
+        }
+        _homeLastM = m; _homeLastAt = now; _homeLastText = d;
+        return d;
     }
 
     static string DumpWords(List<string[]> ws)
