@@ -101,6 +101,9 @@ class RobloxAuto : Form
     float _hudPitch = 0f, _hudPitchTarget = 0f;   // horizon vertical offset, px (eased)
     float _hudDetRoll = 0f, _hudDetPitch = 0f;    // what DetectHorizon last measured (image-based)
     float _padLx = 0f, _padLy = 0f, _padRx = 0f, _padRy = 0f;   // sticks, -1..1, dead-zoned
+    float _hudLockRoll = 0f, _hudLockPitch = 0f;  // horizon captured when the drone spawns
+    bool _hudLocked = false;
+    long _hudPrevTick = 0;
     bool _hudStyleUav = false;                     // MAVIC gets the UAV-style layout
     FpvHudForm _hudForm = null;
     CheckBox chkHud, chkNight;
@@ -4111,6 +4114,7 @@ class RobloxAuto : Form
             Thread t = new Thread(delegate ()
             {
                 bool shown = false;
+                _hudLocked = false;    // re-lock the horizon each time the feed comes up
                 long lastOcr = 0;      // slower cadence: NO SIGNAL / LINK / heading / AGL
                 long lastHome = 0;     // faster cadence: HOME / SPD / ALT
                 long lastLink = 0;     // when LINK was last seen (for the 10s hold)
@@ -4217,22 +4221,37 @@ class RobloxAuto : Form
                     // full-screen layered repaint cannot itself become the lag) ----
                     if (Environment.TickCount - lastHud >= 160)
                     {
-                        lastHud = Environment.TickCount;
-                        // Horizon comes from the controller: the drone OSD carries no attitude, so
-                        // bank/pitch the artificial horizon from the left stick (math), and fall
-                        // back to the image-detected horizon when the stick is centred.
-                        if (_padLx != 0f || _padLy != 0f)
+                        long nowT = Environment.TickCount;
+                        float dt = _hudPrevTick == 0 ? 0.16f : (nowT - _hudPrevTick) / 1000f;
+                        if (dt > 0.5f) dt = 0.5f;
+                        _hudPrevTick = nowT;
+                        lastHud = nowT;
+
+                        // Lock the horizon the moment the drone spawns: whatever DetectHorizon
+                        // sees then becomes the reference the controller rotates FROM.
+                        if (!_hudLocked && shown)
                         {
-                            _hudRollTarget = -_padLx * 35f;
-                            _hudPitchTarget = _padLy * 90f;
+                            _hudLocked = true;
+                            DetectHorizon();                 // measure the spawn horizon right now
+                            _hudLockRoll = _hudDetRoll;
+                            _hudLockPitch = _hudDetPitch;
+                            _hudRoll = _hudRollTarget = _hudLockRoll;
+                            _hudPitch = _hudPitchTarget = _hudLockPitch;
                         }
-                        else
-                        {
-                            _hudRollTarget = _hudDetRoll;
-                            _hudPitchTarget = _hudDetPitch;
-                        }
-                        _hudRoll += (_hudRollTarget - _hudRoll) * 0.14f;
-                        _hudPitch += (_hudPitchTarget - _hudPitch) * 0.14f;
+
+                        // Controller ROTATES the locked horizon (rate control: the stick is a
+                        // velocity). Centred stick slowly springs back to the lock.
+                        _hudRollTarget += -_padLx * 70f * dt;
+                        _hudPitchTarget += _padLy * 130f * dt;
+                        if (_padLx == 0f) _hudRollTarget += (_hudLockRoll - _hudRollTarget) * 0.03f;
+                        if (_padLy == 0f) _hudPitchTarget += (_hudLockPitch - _hudPitchTarget) * 0.03f;
+                        if (_hudRollTarget > 75f) _hudRollTarget = 75f;
+                        if (_hudRollTarget < -75f) _hudRollTarget = -75f;
+                        if (_hudPitchTarget > 200f) _hudPitchTarget = 200f;
+                        if (_hudPitchTarget < -200f) _hudPitchTarget = -200f;
+
+                        _hudRoll += (_hudRollTarget - _hudRoll) * 0.2f;
+                        _hudPitch += (_hudPitchTarget - _hudPitch) * 0.2f;
                         bool wantHud = shown && _hudOn;
                         string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
                         OverlayHub.I.SetHud(wantHud, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudRoll, _hudPitch, _hudStyleUav);
