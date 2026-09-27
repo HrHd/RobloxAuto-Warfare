@@ -146,9 +146,11 @@ class RobloxAuto : Form
     float _hudShear = 0.9f;                         // 0 = lines never slide, 1 = exact geometric shear
     float _hudLen = 1f;                             // rung length scale
     float _hudImgGain = 1f;                         // how hard the image horizon corrects the gyro (complementary)
+    float _hudRollOff = 0f;                         // manual roll offset, degrees (dial "roll off")
+    float _hudPitOff = 0f;                          // manual pitch offset, px (dial "pitch off")
     float _hudLeftPx = 50f;                        // px - max horizon offset from the LEFT stick (bounded)
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen, numImg;
+    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
@@ -597,6 +599,12 @@ class RobloxAuto : Form
 
         numImg = MkTune(x, y, "img lock", (decimal)_hudImgGain, 0m, 4m, 0.1m, 1);
         numImg.ValueChanged += delegate { _hudImgGain = (float)numImg.Value; SaveCfg(); };
+        y += 28;
+
+        numRollOff = MkTune(x, y, "roll off", (decimal)_hudRollOff, -180m, 180m, 1m, 0);
+        numPitOff = MkTune(x + 168, y, "pitch off", (decimal)_hudPitOff, -400m, 400m, 5m, 0);
+        numRollOff.ValueChanged += delegate { _hudRollOff = (float)numRollOff.Value; SaveCfg(); };
+        numPitOff.ValueChanged += delegate { _hudPitOff = (float)numPitOff.Value; SaveCfg(); };
         y += 32;
 
         var l1 = new Label();
@@ -4136,8 +4144,8 @@ class RobloxAuto : Form
         if (_hudFPitch > 900f) _hudFPitch = 900f;    // was +-280px (~35deg) - it ran out of travel
         if (_hudFPitch < -900f) _hudFPitch = -900f;
 
-        _hudRoll = _hudFRoll;
-        _hudPitch = _hudFPitch + leftPitch;   // right-stick rate + small bounded left-stick offset
+        _hudRoll = _hudFRoll + _hudRollOff;                 // + manual roll offset (dial)
+        _hudPitch = _hudFPitch + leftPitch + _hudPitOff;    // + left-stick nudge + manual pitch offset
 
         // Simulated FPV pack voltage. It starts at half, rises with throttle (left stick Y up), and
         // a spring + ripple gives the sag/bounce of a real pack under load. 4S range 13.2V..16.8V.
@@ -4155,7 +4163,7 @@ class RobloxAuto : Form
         _hudV2 = 12.0f + (chg * 0.992f) * 8.0f;  // second pack reads a hair lower
 
         string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
-        OverlayHub.I.SetHud(true, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudFRoll, _hudPitch, _hudStyleUav, _hudV1, _hudV2);
+        OverlayHub.I.SetHud(true, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudRoll, _hudPitch, _hudStyleUav, _hudV1, _hudV2);
         OverlayHub.I.SetDials(_hudDpp, _hudShear, _hudLen);
 
         if (_hudForm == null) EnsureHud();          // UI thread - safe to create here
@@ -4165,7 +4173,7 @@ class RobloxAuto : Form
             _hudForm.Spd = _hudSpd;
             _hudForm.Agl = alt;
             _hudForm.Hdg = _hudHdg;
-            _hudForm.Roll = _hudFRoll;
+            _hudForm.Roll = _hudRoll;
             _hudForm.PitchPx = _hudPitch;
             _hudForm.Dpp = _hudDpp; _hudForm.Shear = _hudShear; _hudForm.Len = _hudLen;
             _hudForm.Uav = _hudStyleUav;
@@ -4724,6 +4732,8 @@ class RobloxAuto : Form
             else if (k == "hudShear") _hudShear = ParseF(v);
             else if (k == "hudLen") _hudLen = ParseF(v);
             else if (k == "hudImg") _hudImgGain = ParseF(v);
+            else if (k == "hudRollOff") _hudRollOff = ParseF(v);
+            else if (k == "hudPitOff") _hudPitOff = ParseF(v);
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -4788,6 +4798,8 @@ class RobloxAuto : Form
             "hudShear=" + _hudShear.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudLen=" + _hudLen.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "uav=" + (_hudStyleUav ? "1" : "0"),
             "night=" + (_nightVision ? "1" : "0"),
             "nightKey=" + _hkNightKey,
