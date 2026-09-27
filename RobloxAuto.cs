@@ -124,6 +124,7 @@ class RobloxAuto : Form
     DateTime _leftAt = DateTime.MinValue;        // when the player voluntarily left a server
     ConsoleForm _black = null;          // terminal-style cover shown while reconnecting
     volatile bool _blackWatch = false;
+    float _flowPct = 0f;                // monotonic CLI progress across the whole flow
     bool _blackScreen = true;           // show the black cover while reconnecting
     CheckBox chkBlack;
     OverlayForm _land = null;           // the LAND NOW alert, tracked so STOP can close it
@@ -1281,6 +1282,10 @@ class RobloxAuto : Form
         _running = true;
         StopRfWatch();                  // clear any feed from the previous run
         _hoverMs = _hoverBase;          // start each run snappy; BumpHover raises it if needed
+        // Restart mid-flow keeps the CLI progress and shows a milsim fault, so OBS viewers see a
+        // recovery that resumes where it left off instead of the bar jumping back to zero.
+        if (g > 1) AddBlackError("0x1B", "AUTO restart - re-syncing uplink");
+        else if (_flowPct >= 0.99f) _flowPct = 0f;
         Log((g > 1 ? "=== AUTO RESTART" : "=== AUTO") + "   team " + _team + " | drone " + _drone +
             " | bomb " + _bomb + " | as drone " + _asDrone + " ===");
 
@@ -1311,6 +1316,10 @@ class RobloxAuto : Form
         HideBlack();
         HideLandNow();
         OverlayHub.I.SetHome("");
+        // OBS CLI: hold the bar and show a milsim "paused" state until the operator re-establishes
+        AddBlackLine("!! LINK PAUSED - operator halt", "BAD");
+        AddBlackLine("   awaiting re-establishment...", "");
+        OverlayHub.I.SetProgress(_flowPct, "paused - awaiting re-establishment");
         Log("STOP pressed - stopped AUTO, RF feed, covers and LAND NOW");
     }
 
@@ -5604,28 +5613,44 @@ class RobloxAuto : Form
             _black.SetBounds(0, 0, Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
             _black.Show();
             ExcludeFromCapture(_black.Handle);
-            OverlayHub.I.Active(true);       // OBS: opaque black CLI
+
+            // If the flow is already part-way through, this is a RECOVERY, not a cold start: keep
+            // the progress bar where it was and let the boot narrate the recovery. A fresh start
+            // (progress ~0 or already finished) clears the terminal and begins at 0%.
+            bool resuming = _flowPct > 0.05f && _flowPct < 0.99f;
+            if (resuming) OverlayHub.I.SetProgress(_flowPct, "re-sync");
+            else { _flowPct = 0f; OverlayHub.I.Active(true); }
 
             _blackWatch = true;
             Thread t = new Thread(delegate ()
             {
-                AddBlackLine("BF-DRONE LINK  v3.2.1   (rf uplink)", "");
-                Thread.Sleep(260);
-                AddBlackLine("boot: initializing rf module", "OK");
-                Thread.Sleep(220);
-                AddBlackLine("locating ground station", _serverId != "" ? "OK" : "BAD");
-                Thread.Sleep(220);
-                AddBlackLine("connecting to Battlefield Drone Server", "");
-                Thread.Sleep(500);
-                AddBlackLine("  handshake", "OK");
-                Thread.Sleep(180);
-                AddBlackLine("  auth token", "OK");
-                Thread.Sleep(180);
-                AddBlackLine("  join " + (_serverId == "" ? "----" : _serverId), _serverId != "" ? "OK" : "BAD");
-                Thread.Sleep(180);
-                AddBlackLine("losing control link - drone down", "BAD");
-                Thread.Sleep(260);
-                AddBlackLine("re-establishing uplink", "OK");
+                AddBlackLine("BF-DRONE LINK  v3.2.1   [rf uplink]", "");
+                Boot("operator  " + (_serverId == "" ? "----" : _serverId), "", 0.02f, "operator", 420);
+                if (resuming)
+                {
+                    AddBlackLine("!! FAULT 0x7F: telemetry link degraded", "BAD");
+                    Thread.Sleep(240);
+                    AddBlackLine("   recovery protocol engaged", "OK");
+                    Thread.Sleep(240);
+                }
+                Boot("cold start - post rf module", "OK", 0.05f, "post", 340);
+                Boot("loading terrain database", "OK", 0.10f, "terrain db", 540);
+                Boot("calibrating inertial nav (imu)", "OK", 0.16f, "imu cal", 440);
+                Boot("spooling gyro stabiliser", "OK", 0.22f, "gyro", 380);
+                Boot("opening encrypted uplink", "OK", 0.29f, "uplink", 470);
+                Boot("authenticating operator key", "OK", 0.36f, "auth", 520);
+                Boot("handshake with ground station", "OK", 0.43f, "handshake", 560);
+                Boot("syncing telemetry stream", "OK", 0.50f, "telemetry", 620);
+                Boot("mapping combat grid", "OK", 0.57f, "grid", 560);
+                Boot("requesting team assignment", "OK", 0.64f, "team", 520);
+                Boot("selecting airframe  [" + _drone + "]", "OK", 0.71f, "airframe", 540);
+                Boot("mounting warhead payload", "OK", 0.78f, "payload", 560);
+                Boot("running pre-flight checks", "OK", 0.84f, "preflight", 480);
+                Boot("arming flight controller", "OK", 0.89f, "arm", 420);
+                Boot("signal check - uplink degraded", "BAD", 0.91f, "degraded", 420);
+                Boot("re-establishing uplink", "OK", 0.94f, "relink", 420);
+                Boot("ground station acquired", "OK", 0.96f, "standby", 300);
+                AddBlackLine("awaiting drone telemetry...", "");
 
                 // stay up through the reconnect AND the whole deploy sequence, until the drone
                 // is actually online (the top-right LINK indicator). AutoSteps also hides it at
@@ -5636,8 +5661,8 @@ class RobloxAuto : Form
                 {
                     string st = ScreenName(OcrWords());
                     if (!combat && (st == "map" || st == "team base"))
-                    { combat = true; AddBlackLine("entering combat zone", "OK"); }
-                    if (IsLinked()) { AddBlackLine("drone online", "OK"); break; }
+                    { combat = true; AddBlackLine("entering combat zone", "OK"); AddBlackProgress(0.98f, "combat zone"); }
+                    if (IsLinked()) { AddBlackLine("drone online", "OK"); AddBlackProgress(1.0f, "drone online"); break; }
                     InvalidateOcr();
                     Thread.Sleep(500);
                 }
@@ -5650,31 +5675,64 @@ class RobloxAuto : Form
         catch { }
     }
 
+    // These always feed the OBS overlay (the viewer-facing CLI) AND the on-screen console when it
+    // is up. They used to bail out when _black was null, which left the OBS terminal empty during
+    // every part of the flow that runs before the black cover appears.
     void AddBlackLine(string text, string status)
     {
         try
         {
-            if (InvokeRequired) { BeginInvoke((MethodInvoker)delegate { AddBlackLine(text, status); }); return; }
-            if (_black == null) return;
-            _black.Lines.Add(new string[] { text, status ?? "" });
-            _black.Invalidate();
             OverlayHub.I.AddLine(text, status);
+            if (InvokeRequired) { BeginInvoke((MethodInvoker)delegate { AddConsoleLine(text, status); }); return; }
+            AddConsoleLine(text, status);
         }
         catch { }
+    }
+
+    void AddConsoleLine(string text, string status)
+    {
+        if (_black == null) return;
+        _black.Lines.Add(new string[] { text, status ?? "" });
+        if (_black.Lines.Count > 40) _black.Lines.RemoveAt(0);
+        _black.Invalidate();
     }
 
     void AddBlackProgress(float pct, string label)
     {
         try
         {
-            if (InvokeRequired) { BeginInvoke((MethodInvoker)delegate { AddBlackProgress(pct, label); }); return; }
-            if (_black == null) return;
-            _black.Target = pct;               // the anim timer eases Progress up to this
-            _black.ProgressLabel = label ?? "";
-            _black.Invalidate();
+            if (pct < _flowPct) return;   // progress never runs backwards across the whole flow
+            _flowPct = pct;
             OverlayHub.I.SetProgress(pct, label);
+            if (InvokeRequired) { BeginInvoke((MethodInvoker)delegate { AddConsoleProgress(pct, label); }); return; }
+            AddConsoleProgress(pct, label);
         }
         catch { }
+    }
+
+    void AddConsoleProgress(float pct, string label)
+    {
+        if (_black == null) return;
+        _black.Target = pct;                 // the anim timer eases Progress up to this
+        _black.ProgressLabel = label ?? "";
+        _black.Invalidate();
+    }
+
+    // A fake milsim fault, shown on the OBS terminal when the flow has to recover/restart. The
+    // progress bar is deliberately NOT reset - the recovery resumes where the flow left off.
+    void AddBlackError(string code, string reason)
+    {
+        AddBlackLine("!! FAULT " + code + ": " + reason, "BAD");
+        AddBlackLine("   recovery protocol engaged", "OK");
+        AddBlackLine("   resuming uplink at " + ((int)(_flowPct * 100)) + "%", "");
+    }
+
+    // one milsim boot line + progress step + a beat before the next
+    void Boot(string text, string status, float pct, string label, int ms)
+    {
+        AddBlackLine(text, status);
+        AddBlackProgress(pct, label);
+        Thread.Sleep(ms);
     }
 
     void HideBlack()
