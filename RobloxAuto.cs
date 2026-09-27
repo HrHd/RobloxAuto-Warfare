@@ -4318,11 +4318,11 @@ class RobloxAuto : Form
                         {
                             ReadHudTop();             // heading + AGL
                             DetectHorizon();          // bank the artificial horizon
-                            bool mavic = PayloadLooksMavic();
+                            bool mavic = DroneLooksMavic();   // top-right drone name, else payload
                             if (mavic != _hudStyleUav)
                             {
                                 _hudStyleUav = mavic;
-                                Log("   payload on screen -> " + (mavic ? "UAV (DJI)" : "FPV") + " HUD");
+                                Log("   drone on screen -> " + (mavic ? "UAV (DJI)" : "FPV") + " HUD");
                             }
                         }
                     }
@@ -4498,6 +4498,26 @@ class RobloxAuto : Form
     // The game prints the payload bottom-right ("LIGHT ROCKET MOUNTED"). Rockets / RPG-type
     // payloads mean the FPV drone, rack/grenade payloads mean the MAVIC - so the OSD itself
     // tells us which HUD to draw, no matter what the dropdown says.
+    // The top-right corner literally names the drone ("RC LIVE" over "MAVIC" / "FPV"). Prefer it
+    // as the source of truth and fall back to the payload line only if it is unreadable.
+    bool DroneLooksMavic()
+    {
+        try
+        {
+            int W = Screen.PrimaryScreen.Bounds.Width;
+            List<string[]> ws = OcrMaskedRegion(W * 80 / 100, 4, W, 120, 3);
+            if (ws != null)
+                foreach (string[] w in ws)
+                {
+                    string t = (w[4] ?? "").ToUpperInvariant();
+                    if (t.IndexOf("MAVIC") >= 0 || t.IndexOf("MAV") >= 0 || t.IndexOf("MAV1C") >= 0) return true;
+                    if (t.IndexOf("FPV") >= 0 || t.IndexOf("FPY") >= 0) return false;
+                }
+        }
+        catch { }
+        return PayloadLooksMavic();
+    }
+
     bool PayloadLooksMavic()
     {
         try
