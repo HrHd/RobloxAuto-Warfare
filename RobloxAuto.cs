@@ -4599,13 +4599,16 @@ class RobloxAuto : Form
 
             Thread t = new Thread(delegate ()
             {
-                bool shown = false;
+                // The watch only starts once we ARE in the drone (the flow's Deploy As Drone, or
+                // the opt-in screen detect), so show immediately - requiring LINK here meant a
+                // flaky corner read kept the whole HUD hidden.
+                bool shown = true;
                 _hudLocked = false;    // re-lock the horizon each time the feed comes up
                 _hudNeedLock = true;   // start hunting for the spawn horizon immediately
                 long lockArmedAt = Environment.TickCount + 1200;   // skip the base panel/map frames
                 long lastOcr = 0;      // slower cadence: NO SIGNAL / LINK / heading / AGL
                 long lastHome = 0;     // faster cadence: HOME / SPD / ALT
-                long lastLink = 0;     // when LINK was last seen (for the 10s hold)
+                long lastLink = Environment.TickCount;   // LINK-loss watchdog baseline
                 float targetLvl = 0.2f;      // from the last HOME read (the "true" value)
                 float shownLvl = 0.2f;       // eased toward the target every tick
                 string txt = "RF LINK   HOME  ----";
@@ -4654,20 +4657,14 @@ class RobloxAuto : Form
                         // the drone view - without it the feed should not run at all
                         bool linked = IsLinked();
                         if (linked) lastLink = Environment.TickCount;
-                        if (linked && !shown)
+                        // LINK is only a watchdog now: the overlay stays up unless it has been gone
+                        // a full 90s (a real crash is caught by the NO SIGNAL check above)
+                        if (!linked && Environment.TickCount - lastLink >= 90000)
                         {
-                            shown = true;
-                            Log("   RF feed: LINK detected - overlay on");
-                        }
-                        else if (!linked && shown && Environment.TickCount - lastLink >= 30000)
-                        {
-                            // Hold the last readout for a long time - only give up on the feed
-                            // once LINK has been gone a full 30s (a real crash is caught by the
-                            // NO SIGNAL check above), so the HUD/data stay up while it is flying.
                             shown = false;
-                            Log("   RF feed: no LINK for 30s - overlay off (kept the last reading)");
+                            Log("   RF feed: no LINK for 90s - overlay off (kept the last reading)");
                         }
-                        if (linked)
+                        if (shown)
                         {
                             ReadHudTop();             // heading + AGL
                             DetectHorizon();          // bank the artificial horizon
