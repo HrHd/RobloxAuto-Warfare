@@ -127,7 +127,7 @@ class RobloxAuto : Form
     TextBox txtWatch;
     NumericUpDown numStuck, numMatch;
     Label lblPadStatus;
-    System.Windows.Forms.Timer timerPad, timerLog, timerOcr;
+    System.Windows.Forms.Timer timerPad, timerLog, timerOcr, timerDrone;
 
     // ================= win32 =================
     const int WM_HOTKEY = 0x0312;
@@ -421,6 +421,7 @@ class RobloxAuto : Form
         timerPad = new System.Windows.Forms.Timer(); timerPad.Interval = 60; timerPad.Tick += PadTick; timerPad.Start();
         timerLog = new System.Windows.Forms.Timer(); timerLog.Interval = 2000; timerLog.Tick += LogTick; timerLog.Start();
         timerOcr = new System.Windows.Forms.Timer(); timerOcr.Interval = 4000; timerOcr.Tick += OcrTick; timerOcr.Start();
+        timerDrone = new System.Windows.Forms.Timer(); timerDrone.Interval = 3000; timerDrone.Tick += DroneTick; timerDrone.Start();
     }
 
     // Keep the panel out of the activation race entirely. ShowWithoutActivation stops the
@@ -3404,6 +3405,43 @@ class RobloxAuto : Form
             }
         }
         catch { return ""; }
+    }
+
+    // If the program is started while the drone is ALREADY in the air (no Deploy As Drone ran
+    // this session), pick the feed up from the screen instead of waiting for a deploy.
+    void DroneTick(object sender, EventArgs e)
+    {
+        try
+        {
+            if (_running) return;
+            if (_rfForm != null) return;                     // already running
+            if (!_hudOn && !_watchHome) return;              // nothing to show
+            if (DroneViewOnScreen())
+            {
+                Log("drone view already on screen - starting the RF/HUD");
+                StartRfWatch();
+            }
+        }
+        catch { }
+    }
+
+    bool DroneViewOnScreen()
+    {
+        try
+        {
+            if (IsLinked()) return true;                     // "RC LIVE" / "LINK LIVE"
+            int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
+            List<string[]> ws = OcrMaskedRegion(W * 62 / 100, H - 60 * H / 1080, W, H - 6 * H / 1080, 3);
+            if (ws != null)
+                foreach (string[] w in ws)
+                {
+                    string t = (w[4] ?? "").ToUpperInvariant();
+                    if (t.IndexOf("PAYLOAD") >= 0 || t.IndexOf("MOUNT") >= 0 || t.IndexOf("GRENADE") >= 0)
+                        return true;                          // payload readout = drone view
+                }
+        }
+        catch { }
+        return false;
     }
 
     void LogTick(object sender, EventArgs e)
