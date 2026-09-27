@@ -4319,7 +4319,7 @@ class RobloxAuto : Form
             float skyT = Smooth01(_hudSkySm, 0.08f, 0.40f);   // 0 = all ground, 1 = plenty of sky
             float actT = Smooth01(Math.Max(Math.Abs(sx), Math.Abs(sy)), 0.05f, 0.60f); // stick activity
             float gain = _hudImgGain; if (gain < 0f) gain = 0f; if (gain > 4f) gain = 4f;
-            float imgW = (0.35f + 0.65f * conf) * skyT * (1f - 0.85f * actT) * gain;
+            float imgW = (0.50f + 0.50f * conf) * skyT * (1f - 0.70f * actT) * gain;   // a bit more image power
             float tau = (0.12f + 1.8f * (1f - conf)) / Math.Max(0.02f, imgW);
             if (tau > 60f) tau = 60f;                          // no sky -> the image is effectively silent
             float a = 1f - (float)Math.Pow(0.5f, dt / tau);
