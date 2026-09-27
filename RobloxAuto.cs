@@ -103,6 +103,8 @@ class RobloxAuto : Form
     float _padLx = 0f, _padLy = 0f, _padRx = 0f, _padRy = 0f;   // sticks, -1..1, dead-zoned
     float _hudLockRoll = 0f, _hudLockPitch = 0f;  // horizon captured when the drone spawns
     bool _hudLocked = false;
+    bool _hudNeedLock = false;                    // true from Deploy As Drone until we lock
+    bool _hudDetValid = false;                    // DetectHorizon found a confident line
     long _hudPrevTick = 0;
     bool _hudStyleUav = false;                     // MAVIC gets the UAV-style layout
     FpvHudForm _hudForm = null;
@@ -4210,6 +4212,8 @@ class RobloxAuto : Form
             {
                 bool shown = false;
                 _hudLocked = false;    // re-lock the horizon each time the feed comes up
+                _hudNeedLock = true;   // start hunting for the spawn horizon immediately
+                long lockArmedAt = Environment.TickCount + 1200;   // skip the base panel/map frames
                 long lastOcr = 0;      // slower cadence: NO SIGNAL / LINK / heading / AGL
                 long lastHome = 0;     // faster cadence: HOME / SPD / ALT
                 long lastLink = 0;     // when LINK was last seen (for the 10s hold)
@@ -4262,11 +4266,13 @@ class RobloxAuto : Form
                             shown = true;
                             Log("   RF feed: LINK detected - overlay on");
                         }
-                        else if (!linked && shown && Environment.TickCount - lastLink >= 10000)
+                        else if (!linked && shown && Environment.TickCount - lastLink >= 30000)
                         {
-                            // hold the last readout for 10s before giving up on the feed
+                            // Hold the last readout for a long time - only give up on the feed
+                            // once LINK has been gone a full 30s (a real crash is caught by the
+                            // NO SIGNAL check above), so the HUD/data stay up while it is flying.
                             shown = false;
-                            Log("   RF feed: no LINK for 10s - overlay off (kept the last reading)");
+                            Log("   RF feed: no LINK for 30s - overlay off (kept the last reading)");
                         }
                         if (linked)
                         {
@@ -4328,16 +4334,23 @@ class RobloxAuto : Form
                         _hudPrevTick = nowT;
                         lastHud = nowT;
 
-                        // Lock the horizon the moment the drone spawns: whatever DetectHorizon
-                        // sees then becomes the reference the controller rotates FROM.
-                        if (!_hudLocked && shown)
+                        // Lock the horizon AT SPAWN: we start detecting the moment Deploy As Drone
+                        // is clicked, so the first confident line is the spawn horizon and our
+                        // lines begin aligned to it, then the controller rotates from there.
+                        if (!_hudLocked && (_hudNeedLock || shown) && Environment.TickCount >= lockArmedAt)
                         {
-                            _hudLocked = true;
-                            DetectHorizon();                 // measure the spawn horizon right now
-                            _hudLockRoll = _hudDetRoll;
-                            _hudLockPitch = _hudDetPitch;
-                            _hudRoll = _hudRollTarget = _hudLockRoll;
-                            _hudPitch = _hudPitchTarget = _hudLockPitch;
+                            DetectHorizon();
+                            if (_hudDetValid)
+                            {
+                                _hudLocked = true;
+                                _hudNeedLock = false;
+                                _hudLockRoll = _hudDetRoll;
+                                _hudLockPitch = _hudDetPitch;
+                                _hudRoll = _hudRollTarget = _hudLockRoll;
+                                _hudPitch = _hudPitchTarget = _hudLockPitch;
+                                Log("   horizon locked at spawn: roll " + _hudLockRoll.ToString("0") +
+                                    " deg, pitch " + _hudLockPitch.ToString("0") + "px");
+                            }
                         }
 
                         // Use BOTH sticks: whichever the player is flying with rotates the horizon
@@ -4755,7 +4768,7 @@ class RobloxAuto : Form
                 }
                 if (bestY >= 0) { sx += x; sy += bestY; sxy += (float)x * bestY; sxx += (float)x * x; n++; sumG += bestG; }
             }
-            if (n < 30 || sumG / n < 90) { _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
+            if (n < 30 || sumG / n < 90) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
             float denom = n * sxx - sx * sx;
             if (Math.Abs(denom) < 1f) return;
             float slope = (n * sxy - sx * sy) / denom;
@@ -4766,6 +4779,7 @@ class RobloxAuto : Form
             if (pitch > H / 5f) pitch = H / 5f; if (pitch < -H / 5f) pitch = -H / 5f;
             _hudDetRoll = roll;
             _hudDetPitch = pitch;
+            _hudDetValid = true;
         }
         catch { }
     }
