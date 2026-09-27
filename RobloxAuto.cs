@@ -123,6 +123,8 @@ class RobloxAuto : Form
     bool _hudNeedLock = false;                    // true from Deploy As Drone until we lock
     bool _hudDetValid = false;                    // DetectHorizon found a confident line
     float _hudDetConf = 0f;                       // 0..1 - how sure the detector is (drives the fusion weight)
+    float _hudTrkM = 0f, _hudTrkB = 0f;           // last accepted horizon line (slope/intercept)
+    long _hudTrkAt = 0;                           // when we accepted it - used to guide the next search
     long _hudDetAt = 0;                           // when it did (so a stale fix is not trusted)
     long _hudLogAt = 0;
     long _hudPrevTick = 0;
@@ -6217,14 +6219,33 @@ class RobloxAuto : Form
                 {
                     float[] im = ch == 0 ? imR : (ch == 1 ? imG : imB);
                     int pn = 0;
+                    bool trk = _hudTrkAt != 0 && (Environment.TickCount - _hudTrkAt) < 1500;
                     for (int gx = gx0; gx < gx1; gx++)
                     {
                         float best = -1f; int by = -1;
-                        for (int gy = gy0 + 1; gy < gy1 - 1; gy++)
+                        // TRACKING PRIOR: if we had a recent fix, look for the horizon near where it
+                        // was last time (with slack for fast pitch). Only if that band is empty do we
+                        // fall back to the whole frame - so a stray edge cannot steal the lock and a
+                        // brief occlusion does not lose it.
+                        int ylo = gy0 + 1, yhi = gy1 - 1;
+                        if (trk)
+                        {
+                            float predY = _hudTrkM * (gx * B + B / 2f) + _hudTrkB;
+                            int pyb = (int)(predY / B);
+                            ylo = Math.Max(gy0 + 1, pyb - 8);
+                            yhi = Math.Min(gy1 - 1, pyb + 8);
+                        }
+                        for (int gy = ylo; gy < yhi; gy++)
                         {
                             float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
                             if (g > best) { best = g; by = gy; }
                         }
+                        if (by < 0 && trk)
+                            for (int gy = gy0 + 1; gy < gy1 - 1; gy++)
+                            {
+                                float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
+                                if (g > best) { best = g; by = gy; }
+                            }
                         if (by < 0) continue;
                         // SUB-PIXEL: parabolic interpolation of the gradient peak.
                         float gA = Math.Abs(im[by * gw + gx] - im[(by - 2) * gw + gx]);
@@ -6279,7 +6300,10 @@ class RobloxAuto : Form
                     float rollNow = (float)(Math.Atan(fm) * 180.0 / Math.PI);
                     bool jump = _hudSmSeeded && Math.Abs(rollNow - _hudSmRoll) > 50f;
                     if (bestGrad > 1.5f && contrast > 2.5f && !jump)
-                    { slope = fm; icept = fb; gOk = true; conf = Math.Min(1f, bestGrad / 12f); }
+                    {
+                        slope = fm; icept = fb; gOk = true; conf = Math.Min(1f, bestGrad / 12f);
+                        _hudTrkM = fm; _hudTrkB = fb; _hudTrkAt = Environment.TickCount;   // remember for tracking
+                    }
                 }
             }
 
@@ -6491,6 +6515,7 @@ class RobloxAuto : Form
             _hudDetRoll = _hudSmRoll;
             _hudDetPitch = _hudSmPitch;
             _hudDetConf = conf;
+            _hudTrkM = slope; _hudTrkB = icept; _hudTrkAt = Environment.TickCount;   // guide the next frame
             _hudDetValid = true;
             _hudDetAt = Environment.TickCount;
             if (Environment.TickCount - _hudLogAt >= 2000)
