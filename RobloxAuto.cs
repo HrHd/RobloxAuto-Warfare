@@ -4078,16 +4078,15 @@ class RobloxAuto : Form
         if (sx > -0.05f && sx < 0.05f) sx = 0f;
         if (sy > -0.05f && sy < 0.05f) sy = 0f;
 
-        // ROLL = the right stick X deflection, as an ANGLE. Centred stick -> the ladder is FLAT
-        // (level with the monitor); deflected -> it goes DIAGONAL. It is NOT integrated, so it can
-        // never hold a stale bank and sit diagonal while you are flying level.
-        float rollTarget = -sx * 45f;              // up to ~45 deg at full deflection
-        _hudFRoll += (rollTarget - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 0.12));
-
-        // PITCH keeps the rate + acceleration model.
+        // ACRO. The roll INTEGRATES the stick rate and HOLDS - letting go does NOT level the ladder
+        // back out, it stays banked exactly where you left it, like an acro drone. Centred stick
+        // simply means "no more rotation", not "return to level".
+        float vTargetRoll = -sx * _hudRollRate;    // deg/s (bank RATE)
         float vTargetPitch = -sy * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
         float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
+        _hudRollVel += (vTargetRoll - _hudRollVel) * av;
         _hudPitchVel += (vTargetPitch - _hudPitchVel) * av;
+        _hudFRoll += _hudRollVel * dt;
         _hudFPitch += _hudPitchVel * dt;
 
         // HORIZON LOCK. The camera measurement is the absolute reference: it keeps the ladder flat on
@@ -4097,10 +4096,8 @@ class RobloxAuto : Form
         bool det = _hudDetValid && (now - _hudDetAt) < 1500;
         if (det)
         {
-            float tau = (sx == 0f && sy == 0f) ? _hudLockTau : _hudFlyTau;
-            float a = 1f - (float)Math.Pow(0.5, dt / tau);
-            _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
-            _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
+            float a = 1f - (float)Math.Pow(0.5, dt / _hudFlyTau);
+            _hudFPitch += (_hudDetPitch - _hudFPitch) * a;   // PITCH only - roll is acro (holds)
         }
 
         // The LEFT stick (throttle) is a small, BOUNDED proportional nudge, NOT integrated. Adding
