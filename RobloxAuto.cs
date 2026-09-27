@@ -143,7 +143,6 @@ class RobloxAuto : Form
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
     int _flightOcrBase = -1;                      // last FLIGHT mm:ss read from the OSD (seconds)
     long _flightOcrAt = 0;                        // when that read was taken
-    long _lastInDroneAt = 0;                      // last time the drone OSD was actually on screen
     static string _userName = "";            // our in-game name; printed on every menu (never on the OSD)
     DateTime _leftAt = DateTime.MinValue;        // when the player voluntarily left a server
         ConsoleForm _black = null;          // terminal-style cover shown while reconnecting
@@ -288,6 +287,25 @@ class RobloxAuto : Form
         }
         catch { }
         return _robloxWnd;
+    }
+
+    // Is the game the window the user is actually looking at? If they tabbed away, the screen
+    // grab is somebody else's app - so detection must not read it. Returns true when we cannot
+    // tell, so it never wrongly blocks the HUD.
+    static bool RobloxFocused()
+    {
+        try
+        {
+            IntPtr rw = RobloxWindow();
+            if (rw == IntPtr.Zero) return true;
+            IntPtr fg = GetForegroundWindow();
+            if (fg == rw) return true;
+            uint pf, pr;
+            GetWindowThreadProcessId(fg, out pf);
+            GetWindowThreadProcessId(rw, out pr);
+            return pf != 0 && pf == pr;    // a fullscreen child of the same process also counts
+        }
+        catch { return true; }
     }
 
     static void FocusRoblox()
@@ -3974,6 +3992,7 @@ class RobloxAuto : Form
             // drone view when the user opts in, i.e. they picked a drone by hand. Otherwise the
             // scan false-flagged on random UI text and popped the HUD up out of nowhere.
             if (!_hudAutoDetect) return;
+            if (!RobloxFocused()) return;    // tabbed away - do not read another app's screen
             bool dv = DroneViewOnScreen();
             if (dv)
             {
@@ -5109,7 +5128,6 @@ class RobloxAuto : Form
             _rfRun = true;
             _flightStart = DateTime.Now;
             _flightOcrBase = -1; _flightOcrAt = 0;   // re-read the OSD flight clock for this flight
-            _lastInDroneAt = Environment.TickCount;  // assume we start in the drone (we just deployed)
             _rfHomeText = "----";
             _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
             _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
@@ -5136,6 +5154,7 @@ class RobloxAuto : Form
                 bool lastOk = false;
                 long lastDet = 0;      // horizon measurement cadence (faster than the slow path)
                 int outHits = 0;   // consecutive MENU reads - two in a row back the HUD down
+                bool unfocusedLogged = false;   // one-time "game not focused" note
 
                 while (_rfRun)
                 {
@@ -5177,64 +5196,64 @@ class RobloxAuto : Form
                         // NOTE: no LINK-based auto-off any more. The watch only starts when we ARE in
                         // the drone, and the flaky corner read was shutting the HUD off at random.
                         // A real crash is caught by the NO SIGNAL check above.
-                        // Is this still a drone view? The FLIGHT clock (top-left) and the RC/LINK
-                        // LIVE badge (top-right) only exist in the drone OSD - the map, loadout and
-                        // menus have neither. If they are both gone for a few seconds we have left
-                        // the drone, so drop the HUD instead of leaving it stuck on screen.
-                        int fs = ReadFlightSecs();   // FLIGHT (MAVIC) / FLY (FPV) clock
-                        bool corner = CornerLinked();       // top-right "LINK LIVE" / "RC LIVE"
-                        bool droneEv = fs >= 0 || corner || DroneKeyword();
-                        // "not flying" proof. Menu words (incl. the profile strip "Cash" and our
-                        // own name), plus only the unambiguous screen names. We must NOT use the
-                        // whole ScreenName(): its "map" case matches the bare word POINT, and the
-                        // MAVIC OSD prints "Return to a supply point".
-                        string why;
-                        string sn = ScreenName(OcrWords());
-                        bool menuEv = MenuOnScreen(out why)
-                            || sn == "team select" || sn == "lobby" || sn == "loadout"
-                            || sn == "team base" || sn == "loading";
-                        // the map counts as a menu - but ONLY when there is no drone OSD text on
-                        // screen, so the MAVIC's "Return to a supply point" cannot trigger it
-                        if (!menuEv && sn == "map" && !droneEv) { menuEv = true; why = "map"; }
-                        if (!menuEv && sn != "unknown" && sn != "map") { menuEv = true; why = "screen " + sn; }
-                        if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
+                        // If the game is NOT the foreground window the grab is somebody else's app.
+                        // Classify NOTHING and hold the last state - tabbing out to another monitor
+                        // used to feed the OCR a browser/terminal whose words looked like a menu and
+                        // dropped the HUD.
+                        if (!RobloxFocused())
+                        {
+                            if (!unfocusedLogged) { Log("   RF: game not focused - holding the HUD state"); unfocusedLogged = true; }
+                        }
+                        else
+                        {
+                            unfocusedLogged = false;
+                            int fs = ReadFlightSecs();   // FLIGHT (MAVIC) / FLY (FPV) clock
+                            bool corner = CornerLinked();       // top-right "LINK LIVE" / "RC LIVE"
+                            bool droneEv = fs >= 0 || corner || DroneKeyword();
+                            // "not flying" proof. Menu words (incl. the profile strip "Cash" and our
+                            // own name), plus only the unambiguous screen names. We must NOT use the
+                            // whole ScreenName(): its "map" case matches the bare word POINT, and the
+                            // MAVIC OSD prints "Return to a supply point".
+                            string why;
+                            string sn = ScreenName(OcrWords());
+                            bool menuEv = MenuOnScreen(out why)
+                                || sn == "team select" || sn == "lobby" || sn == "loadout"
+                                || sn == "team base" || sn == "loading";
+                            // the map counts as a menu - but ONLY when there is no drone OSD text on
+                            // screen, so the MAVIC's "Return to a supply point" cannot trigger it
+                            if (!menuEv && sn == "map" && !droneEv) { menuEv = true; why = "map"; }
+                            if (!menuEv && sn != "unknown" && sn != "map") { menuEv = true; why = "screen " + sn; }
+                            if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
 
-                        // THREE-WAY. Only strong MENU evidence proves we left the drone. A blank or
-                        // unreadable frame means the OCR missed - NOT that we are in a menu - so we
-                        // keep the HUD exactly as it is. (Dropping on "unknown" is what made the
-                        // HUD vanish on a perfectly good FPV screen while LINK LIVE was still up.)
-                        if (droneEv && !menuEv) { outHits = 0; _lastInDroneAt = Environment.TickCount; }
-                        else if (menuEv) outHits++;
-                        // else: unknown -> change nothing
-
-                        if (!shown && droneEv && !menuEv)
-                        {
-                            shown = true;
-                            Log("   RF feed: drone view - overlay on");
-                        }
-                        if (shown && outHits >= 2)
-                        {
-                            shown = false;
-                            Log("   menu on screen - overlay off (" + (why == "" ? "screen name" : why) + ")");
-                            // tell the OBS terminal so it visibly drops back to the CLI instead of
-                            // freezing on the last HUD frame
-                            AddBlackLine("returning to command line - menu detected", "OK");
-                        }
-                        else if (shown && !droneEv && Environment.TickCount - _lastInDroneAt > 30000)
-                        {
-                            shown = false;
-                            Log("   RF feed: drone OSD unreadable for 30s - overlay off");
-                            AddBlackLine("rf feed lost - reverting to command line", "OK");
-                        }
-                        if (shown && droneEv && !menuEv)
-                        {
-                            ReadHudTop();             // heading + AGL
-                            DetectHorizon();          // bank the artificial horizon
-                            int st = DroneStyle();    // 1 MAVIC / 0 FPV / -1 unknown - only a positive read may flip
-                            if (st >= 0 && (st == 1) != _hudStyleUav)
+                            // BIAS TO THE DRONE. The OSD is a handful of words; every menu carries at
+                            // least one of the tells above. So if NO menu is on screen we assume we
+                            // are flying (the user's "9/10" rule) and show the HUD - we do not wait
+                            // for a positive drone read, and an unreadable frame keeps the previous
+                            // state instead of dropping it. Two agreeing menu reads bring it down.
+                            if (menuEv) outHits++; else outHits = 0;
+                            if (!menuEv && !shown)
                             {
-                                _hudStyleUav = (st == 1);
-                                Log("   drone on screen -> " + (_hudStyleUav ? "UAV (DJI)" : "FPV") + " HUD");
+                                shown = true;
+                                Log("   RF feed: overlay on" + (droneEv ? " (drone OSD)" : " (no menu detected)"));
+                            }
+                            if (shown && outHits >= 2)
+                            {
+                                shown = false;
+                                Log("   menu on screen - overlay off (" + (why == "" ? "screen name" : why) + ")");
+                                // tell the OBS terminal so it visibly drops back to the CLI instead
+                                // of freezing on the last HUD frame
+                                AddBlackLine("returning to command line - menu detected", "OK");
+                            }
+                            if (shown && droneEv && !menuEv)
+                            {
+                                ReadHudTop();             // heading + AGL
+                                DetectHorizon();          // bank the artificial horizon
+                                int st = DroneStyle();    // 1 MAVIC / 0 FPV / -1 - only a positive read may flip
+                                if (st >= 0 && (st == 1) != _hudStyleUav)
+                                {
+                                    _hudStyleUav = (st == 1);
+                                    Log("   drone on screen -> " + (_hudStyleUav ? "UAV (DJI)" : "FPV") + " HUD");
+                                }
                             }
                         }
                     }
