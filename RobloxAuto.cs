@@ -2337,12 +2337,19 @@ class RobloxAuto : Form
             bool basePanel = PhraseIn("TEAM BASE", ws) || PhraseIn("DEPLOY AS DRONE", ws) || PhraseIn("WARHEAD", ws)
                           || PhraseIn("TEAM BASE", ww) || PhraseIn("DEPLOY AS DRONE", ww) || PhraseIn("WARHEAD", ww);
             if (basePanel) return false;
-            // Easiest tell: a "POINT" label on screen with NO TEAM BASE panel = a map point got
-            // selected (misclick), so we must back out with Return.
-            if (PhraseIn("POINT", ws) || PhraseIn("POINT", ww)) return true;
-            bool phrase = PhraseIn("lock in your choice", ws) || PhraseIn("Press Deploy button", ws)
-                       || PhraseIn("lock in your choice", ww) || PhraseIn("Press Deploy button", ww);
-            return phrase;
+            // COUNT the POINT labels: the normal map shows SEVERAL (POINT A..F) -> we are on the map
+            // with the Base, fine. EXACTLY ONE POINT means a point got selected - the bad lock screen.
+            int pc = FindPhraseAll("POINT", null, ws).Count;
+            int pc2 = FindPhraseAll("POINT", null, ww).Count;
+            if (pc2 > pc) pc = pc2;
+            if (pc == 1) return true;
+            if (pc == 0)
+            {
+                bool phrase = PhraseIn("lock in your choice", ws) || PhraseIn("Press Deploy button", ws)
+                           || PhraseIn("lock in your choice", ww) || PhraseIn("Press Deploy button", ww);
+                return phrase;
+            }
+            return false;
         }
         catch { }
         return false;
