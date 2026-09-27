@@ -6110,34 +6110,47 @@ class RobloxAuto : Form
             int n = 0;
             bool gOk = false; float slope = 0f, icept = 0f; float conf = 0f;
 
-            // --- primary: GLOBAL line search on the VERTICAL GRADIENT, scored ROBUSTLY. We found the
-            // MEAN gradient is fooled by a localized, very-high-contrast streak (a smoke plume) - it
-            // scored the plume edge above the horizon. The horizon is instead a MODERATE edge present
-            // across the WHOLE width, so we score by the 40th PERCENTILE of the per-column gradient
-            // and require good WIDTH COVERAGE. Coarse sweep, then fine sweep around the winner. ---
+            // --- primary: GLOBAL line search. Score = ROBUST gradient (40th percentile, so a localized
+            // high-contrast streak - a smoke plume, a road - cannot win) PLUS a SKY/GROUND colour term:
+            // the band ABOVE the line should match the sky reference, the band BELOW should not. That is
+            // the logical definition of a horizon, and it is what separates the sky/ground edge from any
+            // strong terrain edge. Coarse sweep, then fine sweep around the winner. ---
             float[] ns = new float[(W * 5 / 6 - W / 6) / 2 + 4];
             {
                 float bestScore = 0f; float bm = 0f; int bb = H / 2;
                 for (int m100 = -60; m100 <= 60; m100 += 4)
                 {
                     float m = m100 / 100f;
-                    for (int b = (int)(H * 0.18f); b <= (int)(H * 0.82f); b += 6)
+                    for (int b = (int)(H * 0.14f); b <= (int)(H * 0.86f); b += 6)
                     {
-                        int cnt = 0;
+                        int cnt = 0; float distAb = 0f, distBe = 0f; int scc = 0;
                         for (int x = W / 6; x < W * 5 / 6; x += 5)
                         {
                             int yl = (int)(m * x + b);
-                            if (yl < 3 || yl >= H - 3) continue;
+                            if (yl < 16 || yl >= H - 16) continue;
                             int a = px[(yl - 2) * W + x], c = px[(yl + 2) * W + x];
                             ns[cnt++] = Math.Abs(((a >> 16) & 0xFF) - ((c >> 16) & 0xFF))
                                       + Math.Abs(((a >> 8) & 0xFF) - ((c >> 8) & 0xFF))
                                       + Math.Abs((a & 0xFF) - (c & 0xFF));
+                            int ar = 0, ag = 0, ab2 = 0, br = 0, bg2 = 0, bb2 = 0, k2 = 0;
+                            for (int k = 3; k <= 15; k += 3)
+                            {
+                                int u = px[(yl - k) * W + x], d = px[(yl + k) * W + x];
+                                ar += (u >> 16) & 0xFF; ag += (u >> 8) & 0xFF; ab2 += u & 0xFF;
+                                br += (d >> 16) & 0xFF; bg2 += (d >> 8) & 0xFF; bb2 += d & 0xFF; k2++;
+                            }
+                            ar /= k2; ag /= k2; ab2 /= k2; br /= k2; bg2 /= k2; bb2 /= k2;
+                            distAb += Math.Abs(ar - sr) + Math.Abs(ag - sg) + Math.Abs(ab2 - sb);
+                            distBe += Math.Abs(br - sr) + Math.Abs(bg2 - sg) + Math.Abs(bb2 - sb);
+                            scc++;
                         }
-                        if (cnt < 40) continue;
+                        if (cnt < 40 || scc < 40) continue;
                         int cov = 0; for (int q = 0; q < cnt; q++) if (ns[q] > 10f) cov++;
-                        if ((float)cov / cnt < 0.45f) continue;      // a real horizon spans the width
+                        if ((float)cov / cnt < 0.4f) continue;       // a real horizon spans the width
                         Array.Sort(ns, 0, cnt);
-                        float s2 = ns[(int)(cnt * 0.40f)];           // robust 40th percentile
+                        float gp = ns[(int)(cnt * 0.40f)];           // robust 40th percentile
+                        float sky = (distBe - distAb) / scc;         // sky above (small), ground below (large)
+                        float s2 = gp + sky * 0.6f;
                         if (s2 > bestScore) { bestScore = s2; bm = m; bb = b; }
                     }
                 }
@@ -6148,25 +6161,38 @@ class RobloxAuto : Form
                         float m = m100 / 100f;
                         for (int b = bb - 6; b <= bb + 6; b += 1)
                         {
-                            if (b < 3 || b > H - 3) continue;
-                            int cnt = 0;
+                            if (b < 16 || b > H - 16) continue;
+                            int cnt = 0; float distAb = 0f, distBe = 0f; int scc = 0;
                             for (int x = W / 6; x < W * 5 / 6; x += 2)
                             {
                                 int yl = (int)(m * x + b);
-                                if (yl < 3 || yl >= H - 3) continue;
+                                if (yl < 16 || yl >= H - 16) continue;
                                 int a = px[(yl - 2) * W + x], c = px[(yl + 2) * W + x];
                                 ns[cnt++] = Math.Abs(((a >> 16) & 0xFF) - ((c >> 16) & 0xFF))
                                           + Math.Abs(((a >> 8) & 0xFF) - ((c >> 8) & 0xFF))
                                           + Math.Abs((a & 0xFF) - (c & 0xFF));
+                                int ar = 0, ag = 0, ab2 = 0, br = 0, bg2 = 0, bb2 = 0, k2 = 0;
+                                for (int k = 3; k <= 15; k += 3)
+                                {
+                                    int u = px[(yl - k) * W + x], d = px[(yl + k) * W + x];
+                                    ar += (u >> 16) & 0xFF; ag += (u >> 8) & 0xFF; ab2 += u & 0xFF;
+                                    br += (d >> 16) & 0xFF; bg2 += (d >> 8) & 0xFF; bb2 += d & 0xFF; k2++;
+                                }
+                                ar /= k2; ag /= k2; ab2 /= k2; br /= k2; bg2 /= k2; bb2 /= k2;
+                                distAb += Math.Abs(ar - sr) + Math.Abs(ag - sg) + Math.Abs(ab2 - sb);
+                                distBe += Math.Abs(br - sr) + Math.Abs(bg2 - sg) + Math.Abs(bb2 - sb);
+                                scc++;
                             }
-                            if (cnt < 40) continue;
+                            if (cnt < 40 || scc < 40) continue;
                             Array.Sort(ns, 0, cnt);
-                            float s2 = ns[(int)(cnt * 0.40f)];
+                            float gp = ns[(int)(cnt * 0.40f)];
+                            float sky = (distBe - distAb) / scc;
+                            float s2 = gp + sky * 0.6f;
                             if (s2 > bestScore) { bestScore = s2; slope = m; icept = b; gOk = true; }
                         }
                     }
                     if (!gOk) { slope = bm; icept = bb; gOk = true; }
-                    conf = Math.Min(1f, bestScore / 80f);   // 40th-pct scale is larger than the old mean
+                    conf = Math.Min(1f, bestScore / 100f);
                 }
             }
 
