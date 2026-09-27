@@ -1556,6 +1556,9 @@ class RobloxAuto : Form
                 }
             }
             else Log("   SELECT DRONE panel did not open");
+            // If the LOADOUT click dropped us into a weapon "Return" page instead, back out with
+            // the red Return so the nav DEPLOY is clickable again for step 4.
+            if (PhraseOnScreen("Return")) ClickRedReturn();
         }
         else Log("3) drone step skipped (" + (!_stepDrone ? "step off" : "map already open") + ")");
         AddBlackProgress(0.50f, "airframe set");
@@ -1564,10 +1567,18 @@ class RobloxAuto : Form
         if (!GoOn(g)) return;
         if (_stepDeploy && !mapUp && !panelUp)
         {
-            Log("4) pressing DEPLOY to open the map...");
-            ClickPhraseVerified("DEPLOY", "AS", g);
-            if (WaitPhrase("POINT", 15000, g)) { Log("   map is up"); mapUp = true; }
-            else Log("   map did not appear");
+            // If we are nested in a weapon / "Return" page the nav DEPLOY is still visible but the
+            // map opens behind it - back out with the red Return first, then press DEPLOY again.
+            for (int attempt = 1; attempt <= 2 && Alive(g); attempt++)
+            {
+                Log("4) pressing DEPLOY to open the map..." + (attempt > 1 ? " (retry)" : ""));
+                ClickPhraseVerified("DEPLOY", "AS", g);
+                if (WaitPhrase("POINT", 15000, g)) { Log("   map is up"); mapUp = true; break; }
+                Log("   map did not appear");
+                if (!ClickRedReturn()) break;      // nothing nested to come back from
+                Thread.Sleep(500);
+                InvalidateOcr();
+            }
             AddBlackProgress(0.55f, "combat zone");
         }
         else Log("4) deploy step skipped (" + (mapUp || panelUp ? "map already open" : "step off") + ")");
@@ -4695,17 +4706,20 @@ class RobloxAuto : Form
                         // the drone, so drop the HUD instead of leaving it stuck on screen.
                         int fs = ReadFlightSecs();   // FLIGHT (MAVIC) / FLY (FPV) clock
                         bool corner = CornerLinked();
-                        bool inDrone = fs >= 0 || corner || DroneKeyword();
+                        bool menu = MenuOnScreen();  // any menu-ONLY word => definitely not flying
+                        bool inDrone = (fs >= 0 || corner || DroneKeyword()) && !menu;
                         if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
                         if (inDrone)
                         {
                             _lastInDroneAt = Environment.TickCount;
                             if (!shown) { shown = true; Log("   RF feed: drone view - overlay on"); }
                         }
-                        else if (shown && Environment.TickCount - _lastInDroneAt > 8000)
+                        else if (shown && (menu || Environment.TickCount - _lastInDroneAt > 30000))
                         {
+                            // a menu word is proof we are not flying -> drop the HUD instantly;
+                            // otherwise the OSD simply went quiet, so give it the full 30s.
                             shown = false;
-                            Log("   RF feed: left the drone view - overlay off");
+                            Log(menu ? "   menu on screen - overlay off" : "   RF feed: 30s with no drone view - overlay off");
                         }
                         if (shown && inDrone)
                         {
@@ -4876,6 +4890,37 @@ class RobloxAuto : Form
             {
                 string t = (w[4] ?? "").ToUpperInvariant();
                 if (t.IndexOf("AGL") >= 0 || t.IndexOf("MOUNTED") >= 0) return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    // Words that ONLY ever appear on the nav bar, the lobby, the loadout, the map or the panels -
+    // NEVER on the drone OSD. Seeing any one of them is proof we are not flying, so the HUD comes
+    // down immediately; the 30s timeout only covers the case where the OSD simply reads blank.
+    bool MenuOnScreen()
+    {
+        string[] keys = new string[] {
+            "LOADOUT", "SETTINGS", "DEPLOY", "WARHEAD", "SQUAD", "FEATURED",
+            "COMPLETED", "GHILLE", "GRILLE", "SECONDARY", "PRIMARY", "MARKSMAN",
+            "EQUIPMENT", "CUSTOMIZATION", "CHANGE TEAM", "TEAM BASE", "SELECT DRONE", "TOP KILLS"
+        };
+        try
+        {
+            foreach (string[] w in OcrWords())
+            {
+                string t = (w[4] ?? "").ToUpperInvariant();
+                for (int i = 0; i < keys.Length; i++) if (t.IndexOf(keys[i]) >= 0) return true;
+            }
+        }
+        catch { }
+        try
+        {
+            foreach (string[] w in OcrWordsWhiten())
+            {
+                string t = (w[4] ?? "").ToUpperInvariant();
+                for (int i = 0; i < keys.Length; i++) if (t.IndexOf(keys[i]) >= 0) return true;
             }
         }
         catch { }
