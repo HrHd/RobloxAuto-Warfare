@@ -1067,7 +1067,7 @@ class RobloxAuto : Form
             {
                 tb.Enter += delegate { BeginEdit(tb); };
                 tb.MouseDown += delegate { BeginEdit(tb); };
-                tb.Leave += delegate { ApplyNoActivate(); };
+                tb.Leave += delegate { EndEdit(); };
             }
             // NumericUpDown keeps its edit box as a child that is not always reachable, and its
             // spin arrows are not TextBoxes at all - wire the whole control so it can be typed in
@@ -1077,23 +1077,54 @@ class RobloxAuto : Form
             {
                 nud.Enter += delegate { BeginEdit(nud); };
                 nud.MouseDown += delegate { BeginEdit(nud); };
-                nud.Leave += delegate { ApplyNoActivate(); };
+                nud.Leave += delegate { EndEdit(); };
             }
             if (c.Controls.Count > 0) WireEditables(c);
         }
     }
 
+    bool _noActivateWas = false;
     void BeginEdit(Control c)
     {
         try
         {
-            int ex = GetWindowLong(Handle, GWL_EXSTYLE);
-            SetWindowLong(Handle, GWL_EXSTYLE, ex & ~WS_EX_NOACTIVATE);
-            Activate();
-            Focus();
+            // Clear WS_EX_NOACTIVATE AND actually take the foreground. Activate() alone is refused
+            // while the fullscreen game owns the foreground lock, so tap ALT first like FocusRoblox
+            // does - otherwise the settings fields can never be typed into while the game is up.
+            _noActivateWas = _noActivate;
+            _noActivate = false;
+            ApplyNoActivate();
+            BringOurselvesToFront();
             if (c != null) c.Focus();
         }
         catch { }
+    }
+
+    void EndEdit()
+    {
+        _noActivate = _noActivateWas;
+        ApplyNoActivate();
+    }
+
+    void BringOurselvesToFront()
+    {
+        for (int i = 0; i < 6 && GetForegroundWindow() != Handle; i++)
+        {
+            keybd_event(0x12, 0, 0, UIntPtr.Zero);   // ALT down
+            keybd_event(0x12, 0, 2, UIntPtr.Zero);   // ALT up
+            IntPtr fg = GetForegroundWindow();
+            uint pid;
+            uint them = GetWindowThreadProcessId(fg, out pid);
+            uint us = GetCurrentThreadId();
+            try
+            {
+                if (them != 0 && them != us) AttachThreadInput(us, them, true);
+                SetForegroundWindow(Handle);
+            }
+            catch { }
+            finally { try { if (them != 0 && them != us) AttachThreadInput(us, them, false); } catch { } }
+            Thread.Sleep(50);
+        }
     }
 
     CheckBox MkChk(Control parent, string text, int cx, int cy, bool val)
