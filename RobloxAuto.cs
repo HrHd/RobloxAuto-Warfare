@@ -1354,15 +1354,23 @@ class RobloxAuto : Form
                 {
                     Log("   " + _drone + " already selected");
                 }
-                else
+                else if (DroneIs("MAVIC") || DroneIs("FPV"))
                 {
+                    // we can POSITIVELY see the OTHER drone, so flipping is safe
                     bool wantMavic = _drone == "MAVIC";
-                    string cur = DroneIs("FPV") ? "FPV" : (DroneIs("MAVIC") ? "MAVIC" : "unknown");
+                    string cur = DroneIs("MAVIC") ? "MAVIC" : "FPV";
                     Log("   drone is " + cur + " -> clicking the " + (wantMavic ? "right" : "left") + " arrow");
                     ClickDroneArrow(wantMavic, g);       // right = MAVIC, left = FPV
                     Thread.Sleep(350);
                     InvalidateOcr();
-                    Log(DroneIs(_drone) ? "   " + _drone + " selected" : "   could not confirm " + _drone + " (continuing)");
+                    Log(DroneIs(_drone) ? "   " + _drone + " selected" : "   could not confirm " + _drone);
+                }
+                else
+                {
+                    // We cannot read which drone is equipped. DO NOT click - this is exactly what
+                    // used to turn a chosen FPV into a MAVIC (both chevrons just toggle, so a
+                    // blind click flips it). Leave the loadout untouched.
+                    Log("   could not read the current drone - leaving the loadout untouched");
                 }
             }
             else Log("   SELECT DRONE panel did not open");
@@ -4328,6 +4336,8 @@ class RobloxAuto : Form
 
                 while (_rfRun)
                 {
+                    try
+                    {
                     // ---- HOME / SPD / ALT on their own faster cadence so the distance keeps up
                     // (everything here is one small cropped read, not a full-screen grab) ----
                     if (shown && Environment.TickCount - lastHome >= 700)
@@ -4450,6 +4460,8 @@ class RobloxAuto : Form
                     }
                     _hudShown = shown;   // HudTick reads these
                     _hudSecs = secs;
+                    }
+                    catch (Exception ex) { Log("RF loop error: " + ex.Message); }
                     Thread.Sleep(120);
                 }
             });
