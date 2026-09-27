@@ -122,6 +122,7 @@ class RobloxAuto : Form
     bool _hudLocked = false;
     bool _hudNeedLock = false;                    // true from Deploy As Drone until we lock
     float _hudDetSky = 1f;                        // 0..1 - fraction of the frame that is SKY (above the line)
+    float _hudSkySm = 1f;                         // smoothed sky fraction (no pops in the gyro/image blend)
     bool _hudDetValid = false;                    // DetectHorizon found a confident line
     float _hudDetConf = 0f;                       // 0..1 - how sure the detector is (drives the fusion weight)
     float _hudTrkM = 0f, _hudTrkB = 0f;           // last accepted horizon line (slope/intercept)
@@ -2372,6 +2373,14 @@ class RobloxAuto : Form
     static bool HudMaroon(int p) { int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255; return r > 88 && r < 160 && g > 38 && g < 88 && b > 38 && b < 90 && r > g + 28 && r > b + 26; }
     static bool HudGold(int p) { int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255; return r > 128 && g > 98 && g < 178 && b < 108 && r > g + 6 && g > b + 16; }
     static bool HudGreen(int p) { int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255; return g > r + 14 && g > b + 24 && g > 88; }
+    // smoothstep 0..1 between lo and hi - a soft S-curve so nothing snaps on/off
+    static float Smooth01(float x, float lo, float hi)
+    {
+        if (hi <= lo) return x >= hi ? 1f : 0f;
+        float t = (x - lo) / (hi - lo);
+        if (t < 0f) t = 0f; if (t > 1f) t = 1f;
+        return t * t * (3f - 2f * t);
+    }
     static int HudRun(int[] px, int W, int y, int x0, int x1, Func<int, bool> f, out int centre)
     {
         int best = 0, bc = -1, cur = 0, cs = -1, row = y * W;
@@ -4270,21 +4279,18 @@ class RobloxAuto : Form
         if (det)
         {
             float conf = _hudDetConf; if (conf < 0.05f) conf = 0.05f; if (conf > 1f) conf = 1f;
-            // GYRO PRIORITY: while the right stick is being moved, trust the stick integration (the
-            // gyro) so the pilot's input drives the lines; as the stick returns to centre, let the
-            // IMAGE horizon take over and pull out any drift. That is a real complementary filter -
-            // fast stick, slow absolute - so the stick has real influence but it still never drifts.
-            float act = Math.Max(Math.Abs(sx), Math.Abs(sy));
-            if (act > 0.3f) act = 0.3f;
-            act /= 0.3f;                                   // 0 = centred, 1 = deflected
-            // SKY COVERAGE: more ground / less sky = the image horizon is far less reliable (it is a
-            // thin hazy band, if it is in frame at all), so the GYRO/stick should drive. With a decent
-            // slice of sky (~35%+) the image is trustworthy and takes the effect back. Ramps 10%->35% sky.
-            float skyW = (_hudDetSky - 0.10f) / 0.25f;
-            if (skyW < 0f) skyW = 0f; if (skyW > 1f) skyW = 1f;
-            float imgW = (1f - 0.85f * act) * _hudImgGain * skyW;
-            float tau = (0.15f + 1.6f * (1f - conf)) / Math.Max(0.05f, imgW);
-            float a = 1f - (float)Math.Pow(0.5, dt / tau);
+            // SMOOTH gyro<->image blend - no hard switch anywhere. Every factor is a smoothstep, so
+            // the image's trust SLIDES continuously between 0 (pure stick) and full as the situation
+            // changes: sky appears/disappears, the stick moves, the detector gets confident. Nothing
+            // pops. The gyro still integrates the stick; this only sets how fast the image pulls it.
+            _hudSkySm += (_hudDetSky - _hudSkySm) * (1f - (float)Math.Pow(0.5, dt / 0.35f)); // ~0.35s ease
+            float skyT = Smooth01(_hudSkySm, 0.08f, 0.40f);   // 0 = all ground, 1 = plenty of sky
+            float actT = Smooth01(Math.Max(Math.Abs(sx), Math.Abs(sy)), 0.05f, 0.60f); // stick activity
+            float gain = _hudImgGain; if (gain < 0f) gain = 0f; if (gain > 4f) gain = 4f;
+            float imgW = (0.35f + 0.65f * conf) * skyT * (1f - 0.85f * actT) * gain;
+            float tau = (0.12f + 1.8f * (1f - conf)) / Math.Max(0.02f, imgW);
+            if (tau > 60f) tau = 60f;                          // no sky -> the image is effectively silent
+            float a = 1f - (float)Math.Pow(0.5f, dt / tau);
             _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
             _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
         }
@@ -5417,7 +5423,7 @@ class RobloxAuto : Form
             _rfHomeText = "----";
             _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
             _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
-            _hudPitchVel = 0f; _hudRollVel = 0f; _hudPitStickSm = 0f;   // start each flight clean
+            _hudPitchVel = 0f; _hudRollVel = 0f; _hudPitStickSm = 0f; _hudSkySm = 1f;   // start each flight clean
             OverlayHub.I.SetFlight(true, 0.18f, 0);
 
             Thread t = new Thread(delegate ()
@@ -6309,7 +6315,7 @@ class RobloxAuto : Form
                         imG[ii] = c > 0 ? sg2 / (float)c : 0f;
                         imB[ii] = c > 0 ? sb2 / (float)c : 0f;
                     }
-                int gx0 = gw * 20 / 100, gx1 = gw * 80 / 100, gy0 = gh * 12 / 100, gy1 = gh * 88 / 100;
+                int gx0 = gw * 20 / 100, gx1 = gw * 80 / 100, gy0 = gh * 8 / 100, gy1 = gh * 88 / 100;
                 float[] bx2 = new float[gw], by2 = new float[gw], bg2 = new float[gw];
                 float[] chRoll = new float[3], chY = new float[3], chGrad = new float[3]; int cn = 0;
                 float bestGrad = 0f;
@@ -6322,7 +6328,7 @@ class RobloxAuto : Form
                     // SKY above it - that is what stops a strong terrain edge lower down from winning.
                     float skyRef = 0f;
                     {
-                        int sc = 0, trows = Math.Max(1, gh * 12 / 100);
+                        int sc = 0, trows = Math.Max(1, gh * 6 / 100);   // sky reference from the top sliver only (pure sky)
                         for (int gy = 0; gy < trows; gy++) for (int gx = gx0; gx < gx1; gx++) { skyRef += im[gy * gw + gx]; sc++; }
                         skyRef = sc > 0 ? skyRef / sc : 0f;
                     }
@@ -6334,7 +6340,7 @@ class RobloxAuto : Form
                         // ground just below. Using the whole column above (a running mean) stayed
                         // sky-ish for terrain edges near the top, so at altitude sharp tree/field lines
                         // just under the horizon stole the lock and parked the roll near -10. Local fixes it.
-                        for (int gy = (gy0 > 3 ? gy0 : 3); gy < gy1 - 3; gy++)
+                        for (int gy = (gy0 > 2 ? gy0 : 2); gy < gy1 - 2; gy++)
                         {
                             bool inBand = true;
                             if (trk)
@@ -6344,18 +6350,18 @@ class RobloxAuto : Form
                             }
                             if (!inBand) continue;
                             float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
-                            float above = (im[(gy - 1) * gw + gx] + im[(gy - 2) * gw + gx] + im[(gy - 3) * gw + gx]) / 3f;
-                            float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx] + im[(gy + 3) * gw + gx]) / 3f;
+                            float above = (im[(gy - 1) * gw + gx] + im[(gy - 2) * gw + gx]) / 2f;
+                            float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx]) / 2f;
                             float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f;
                             if (score > best) { best = score; by = gy; byGrad = g; }
                         }
                         if (by < 0 && trk)      // band empty -> fall back to the whole column
                         {
-                            for (int gy = (gy0 > 3 ? gy0 : 3); gy < gy1 - 3; gy++)
+                            for (int gy = (gy0 > 2 ? gy0 : 2); gy < gy1 - 2; gy++)
                             {
                                 float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
-                                float above = (im[(gy - 1) * gw + gx] + im[(gy - 2) * gw + gx] + im[(gy - 3) * gw + gx]) / 3f;
-                                float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx] + im[(gy + 3) * gw + gx]) / 3f;
+                                float above = (im[(gy - 1) * gw + gx] + im[(gy - 2) * gw + gx]) / 2f;
+                                float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx]) / 2f;
                                 float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f;
                                 if (score > best) { best = score; by = gy; byGrad = g; }
                             }
