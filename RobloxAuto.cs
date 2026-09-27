@@ -1675,15 +1675,23 @@ class RobloxAuto : Form
                 // still on the map (the POINT markers are up) - do NOT fall through to the
                 // warhead / deploy steps as if the base had been selected. Stop and let the
                 // user retry instead of deploying blind.
-                Log("5) could not find the Base - stopping so we do not deploy blind");
+                Log("5) could not find the Base - trying the red Return, then stopping");
+                ClickRedReturn();
                 return;
             }
 
             Log("   clicking the Base...");
             if (ClickBaseAt(baseX, baseY, g)) panelUp = true;
+            else if (TeamBaseUp(false))
+            {
+                // the panel is actually up - the click verify just could not read it
+                panelUp = true;
+                Log("   TEAM BASE panel is up (read late) - continuing");
+            }
             else
             {
-                Log("5) could not open TEAM BASE - stopping so we do not deploy blind");
+                Log("5) could not open TEAM BASE - pressing the red Return, then stopping");
+                ClickRedReturn();
                 return;
             }
         }
@@ -2094,13 +2102,35 @@ class RobloxAuto : Form
     bool TeamBaseUp(bool knownUp)
     {
         if (knownUp) return true;
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < 4; i++)
         {
+            // the panel has several unique labels - accept ANY of them, because "TEAM BASE" is
+            // white over bright green and the OCR often misses it, which made the flow think the
+            // panel never opened (and bail) while it was actually right there.
             if (PhraseOnScreen("TEAM BASE") || PhraseOnScreenWhiten("TEAM BASE")) return true;
+            if (PhraseOnScreen("DEPLOY AS DRONE") || PhraseOnScreenWhiten("DEPLOY AS DRONE")) return true;
+            if (PhraseOnScreen("WARHEAD") || PhraseOnScreenWhiten("WARHEAD")) return true;
             InvalidateOcr();
             Thread.Sleep(200);
         }
         return false;
+    }
+
+    // The TEAM BASE / map panels have a red "Return" button. When the flow cannot find what it
+    // expects, pressing it backs out of the panel instead of leaving the run stuck.
+    bool ClickRedReturn()
+    {
+        try
+        {
+            List<Hit> h = FindPhraseAll("Return", null, OcrWords());
+            if (h.Count == 0) h = FindPhraseAll("Return", null, OcrWordsWhiten());
+            if (h.Count == 0) h = FindPhraseAll("Retum", null, OcrWords());
+            if (h.Count == 0) return false;
+            Log("   pressing the red Return to back out at (" + h[0].X + "," + h[0].Y + ")");
+            ClickPrimaryLogged(h[0].X, h[0].Y, "Return");
+            return true;
+        }
+        catch { return false; }
     }
 
     bool WaitPhrase(string phrase, int ms, int g)
