@@ -5034,7 +5034,21 @@ class RobloxAuto : Form
                             if (nx < 0 || ny < 0 || nx >= cw || ny >= ch) continue;
                             if (gray[ny * cw + nx] < 90) { outline = true; break; }
                         }
-                    txt[i] = outline;
+                    if (outline) { txt[i] = true; continue; }
+                    // No dark outline: white text over a LIGHT background (sky, grass, the green
+                    // TEAM BASE title). Fall back to local contrast - a glyph pixel is noticeably
+                    // brighter than the 9x9 around it. This is what makes those reads work.
+                    int sum = 0, cnt = 0;
+                    for (int dy = -4; dy <= 4; dy++)
+                    {
+                        int ny = y + dy; if (ny < 0 || ny >= ch) continue;
+                        for (int dx = -4; dx <= 4; dx++)
+                        {
+                            int nx = x + dx; if (nx < 0 || nx >= cw) continue;
+                            sum += gray[ny * cw + nx]; cnt++;
+                        }
+                    }
+                    if (cnt > 0 && gray[i] - sum / cnt > 18) txt[i] = true;
                 }
             int OW = cw * S, OH = ch * S;
             int[] outPx = new int[OW * OH];
