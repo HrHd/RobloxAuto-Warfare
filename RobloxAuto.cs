@@ -4089,19 +4089,17 @@ class RobloxAuto : Form
             // top-left under the game's phone icons
             g.DrawString("N Mode", _fm, white, 30, 76);
 
-            // top-right, under the game's "RC LIVE": signal bars + a battery pill with a nub
+            // top-right, under the game's "RC LIVE": battery pill + nub, "96%", signal bars, all
+            // on one tidy band
             int rEdge = W - 26;
-            for (int i = 0; i < 4; i++)
-                g.FillRectangle(white, rEdge - 150 + i * 8, 90 - i * 6, 5, 6 + i * 6);
             SizeF pct = g.MeasureString("96%", _fs);
-            g.DrawString("96%", _fs, white, rEdge - 92 - pct.Width, 70);
-            g.DrawRectangle(thin, rEdge - 48, 72, 44, 20);
-            g.FillRectangle(white, rEdge - 45, 75, 32, 14);   // ~86% fill
-            g.FillRectangle(white, rEdge - 4, 78, 4, 8);      // nub
-
-            // just the height on the left - the game already prints speed + distance bottom-left
-            float altFt = Num(Alt) * 3.28084f;
-            g.DrawString("ALT " + altFt.ToString("0") + " ft", _fm, white, 44, H / 2 - 140);
+            g.DrawRectangle(thin, rEdge - 48, 70, 44, 20);
+            g.FillRectangle(white, rEdge - 45, 73, 32, 14);   // ~86% fill
+            g.FillRectangle(white, rEdge - 4, 76, 4, 8);      // nub
+            g.DrawString("96%", _fs, white, rEdge - 56 - pct.Width, 74);
+            for (int i = 0; i < 4; i++)
+                g.FillRectangle(white, rEdge - 64 - (int)pct.Width - 40 + i * 8, 84 - i * 4, 5, 6 + i * 4);
+            // (no ALT readout - the game already prints the height bottom-left)
 
             // bottom-centre (free): resolution + recording time
             g.DrawString("4K 30", _fm, white, W / 2 - 130, H - 94);

@@ -97,21 +97,16 @@ function drawMavic(s, W, H) {
 
   // top-right, under the game's "RC LIVE": signal bars + a battery pill with a nub
   var rEdge = W - 26;
-  for (var b = 0; b < 4; b++) hctx.fillRect(rEdge - 150 + b * 8, 90 - b * 6, 5, 6 + b * 6);
-  var pct = '96%';
   hctx.font = '17px "Segoe UI", Arial, sans-serif';
-  var pw = hctx.measureText(pct).width;
-  hctx.fillText(pct, rEdge - 92 - pw, 70);
+  var pw = hctx.measureText('96%').width;
   hctx.strokeStyle = 'rgba(255,255,255,0.6)'; hctx.lineWidth = 1;
-  hctx.strokeRect(rEdge - 48, 72, 44, 20);
-  hctx.fillRect(rEdge - 45, 75, 32, 14);
-  hctx.fillRect(rEdge - 4, 78, 4, 8);
-
-  // just the height on the left - the game already prints speed + distance bottom-left
-  var altFt = jnum(s.agl) * 3.28084;
-  hctx.fillStyle = col;
-  hctx.font = 'bold 24px "Segoe UI", Arial, sans-serif';
-  hctx.fillText('ALT ' + altFt.toFixed(0) + ' ft', 44, H / 2 - 140);
+  hctx.strokeRect(rEdge - 48, 70, 44, 20);
+  hctx.fillRect(rEdge - 45, 73, 32, 14);
+  hctx.fillRect(rEdge - 4, 76, 4, 8);
+  hctx.fillText('96%', rEdge - 56 - pw, 74);
+  for (var b = 0; b < 4; b++)
+    hctx.fillRect(rEdge - 64 - Math.round(pw) - 40 + b * 8, 84 - b * 4, 5, 6 + b * 4);
+  // (no ALT readout - the game already prints the height bottom-left)
 
   // bottom-centre (free): resolution + recording time
   var secs = s.secs || 0, mm = Math.floor(secs / 60), ss = secs % 60;
