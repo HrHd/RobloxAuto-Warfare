@@ -4916,7 +4916,11 @@ class RobloxAuto : Form
                         // the drone, so drop the HUD instead of leaving it stuck on screen.
                         int fs = ReadFlightSecs();   // FLIGHT (MAVIC) / FLY (FPV) clock
                         bool corner = CornerLinked();
-                        bool menu = MenuOnScreen();  // any menu-ONLY word => definitely not flying
+                        // "not flying" proof, two ways: a menu-only word, OR the screen classifier
+                        // recognising ANY of the game's UI screens (team select, lobby, loadout,
+                        // map, base panel, loading). The drone view matches none of them and
+                        // reports "unknown", so a positive match can only mean we left the drone.
+                        bool menu = MenuOnScreen() || ScreenName(OcrWords()) != "unknown";
                         bool inDrone = (fs >= 0 || corner || DroneKeyword()) && !menu;
                         if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
                         if (inDrone)
@@ -4963,7 +4967,9 @@ class RobloxAuto : Form
                     if (lvl > 1f) lvl = 1f;
                     // MAVIC is an HD digital feed - no analog RF static on it
                     bool staticOn = !_hudStyleUav;
-                    OverlayHub.I.SetFlight(true, staticOn ? lvl : 0f, secs);
+                    // report the REAL feed state - it used to always say "flight:true" even after
+                    // the drone view was lost, so the OBS side never saw the feed go away
+                    OverlayHub.I.SetFlight(shown, staticOn ? lvl : 0f, secs);
 
                     // only touch the window when something actually changed; the 180ms blink
                     // timer does the repaint, so the overlay is not recomposited every tick
@@ -5118,7 +5124,10 @@ class RobloxAuto : Form
         string[] keys = new string[] {
             "LOADOUT", "SETTINGS", "DEPLOY", "WARHEAD", "SQUAD", "FEATURED",
             "COMPLETED", "GHILLE", "GRILLE", "SECONDARY", "PRIMARY", "MARKSMAN",
-            "EQUIPMENT", "CUSTOMIZATION", "CHANGE TEAM", "TEAM BASE", "SELECT DRONE", "TOP KILLS"
+            "EQUIPMENT", "CUSTOMIZATION", "CHANGE TEAM", "TEAM BASE", "SELECT DRONE", "TOP KILLS",
+            // team select / respawn / loading / spectating - these screens have NO nav bar, so the
+            // nav words above never matched and the HUD used to linger on them for the full 30s
+            "PLAYERS", "JOINING", "RESPAWN", "SPECTAT", "DEPLOYING"
         };
         try
         {
