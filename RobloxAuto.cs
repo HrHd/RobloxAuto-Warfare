@@ -3480,10 +3480,10 @@ class RobloxAuto : Form
         if (dt <= 0f) return;
         if (dt > 0.1f) dt = 0.1f;
 
-        // Roll follows the right stick X (the attitude/camera stick), falling back to the left
-        // stick X. Pitch follows the RIGHT stick Y ONLY - the LEFT stick Y is the THROTTLE, and
-        // letting it drive the horizon made it climb/dive with throttle input.
-        float sx = _padRx != 0f ? _padRx : _padLx;
+        // Roll = RIGHT stick X ONLY. The left stick X is YAW (turning), and the old "else _padLx"
+        // fallback meant turning the drone rolled the whole horizon ladder. Pitch = right stick Y
+        // (the left stick Y is throttle).
+        float sx = _padRx;
         float sy = _padRy;
 
         // controller priority: integrate the stick every frame (rate -> angle)
@@ -3492,11 +3492,20 @@ class RobloxAuto : Form
 
         // camera correction only when the sticks are centred, so input is never cancelled out.
         // Time constant ~0.35s: slow enough to let the controller lead, fast enough to kill drift.
-        if (_hudDetValid && sx == 0f && sy == 0f)
+        if (sx == 0f && sy == 0f)
         {
-            float a = 1f - (float)Math.Pow(0.5, dt / 0.35);
-            _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
-            _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
+            if (_hudDetValid)
+            {
+                float a = 1f - (float)Math.Pow(0.5, dt / 0.35);
+                _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
+                _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
+            }
+            else
+            {
+                // centring with no camera fix: gently level the roll back so it never stays
+                // stuck banked after a turn
+                _hudFRoll += (0f - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 1.2));
+            }
         }
 
         if (_hudFRoll > 85f) _hudFRoll = 85f;
