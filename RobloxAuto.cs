@@ -132,6 +132,7 @@ class RobloxAuto : Form
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
     int _flightOcrBase = -1;                      // last FLIGHT mm:ss read from the OSD (seconds)
     long _flightOcrAt = 0;                        // when that read was taken
+    long _lastInDroneAt = 0;                      // last time the drone OSD was actually on screen
     DateTime _leftAt = DateTime.MinValue;        // when the player voluntarily left a server
         ConsoleForm _black = null;          // terminal-style cover shown while reconnecting
     volatile bool _blackWatch = false;
@@ -4573,6 +4574,7 @@ class RobloxAuto : Form
             _rfRun = true;
             _flightStart = DateTime.Now;
             _flightOcrBase = -1; _flightOcrAt = 0;   // re-read the OSD flight clock for this flight
+            _lastInDroneAt = Environment.TickCount;  // assume we start in the drone (we just deployed)
             _rfHomeText = "----";
             _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
             _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
@@ -4639,10 +4641,22 @@ class RobloxAuto : Form
                         // NOTE: no LINK-based auto-off any more. The watch only starts when we ARE in
                         // the drone, and the flaky corner read was shutting the HUD off at random.
                         // A real crash is caught by the NO SIGNAL check above.
-                        if (shown)
+                        // Is this still a drone view? The FLIGHT clock (top-left) and the RC/LINK
+                        // LIVE badge (top-right) only exist in the drone OSD - the map, loadout and
+                        // menus have neither. If they are both gone for a few seconds we have left
+                        // the drone, so drop the HUD instead of leaving it stuck on screen.
+                        int fs = ReadFlightSecs();   // the game's own top-left FLIGHT clock
+                        bool corner = CornerLinked();
+                        bool inDrone = fs >= 0 || corner;
+                        if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
+                        if (inDrone) _lastInDroneAt = Environment.TickCount;
+                        if (shown && !inDrone && Environment.TickCount - _lastInDroneAt > 6000)
                         {
-                            int fs = ReadFlightSecs();   // the game's own top-left FLIGHT clock
-                            if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
+                            shown = false;
+                            Log("   RF feed: left the drone view - overlay off");
+                        }
+                        if (shown && inDrone)
+                        {
                             ReadHudTop();             // heading + AGL
                             DetectHorizon();          // bank the artificial horizon
                             int st = DroneStyle();    // 1 MAVIC / 0 FPV / -1 unknown - only a positive read may flip
@@ -4853,6 +4867,17 @@ class RobloxAuto : Form
                     if (t.IndexOf("MAVIC") >= 0 || t.IndexOf("MAV") >= 0 || t.IndexOf("MAV1C") >= 0) return 1;
                     if (t.IndexOf("FPV") >= 0 || t.IndexOf("FPY") >= 0) return 0;
                 }
+            // plain read of the same corner - the white drone name over pale sky defeats the mask
+            string all2 = "";
+            foreach (string[] w in OcrWords())
+            {
+                int wx, wy;
+                try { wx = int.Parse(w[0]); wy = int.Parse(w[1]); } catch { continue; }
+                if (wx < W * 78 / 100 || wy > 150) continue;
+                all2 += (w[4] ?? "").ToUpperInvariant() + " ";
+            }
+            if (all2.IndexOf("MAVIC") >= 0 || all2.IndexOf("MAV") >= 0) return 1;
+            if (all2.IndexOf("FPV") >= 0 || all2.IndexOf("FPY") >= 0) return 0;
         }
         catch { }
         // fall back to the payload line - return -1 when unreadable so nothing changes
