@@ -210,7 +210,7 @@ function drawHud(s, glitching) {
   for (var d = -90; d <= 90; d += 10) {
     var yy = pit + d * dpp * sc * spread;
     var dist = Math.abs(yy);
-    var af = dist <= 200 * sc ? 1 : 1 - (dist - 200 * sc) / (320 * sc);   // fade 200px -> 520px
+    var af = dist <= 300 * sc ? 1 : 1 - (dist - 300 * sc) / (440 * sc);   // fade 300px -> 740px
     if (af <= 0.02) continue;
     var half = (d === 0 ? 150 : 70) * sc * lscale * (1 + 0.4 * tilt);
     var ay = cy + yy;

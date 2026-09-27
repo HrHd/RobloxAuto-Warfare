@@ -5118,7 +5118,7 @@ class RobloxAuto : Form
             {
                 float yy = PitchPx + d * Dpp * spread;       // dpp = px per degree, fanned by the tilt
                 float dist = Math.Abs(yy);
-                float af = dist <= 200f ? 1f : 1f - (dist - 200f) / 320f;   // fade 200px -> 520px
+                float af = dist <= 300f ? 1f : 1f - (dist - 300f) / 440f;   // fade 300px -> 740px
                 if (af <= 0.02f) continue;
                 float half = (d == 0 ? 150f : 70f) * Len * (1f + 0.4f * tilt);
                 int aMain = (int)(230 * af), aThin = (int)(165 * af), aTxt = (int)(235 * af);
@@ -6138,7 +6138,7 @@ class RobloxAuto : Form
                             { int p = px[y * W + x]; s += (((p >> 16) & 0xFF) * 299 + ((p >> 8) & 0xFF) * 587 + (p & 0xFF) * 114) / 1000; c++; }
                         lum[gy * gw + gx] = c > 0 ? s / (float)c : 0f;
                     }
-                int gx0 = gw * 30 / 100, gx1 = gw * 70 / 100, gy0 = gh * 15 / 100, gy1 = gh * 85 / 100;
+                int gx0 = gw * 20 / 100, gx1 = gw * 80 / 100, gy0 = gh * 12 / 100, gy1 = gh * 88 / 100;
                 float[] bx2 = new float[gw], by2 = new float[gw], bg2 = new float[gw];
                 int pn = 0;
                 for (int gx = gx0; gx < gx1; gx++)
@@ -6149,29 +6149,43 @@ class RobloxAuto : Form
                         float g = Math.Abs(lum[(gy + 1) * gw + gx] - lum[(gy - 1) * gw + gx]);
                         if (g > best) { best = g; by = gy; }
                     }
-                    if (by >= 0) { bx2[pn] = gx * B + B / 2f; by2[pn] = by * B + B / 2f; bg2[pn] = best; pn++; }
+                    if (by < 0) continue;
+                    // SUB-PIXEL: parabolic interpolation of the gradient peak, so the horizon row is
+                    // estimated to a fraction of a block instead of snapping to the block centre.
+                    float gA = Math.Abs(lum[by * gw + gx] - lum[(by - 2) * gw + gx]);
+                    float gB = best;
+                    float gC = Math.Abs(lum[(by + 2) * gw + gx] - lum[by * gw + gx]);
+                    float dnm = gA - 2f * gB + gC;
+                    float sub = Math.Abs(dnm) > 0.0001f ? 0.5f * (gA - gC) / dnm : 0f;
+                    if (sub > 0.5f) sub = 0.5f; if (sub < -0.5f) sub = -0.5f;
+                    bx2[pn] = gx * B + B / 2f;
+                    by2[pn] = (by + sub) * B + B / 2f;
+                    bg2[pn] = best;
+                    pn++;
                 }
                 if (pn >= 12)
                 {
                     float fm = 0f, fb = 0f;
-                    for (int pass = 0; pass < 2; pass++)     // fit, then one outlier-rejection refit
+                    for (int pass = 0; pass < 2; pass++)     // gradient-WEIGHTED fit, then outlier refit
                     {
-                        double sx = 0, sy = 0, sxy = 0, sxx = 0; int c = 0;
+                        double sw = 0, swx = 0, swy = 0, swxy = 0, swxx = 0;
                         for (int i = 0; i < pn; i++)
                         {
                             if (pass == 1 && Math.Abs(by2[i] - (fm * bx2[i] + fb)) > 24f) continue;
-                            sx += bx2[i]; sy += by2[i]; sxy += bx2[i] * by2[i]; sxx += bx2[i] * bx2[i]; c++;
+                            double w = bg2[i] + 0.1f;        // strong columns pull the fit
+                            sw += w; swx += w * bx2[i]; swy += w * by2[i];
+                            swxy += w * bx2[i] * by2[i]; swxx += w * bx2[i] * bx2[i];
                         }
-                        double den = c * sxx - sx * sx;
-                        if (c < 8 || Math.Abs(den) < 1) break;
-                        fm = (float)((c * sxy - sx * sy) / den);
-                        fb = (float)((sy - fm * sx) / c);
+                        double den = sw * swxx - swx * swx;
+                        if (sw < 4 || Math.Abs(den) < 1) break;
+                        fm = (float)((sw * swxy - swx * swy) / den);
+                        fb = (float)((swy - fm * swx) / sw);
                     }
                     if (Math.Abs(fm) <= 1.0f)
                     {
-                        float gsum = 0f; int gc = 0;
-                        for (int i = 0; i < pn; i++) if (Math.Abs(by2[i] - (fm * bx2[i] + fb)) <= 24f) { gsum += bg2[i]; gc++; }
-                        float gm = gc > 0 ? gsum / gc : 0f;
+                        float gsum = 0f, wsum = 0f;
+                        for (int i = 0; i < pn; i++) if (Math.Abs(by2[i] - (fm * bx2[i] + fb)) <= 24f) { gsum += bg2[i] * bg2[i]; wsum += bg2[i]; }
+                        float gm = wsum > 0 ? gsum / wsum : 0f;
                         if (gm > 1.5f) { slope = fm; icept = fb; gOk = true; conf = Math.Min(1f, gm / 12f); }
                     }
                 }
