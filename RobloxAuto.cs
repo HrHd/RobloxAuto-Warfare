@@ -4086,32 +4086,34 @@ class RobloxAuto : Form
             g.DrawLine(thin, W / 2, H / 2 - 24, W / 2, H / 2 - 9);
             g.DrawLine(thin, W / 2, H / 2 + 9, W / 2, H / 2 + 24);
 
-            g.DrawString("N Mode", _fm, white, 26, 12);
+            // top-left under the game's phone icons
+            g.DrawString("N Mode", _fm, white, 30, 76);
 
-            // top-right: RC signal bars, battery pill + %
+            // top-right, under the game's "RC LIVE / MAVIC"
             int rEdge = W - 22;
-            g.DrawString("RC", _fs, white, rEdge - 40, 14);
-            for (int i = 0; i < 4; i++) g.FillRectangle(white, rEdge - 44 + i * 8, 42 - i * 6, 5, 7 + i * 6);
+            g.DrawString("RC", _fs, white, rEdge - 40, 70);
+            for (int i = 0; i < 4; i++) g.FillRectangle(white, rEdge - 44 + i * 8, 96 - i * 6, 5, 7 + i * 6);
             SizeF pct = g.MeasureString("96%", _fs);
-            g.DrawString("96%", _fs, white, rEdge - pct.Width, 14);
+            g.DrawString("96%", _fs, white, rEdge - pct.Width, 70);
             int bx = (int)(rEdge - pct.Width - 52);
-            g.DrawRectangle(thin, bx, 16, 40, 18);
-            g.FillRectangle(white, bx + 2, 18, 34, 14);
+            g.DrawRectangle(thin, bx, 72, 40, 18);
+            g.FillRectangle(white, bx + 2, 74, 34, 14);
 
-            // bottom-left: altitude / speed / HOME (imperial, like the app)
+            // telemetry to the LEFT-CENTRE - the game already prints H/D/H.S at the bottom-left,
+            // so drawing ours there just overlaid it. This column is empty sky/ground.
             float altFt = Num(Alt) * 3.28084f, spdMph = Num(Spd) * 2.23694f, homeFt = Num(Home) * 3.28084f;
-            g.DrawString(altFt.ToString("0") + "ft   " + spdMph.ToString("0.0") + "mph", _fm, white, 26, H - 94);
-            g.DrawString("HOME " + (homeFt > 0 ? homeFt.ToString("0") + "ft" : "----"), _fm, white, 26, H - 66);
+            g.DrawString(altFt.ToString("0") + "ft   " + spdMph.ToString("0.0") + "mph", _fm, white, 44, H / 2 - 150);
+            g.DrawString("HOME " + (homeFt > 0 ? homeFt.ToString("0") + "ft" : "----"), _fm, white, 44, H / 2 - 118);
 
-            // bottom-centre: resolution + recording time
-            g.DrawString("4K 30", _fm, white, W / 2 - 120, H - 94);
+            // bottom-centre (free): resolution + recording time
+            g.DrawString("4K 30", _fm, white, W / 2 - 130, H - 94);
             g.DrawString(string.IsNullOrEmpty(Timer) ? "00:00" : Timer, _fm, white, W / 2 + 4, H - 94);
 
-            // bottom-right: exposure
-            g.DrawString("1/60", _fm, white, W - 250, H - 94);
-            g.DrawString("F2.8", _fm, white, W - 168, H - 94);
-            g.DrawString("ISO 100", _fs, white, W - 250, H - 64);
-            g.DrawString("EV+0.3", _fs, white, W - 160, H - 64);
+            // exposure above the game's PAYLOAD block, not on it
+            g.DrawString("1/60", _fm, white, W * 60 / 100, H - 150);
+            g.DrawString("F2.8", _fm, white, W * 68 / 100, H - 150);
+            g.DrawString("ISO 100", _fs, white, W * 60 / 100, H - 120);
+            g.DrawString("EV+0.3", _fs, white, W * 68 / 100, H - 120);
 
             // record button
             g.FillEllipse(recB, W - 126, H / 2 - 34, 62, 62);
@@ -4334,11 +4336,13 @@ class RobloxAuto : Form
                     float lvl = shownLvl + 0.02f * (float)Math.Sin(secs * 0.7);
                     if (lvl < 0.02f) lvl = 0.02f;
                     if (lvl > 1f) lvl = 1f;
-                    OverlayHub.I.SetFlight(true, lvl, secs);
+                    // MAVIC is an HD digital feed - no analog RF static on it
+                    bool staticOn = !_hudStyleUav;
+                    OverlayHub.I.SetFlight(true, staticOn ? lvl : 0f, secs);
 
                     // only touch the window when something actually changed; the 180ms blink
                     // timer does the repaint, so the overlay is not recomposited every tick
-                    bool rfVis = shown && _watchHome;   // the RF feed only when RF watch is on
+                    bool rfVis = shown && _watchHome && staticOn;   // RF feed = analog only (not MAVIC)
                     if (Math.Abs(lvl - lastSet) > 0.01f || txt != lastTxt || rfVis != lastOk)
                     {
                         lastSet = lvl; lastTxt = txt; lastOk = rfVis;

@@ -88,39 +88,39 @@ function drawMavic(s, W, H) {
 
   hctx.fillStyle = col;
   hctx.font = 'bold 22px "Segoe UI", Arial, sans-serif';
-  hctx.fillText('N Mode', 26, 40);
+  hctx.fillText('N Mode', 30, 76);          // under the game's phone icons
 
-  // top-right: battery + RC signal
+  // top-right, under the game's "RC LIVE / MAVIC"
   var pct = '96%';
   var pw = hctx.measureText(pct).width;
-  hctx.fillText(pct, W - 22 - pw, 40);
+  hctx.fillText(pct, W - 22 - pw, 70);
   var bx = W - 22 - pw - 52;
   hctx.strokeStyle = 'rgba(255,255,255,0.6)'; hctx.lineWidth = 1;
-  hctx.strokeRect(bx, 22, 40, 18);
-  hctx.fillRect(bx + 2, 24, 34, 14);
+  hctx.strokeRect(bx, 72, 40, 18);
+  hctx.fillRect(bx + 2, 74, 34, 14);
   hctx.font = '17px "Segoe UI", Arial, sans-serif';
-  hctx.fillText('RC', W - 62, 38);
-  for (var b = 0; b < 4; b++) hctx.fillRect(W - 46 + b * 8, 44 - b * 6, 5, 7 + b * 6);
+  hctx.fillText('RC', W - 62, 68);
+  for (var b = 0; b < 4; b++) hctx.fillRect(W - 46 + b * 8, 96 - b * 6, 5, 7 + b * 6);
 
-  // bottom-left: altitude / speed / HOME (imperial, like the app)
+  // telemetry at the LEFT-CENTRE (the game prints H/D/H.S at the bottom-left already)
   var altFt = jnum(s.agl) * 3.28084, spdMph = jnum(s.spd) * 2.23694, homeFt = jmetres(s.home) * 3.28084;
   hctx.fillStyle = col;
   hctx.font = 'bold 24px "Segoe UI", Arial, sans-serif';
-  hctx.fillText(altFt.toFixed(0) + 'ft   ' + spdMph.toFixed(1) + 'mph', 26, H - 74);
-  hctx.fillText('HOME ' + (homeFt > 0 ? homeFt.toFixed(0) + 'ft' : '----'), 26, H - 44);
+  hctx.fillText(altFt.toFixed(0) + 'ft   ' + spdMph.toFixed(1) + 'mph', 44, H / 2 - 150);
+  hctx.fillText('HOME ' + (homeFt > 0 ? homeFt.toFixed(0) + 'ft' : '----'), 44, H / 2 - 118);
 
-  // bottom-centre: resolution + recording time
+  // bottom-centre (free): resolution + recording time
   var secs = s.secs || 0, mm = Math.floor(secs / 60), ss = secs % 60;
   var t = (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss;
-  hctx.fillText('4K 30', W / 2 - 130, H - 74);
-  hctx.fillText(t, W / 2 + 4, H - 74);
+  hctx.fillText('4K 30', W / 2 - 130, H - 94);
+  hctx.fillText(t, W / 2 + 4, H - 94);
 
-  // bottom-right: exposure
-  hctx.fillText('1/60', W - 260, H - 74);
-  hctx.fillText('F2.8', W - 178, H - 74);
+  // exposure above the game's PAYLOAD block
+  hctx.fillText('1/60', W * 60 / 100, H - 150);
+  hctx.fillText('F2.8', W * 68 / 100, H - 150);
   hctx.font = '17px "Segoe UI", Arial, sans-serif';
-  hctx.fillText('ISO 100', W - 260, H - 42);
-  hctx.fillText('EV+0.3', W - 170, H - 42);
+  hctx.fillText('ISO 100', W * 60 / 100, H - 120);
+  hctx.fillText('EV+0.3', W * 68 / 100, H - 120);
 
   // record button
   hctx.fillStyle = 'rgba(226,32,32,0.92)';
