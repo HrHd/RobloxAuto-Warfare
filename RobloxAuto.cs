@@ -134,6 +134,7 @@ class RobloxAuto : Form
     int _flightOcrBase = -1;                      // last FLIGHT mm:ss read from the OSD (seconds)
     long _flightOcrAt = 0;                        // when that read was taken
     long _lastInDroneAt = 0;                      // last time the drone OSD was actually on screen
+    static string _userName = "";            // our in-game name; printed on every menu (never on the OSD)
     DateTime _leftAt = DateTime.MinValue;        // when the player voluntarily left a server
         ConsoleForm _black = null;          // terminal-style cover shown while reconnecting
     volatile bool _blackWatch = false;
@@ -4390,6 +4391,7 @@ class RobloxAuto : Form
             else if (k == "watchWords") _watchWords = v;
             else if (k == "watchStuck") _watchStuckSec = int.Parse(v);
             else if (k == "matchPct") _matchPct = int.Parse(v);
+            else if (k == "userName") _userName = v;
                 else if (k == "hoverMs") { _hoverBase = int.Parse(v); _hoverMs = _hoverBase; }
                 else if (k == "autoAfterRejoin") _autoAfterRejoin = v == "1";
                 else if (k == "autoAfterRejoinMs") _autoAfterRejoinMs = int.Parse(v);
@@ -4441,6 +4443,7 @@ class RobloxAuto : Form
                 "watchWords=" + _watchWords,
                 "watchStuck=" + _watchStuckSec,
                 "matchPct=" + _matchPct,
+                "userName=" + _userName,
                 "hoverMs=" + _hoverBase,
                 "autoAfterRejoin=" + (_autoAfterRejoin ? "1" : "0"),
                 "autoAfterRejoinMs=" + _autoAfterRejoinMs,
@@ -4905,7 +4908,7 @@ class RobloxAuto : Form
                 string lastTxt = null;
                 bool lastOk = false;
                 long lastDet = 0;      // horizon measurement cadence (faster than the slow path)
-                int inHits = 0, outHits = 0;   // debounce so one bad OCR frame cannot flap the feed
+                int outHits = 0;   // consecutive MENU reads - two in a row back the HUD down
 
                 while (_rfRun)
                 {
@@ -4952,38 +4955,51 @@ class RobloxAuto : Form
                         // menus have neither. If they are both gone for a few seconds we have left
                         // the drone, so drop the HUD instead of leaving it stuck on screen.
                         int fs = ReadFlightSecs();   // FLIGHT (MAVIC) / FLY (FPV) clock
-                        bool corner = CornerLinked();
-                        // "not flying" proof. Menu words, plus ONLY the unambiguous screen names.
-                        // We must NOT use the whole ScreenName() here: its "map" case matches the
-                        // bare word POINT, and the drone OSD prints "Return to a supply point" -
-                        // which was dropping the MAVIC HUD the moment the payload ran out.
+                        bool corner = CornerLinked();       // top-right "LINK LIVE" / "RC LIVE"
+                        bool droneEv = fs >= 0 || corner || DroneKeyword();
+                        // "not flying" proof. Menu words (incl. the profile strip "Cash" and our
+                        // own name), plus only the unambiguous screen names. We must NOT use the
+                        // whole ScreenName(): its "map" case matches the bare word POINT, and the
+                        // MAVIC OSD prints "Return to a supply point".
+                        string why;
                         string sn = ScreenName(OcrWords());
-                        bool menu = MenuOnScreen()
+                        bool menuEv = MenuOnScreen(out why)
                             || sn == "team select" || sn == "lobby" || sn == "loadout"
                             || sn == "team base" || sn == "loading";
-                        bool inDrone = (fs >= 0 || corner || DroneKeyword()) && !menu;
+                        // the map counts as a menu - but ONLY when there is no drone OSD text on
+                        // screen, so the MAVIC's "Return to a supply point" cannot trigger it
+                        if (!menuEv && sn == "map" && !droneEv) { menuEv = true; why = "map"; }
+                        if (!menuEv && sn != "unknown" && sn != "map") { menuEv = true; why = "screen " + sn; }
                         if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
 
-                        // Debounce BOTH directions. A single frame of bad OCR used to drop the
-                        // feed, and the very next frame turned it back on - so the HUD flapped off
-                        // and on "at random". Require two consecutive reads to agree.
-                        if (inDrone) { inHits++; outHits = 0; } else { outHits++; inHits = 0; }
-                        if (inHits >= 2)
+                        // THREE-WAY. Only strong MENU evidence proves we left the drone. A blank or
+                        // unreadable frame means the OCR missed - NOT that we are in a menu - so we
+                        // keep the HUD exactly as it is. (Dropping on "unknown" is what made the
+                        // HUD vanish on a perfectly good FPV screen while LINK LIVE was still up.)
+                        if (droneEv && !menuEv) { outHits = 0; _lastInDroneAt = Environment.TickCount; }
+                        else if (menuEv) outHits++;
+                        // else: unknown -> change nothing
+
+                        if (!shown && droneEv && !menuEv)
                         {
-                            _lastInDroneAt = Environment.TickCount;
-                            if (!shown) { shown = true; Log("   RF feed: drone view - overlay on"); }
+                            shown = true;
+                            Log("   RF feed: drone view - overlay on");
                         }
-                        if (shown && (outHits >= 2 || Environment.TickCount - _lastInDroneAt > 30000))
+                        if (shown && outHits >= 2)
                         {
-                            // two agreeing "not flying" reads (or the 30s quiet timeout) -> drop.
                             shown = false;
-                            Log(menu ? "   menu on screen - overlay off" : "   RF feed: no drone view - overlay off");
+                            Log("   menu on screen - overlay off (" + (why == "" ? "screen name" : why) + ")");
                             // tell the OBS terminal so it visibly drops back to the CLI instead of
                             // freezing on the last HUD frame
-                            AddBlackLine(menu ? "returning to command line - menu detected"
-                                              : "rf feed lost - reverting to command line", "OK");
+                            AddBlackLine("returning to command line - menu detected", "OK");
                         }
-                        if (shown && inDrone)
+                        else if (shown && !droneEv && Environment.TickCount - _lastInDroneAt > 30000)
+                        {
+                            shown = false;
+                            Log("   RF feed: drone OSD unreadable for 30s - overlay off");
+                            AddBlackLine("rf feed lost - reverting to command line", "OK");
+                        }
+                        if (shown && droneEv && !menuEv)
                         {
                             ReadHudTop();             // heading + AGL
                             DetectHorizon();          // bank the artificial horizon
@@ -5163,32 +5179,42 @@ class RobloxAuto : Form
     // Words that ONLY ever appear on the nav bar, the lobby, the loadout, the map or the panels -
     // NEVER on the drone OSD. Seeing any one of them is proof we are not flying, so the HUD comes
     // down immediately; the 30s timeout only covers the case where the OSD simply reads blank.
-    bool MenuOnScreen()
+    bool MenuOnScreen() { string why; return MenuOnScreen(out why); }
+
+    bool MenuOnScreen(out string why)
     {
-        // Chosen from real OCR of each screen. DELIBERATELY EXCLUDED because they appear on BOTH a
-        // menu and the drone OSD: POINT (map vs MAVIC "supply point"), RETURN (TEAM BASE vs MAVIC
-        // "Return to a supply point"), BASE (map "Base" vs "TEAM BASE"), and the warhead words
-        // FRAG/ROCKET/THERMO (TEAM BASE vs the FPV payload line).
+        // Chosen from real OCR of every non-drone screen. DELIBERATELY EXCLUDED because they appear
+        // on BOTH a menu and the drone OSD: POINT (map labels vs MAVIC "supply point"), RETURN
+        // (TEAM BASE vs MAVIC "Return to a supply point"), BASE (map "Base" vs "TEAM BASE"), and the
+        // warhead words FRAG/ROCKET/THERMO (TEAM BASE vs the FPV payload line).
         string[] keys = new string[] {
             // nav bar / lobby / loadout / settings
-            "LOADOUT", "SETTINGS", "SHOP", "CHANGE TEAM", "SELECT DRONE",
+            "LOADOUT", "SETTINGS", "SHOP", "CHANGE TEAM", "SELECT DRONE", "DEPLOY",
             "AUDIO", "GRAPHICS", "BINDINGS", "VIEWMODEL", "ATTACHMENTS", "EQUIPMENT", "CUSTOMIZATION",
+            // the profile strip - "Level NN  Cash $NNNN  <name>" - is on EVERY menu screen and on
+            // NO drone OSD, so it alone is proof we are not flying
+            "CASH",
             // TEAM BASE panel
-            "TEAM BASE", "WARHEAD",
+            "TEAM BASE", "DEPLOY AS DRONE", "WARHEAD",
             // the map's objective panel
             "CAPTURE", "CONTROL", "ELIMINATE", "TOP KILLS", "COMPLETED",
             // team select / respawn / loading / crash (these screens have NO nav bar, which is why
             // the HUD used to linger on them)
             "PLAYERS", "JOINING", "RESPAWN", "SPECTAT", "DEPLOYING", "SIGNAL",
             // the persistent SQUAD box
-            "SQUAD"
+            "SQUAD", "GHILLE", "JOIN OR CREATE"
         };
+        why = "";
         try
         {
             foreach (string[] w in OcrWords())
             {
                 string t = (w[4] ?? "").ToUpperInvariant();
-                for (int i = 0; i < keys.Length; i++) if (t.IndexOf(keys[i]) >= 0) return true;
+                for (int i = 0; i < keys.Length; i++)
+                    if (t.IndexOf(keys[i]) >= 0) { why = "saw \"" + keys[i] + "\""; return true; }
+                // our own name is printed on every menu and never on the drone OSD
+                if (_userName.Length >= 4 && Norm(t).IndexOf(Norm(_userName)) >= 0)
+                { why = "saw username"; return true; }
             }
         }
         catch { }
@@ -5197,7 +5223,10 @@ class RobloxAuto : Form
             foreach (string[] w in OcrWordsWhiten())
             {
                 string t = (w[4] ?? "").ToUpperInvariant();
-                for (int i = 0; i < keys.Length; i++) if (t.IndexOf(keys[i]) >= 0) return true;
+                for (int i = 0; i < keys.Length; i++)
+                    if (t.IndexOf(keys[i]) >= 0) { why = "saw \"" + keys[i] + "\""; return true; }
+                if (_userName.Length >= 4 && Norm(t).IndexOf(Norm(_userName)) >= 0)
+                { why = "saw username"; return true; }
             }
         }
         catch { }
