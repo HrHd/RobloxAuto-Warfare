@@ -4527,13 +4527,13 @@ class RobloxAuto : Form
             string all = "";
             if (ws != null)
                 foreach (string[] w in ws) all += (w[4] ?? "").ToUpperInvariant() + " ";
-            if (all.IndexOf("MOUNT") < 0 && all.IndexOf("ROCKET") < 0 && all.IndexOf("RGO") < 0)
-                return _hudStyleUav;                     // nothing readable - keep the current style
+            // check MAVIC keywords FIRST - the old guard bailed out before ever looking for
+            // GRENADE/RACK, so "3 grenades ready" never switched the style
             foreach (string k in new string[] { "RGO", "RACK", "GRENADE", "M67" })
                 if (all.IndexOf(k) >= 0) return true;    // MAVIC
             foreach (string k in new string[] { "ROCKET", "PG-7", "PG7", "TBG", "THERMO", "SHAPED", "FRAG", "RPG" })
                 if (all.IndexOf(k) >= 0) return false;   // FPV
-            return _hudStyleUav;
+            return _hudStyleUav;                         // nothing readable - keep the current style
         }
         catch { return _hudStyleUav; }
     }
@@ -4854,35 +4854,69 @@ class RobloxAuto : Form
     // the per-column edge points to get bank (roll) and the vertical offset (pitch). Only accept
     // a confident fit, otherwise ease back to level so a forest filling the frame does not
     // throw the HUD around.
+    // Real horizon lock. For each column we find the strongest vertical edge (the sky/ground
+    // boundary) in the upper frame, then fit a line with RANSAC instead of plain least squares -
+    // trees, buildings and the HUD markers are outliers, and least squares let them drag the line
+    // off. RANSAC finds the line the majority of columns agree on, which is the actual horizon.
     void DetectHorizon()
     {
         try
         {
             int W, H; int[] px = Grab(out W, out H);
-            int yTop = H / 12, yBot = H * 62 / 100;
-            float sx = 0, sy = 0, sxy = 0, sxx = 0; int n = 0, sumG = 0;
-            for (int x = W / 10; x < W * 9 / 10; x += 8)
+            int yTop = H / 10, yBot = H * 70 / 100;
+
+            int maxPts = (W * 11) / 12 / 6 + 2;
+            float[] pxs = new float[maxPts], pys = new float[maxPts];
+            int n = 0;
+            for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 6)
             {
-                int bestY = -1, bestG = 60;
-                for (int y = yTop; y < yBot; y += 3)
+                int bestY = -1, bestG = 55;
+                for (int y = yTop; y < yBot; y += 2)
                 {
-                    int c1 = px[(y - 3) * W + x], c2 = px[(y + 3) * W + x];
+                    int c1 = px[(y - 4) * W + x], c2 = px[(y + 4) * W + x];
                     int g1 = ((c1 >> 8) & 0xFF) + (c1 & 0xFF) + ((c1 >> 16) & 0xFF);
                     int g2 = ((c2 >> 8) & 0xFF) + (c2 & 0xFF) + ((c2 >> 16) & 0xFF);
                     int d = Math.Abs(g2 - g1);
                     if (d > bestG) { bestG = d; bestY = y; }
                 }
-                if (bestY >= 0) { sx += x; sy += bestY; sxy += (float)x * bestY; sxx += (float)x * x; n++; sumG += bestG; }
+                if (bestY >= 0) { pxs[n] = x; pys[n] = bestY; n++; }
             }
-            if (n < 30 || sumG / n < 90) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
-            float denom = n * sxx - sx * sx;
-            if (Math.Abs(denom) < 1f) return;
-            float slope = (n * sxy - sx * sy) / denom;
-            float icept = (sy - slope * sx) / n;
+            if (n < 40) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
+
+            // RANSAC: a horizon is near-horizontal, so reject steep candidate lines outright
+            Random rng = new Random();
+            float bs = 0f, bi = 0f; int bestIn = -1;
+            for (int it = 0; it < 160; it++)
+            {
+                int i1 = rng.Next(n), i2 = rng.Next(n);
+                if (i1 == i2) continue;
+                float x1 = pxs[i1], y1 = pys[i1], x2 = pxs[i2], y2 = pys[i2];
+                if (Math.Abs(x2 - x1) < 60f) continue;
+                float m = (y2 - y1) / (x2 - x1);
+                if (m > 0.8f || m < -0.8f) continue;          // steeper than ~39 deg is not the horizon
+                float b = y1 - m * x1;
+                int inl = 0;
+                for (int i = 0; i < n; i++)
+                    if (Math.Abs(pys[i] - (m * pxs[i] + b)) < 8f) inl++;
+                if (inl > bestIn) { bestIn = inl; bs = m; bi = b; }
+            }
+            if (bestIn < n * 4 / 10) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
+
+            // least-squares refit on the RANSAC inliers only
+            float sx = 0, sy = 0, sxy = 0, sxx = 0; int k = 0;
+            for (int i = 0; i < n; i++)
+            {
+                if (Math.Abs(pys[i] - (bs * pxs[i] + bi)) >= 8f) continue;
+                sx += pxs[i]; sy += pys[i]; sxy += pxs[i] * pys[i]; sxx += pxs[i] * pxs[i]; k++;
+            }
+            float den = k * sxx - sx * sx;
+            if (k < 20 || Math.Abs(den) < 1f) { _hudDetValid = false; return; }
+            float slope = (k * sxy - sx * sy) / den;
+            float icept = (sy - slope * sx) / k;
             float roll = (float)(Math.Atan(slope) * 180.0 / Math.PI);
-            if (roll > 40f) roll = 40f; if (roll < -40f) roll = -40f;
+            if (roll > 45f) roll = 45f; if (roll < -45f) roll = -45f;
             float pitch = (slope * (W / 2f) + icept) - H / 2f;
-            if (pitch > H / 5f) pitch = H / 5f; if (pitch < -H / 5f) pitch = -H / 5f;
+            if (pitch > H / 4f) pitch = H / 4f; if (pitch < -H / 4f) pitch = -H / 4f;
             _hudDetRoll = roll;
             _hudDetPitch = pitch;
             _hudDetValid = true;
