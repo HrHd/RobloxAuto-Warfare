@@ -275,8 +275,12 @@ function tick() {
     var wrap = document.getElementById('wrap');
     var bg   = document.getElementById('bg');
     var home = document.getElementById('home');
-    wrap.style.display = s.active ? 'block' : 'none';
-    bg.style.display   = s.active ? 'block' : 'none';
+    // The CLI/loading terminal is the DEFAULT view - it shows whenever we are NOT in the drone,
+    // and the HUD takes over only while flying (s.hud). No more depending on the deploy flag, so
+    // OBS is never blank during the rejoin/loading/auto steps.
+    var cli = !s.hud;
+    wrap.style.display = cli ? 'block' : 'none';
+    bg.style.display   = cli ? 'block' : 'none';
 
     var h = '';
     for (var i = 0; i < s.lines.length; i++) {
@@ -284,6 +288,7 @@ function tick() {
       var cls = l[1] === 'OK' ? 'ok' : (l[1] === 'BAD' ? 'bad' : '');
       h += '<div>' + l[0] + ' <span class="' + cls + '">' + (l[1] ? '[' + l[1] + ']' : '') + '</span></div>';
     }
+    if (cli && h === '') h = '<div>bf-drone link: standby <span class="ok">[OK]</span></div>';
     document.getElementById('log').innerHTML = h;
     document.getElementById('fill').style.width = Math.round(s.progress * 100) + '%';
     document.getElementById('plabel').textContent = Math.round(s.progress * 100) + '%   ' + s.label;

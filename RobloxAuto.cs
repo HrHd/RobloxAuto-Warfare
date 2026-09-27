@@ -5353,7 +5353,7 @@ class RobloxAuto : Form
 
         public void Active(bool a)
         {
-            lock (_lock) { _active = a; if (!a) { _lines.Clear(); _progress = 0; _target = 0; _label = ""; } }
+            lock (_lock) { _active = a; if (a) { _lines.Clear(); _progress = 0; _target = 0; _label = ""; } }
         }
         public void AddLine(string text, string status) { lock (_lock) _lines.Add(new string[] { text, status ?? "" }); }
         public void SetProgress(float pct, string label) { lock (_lock) { _target = pct; _label = label ?? ""; } }
