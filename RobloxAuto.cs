@@ -6234,49 +6234,74 @@ class RobloxAuto : Form
                     }
                 int gx0 = gw * 20 / 100, gx1 = gw * 80 / 100, gy0 = gh * 12 / 100, gy1 = gh * 88 / 100;
                 float[] bx2 = new float[gw], by2 = new float[gw], bg2 = new float[gw];
-                float bestGrad = 0f, bestM = 0f, bestB = 0f; bool found = false;
+                float[] chRoll = new float[3], chY = new float[3], chGrad = new float[3]; int cn = 0;
+                float bestGrad = 0f;
                 for (int ch = 0; ch < 3; ch++)
                 {
                     float[] im = ch == 0 ? imR : (ch == 1 ? imG : imB);
                     int pn = 0;
+                    // Sky reference for THIS channel = mean of the top band. The horizon is where we
+                    // LEAVE the sky going down, so we pick the strongest transition that still has
+                    // SKY above it - that is what stops a strong terrain edge lower down from winning.
+                    float skyRef = 0f;
+                    {
+                        int sc = 0, trows = Math.Max(1, gh * 12 / 100);
+                        for (int gy = 0; gy < trows; gy++) for (int gx = gx0; gx < gx1; gx++) { skyRef += im[gy * gw + gx]; sc++; }
+                        skyRef = sc > 0 ? skyRef / sc : 0f;
+                    }
                     bool trk = _hudTrkAt != 0 && (Environment.TickCount - _hudTrkAt) < 1500;
                     for (int gx = gx0; gx < gx1; gx++)
                     {
-                        float best = -1f; int by = -1;
-                        // TRACKING PRIOR: if we had a recent fix, look for the horizon near where it
-                        // was last time (with slack for fast pitch). Only if that band is empty do we
-                        // fall back to the whole frame - so a stray edge cannot steal the lock and a
-                        // brief occlusion does not lose it.
-                        int ylo = gy0 + 1, yhi = gy1 - 1;
-                        if (trk)
+                        float best = -1e9f; int by = -1; float byGrad = 0f;
+                        float runSum = 0f; int runN = 0;
+                        // TRACKING PRIOR: if we had a recent fix, only consider the band near where the
+                        // line was last time (with slack for fast pitch), so a stray edge cannot steal it.
+                        for (int gy = gy0; gy < gy1; gy++)
                         {
-                            float predY = _hudTrkM * (gx * B + B / 2f) + _hudTrkB;
-                            int pyb = (int)(predY / B);
-                            ylo = Math.Max(gy0 + 1, pyb - 8);
-                            yhi = Math.Min(gy1 - 1, pyb + 8);
-                        }
-                        for (int gy = ylo; gy < yhi; gy++)
-                        {
-                            float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
-                            if (g > best) { best = g; by = gy; }
-                        }
-                        if (by < 0 && trk)
-                            for (int gy = gy0 + 1; gy < gy1 - 1; gy++)
+                            float aboveMean = runN > 0 ? runSum / runN : im[gy * gw + gx];
+                            if (gy > gy0 && gy < gy1 - 1)
                             {
-                                float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
-                                if (g > best) { best = g; by = gy; }
+                                bool inBand = true;
+                                if (trk)
+                                {
+                                    int pyb = (int)((_hudTrkM * (gx * B + B / 2f) + _hudTrkB) / B);
+                                    inBand = gy >= pyb - 8 && gy <= pyb + 8;
+                                }
+                                if (inBand)
+                                {
+                                    float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
+                                    float score = g - Math.Abs(aboveMean - skyRef) * 0.6f;   // prefer SKY above
+                                    if (score > best) { best = score; by = gy; byGrad = g; }
+                                }
                             }
+                            runSum += im[gy * gw + gx]; runN++;
+                        }
+                        if (by < 0 && trk)      // band empty -> fall back to the whole column
+                        {
+                            runSum = 0f; runN = 0;
+                            for (int gy = gy0; gy < gy1; gy++)
+                            {
+                                float aboveMean = runN > 0 ? runSum / runN : im[gy * gw + gx];
+                                if (gy > gy0 && gy < gy1 - 1)
+                                {
+                                    float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
+                                    float score = g - Math.Abs(aboveMean - skyRef) * 0.6f;
+                                    if (score > best) { best = score; by = gy; byGrad = g; }
+                                }
+                                runSum += im[gy * gw + gx]; runN++;
+                            }
+                        }
                         if (by < 0) continue;
                         // SUB-PIXEL: parabolic interpolation of the gradient peak.
                         float gA = Math.Abs(im[by * gw + gx] - im[(by - 2) * gw + gx]);
-                        float gB = best;
+                        float gB = Math.Abs(im[(by + 1) * gw + gx] - im[(by - 1) * gw + gx]);
                         float gC = Math.Abs(im[(by + 2) * gw + gx] - im[by * gw + gx]);
                         float dnm = gA - 2f * gB + gC;
                         float sub = Math.Abs(dnm) > 0.0001f ? 0.5f * (gA - gC) / dnm : 0f;
                         if (sub > 0.5f) sub = 0.5f; if (sub < -0.5f) sub = -0.5f;
                         bx2[pn] = gx * B + B / 2f;
                         by2[pn] = (by + sub) * B + B / 2f;
-                        bg2[pn] = best;
+                        bg2[pn] = byGrad;
                         pn++;
                     }
                     if (pn < 12) continue;
@@ -6300,11 +6325,22 @@ class RobloxAuto : Form
                     float gsum = 0f, wsum = 0f;
                     for (int i = 0; i < pn; i++) if (Math.Abs(by2[i] - (fm * bx2[i] + fb)) <= 24f) { gsum += bg2[i] * bg2[i]; wsum += bg2[i]; }
                     float gm = wsum > 0 ? gsum / wsum : 0f;
-                    if (gm > bestGrad) { bestGrad = gm; bestM = fm; bestB = fb; found = true; }
+                    chRoll[cn] = (float)(Math.Atan(fm) * 180.0 / Math.PI);
+                    chY[cn] = fm * (W / 2f) + fb;
+                    chGrad[cn] = gm;
+                    if (gm > bestGrad) bestGrad = gm;
+                    cn++;
                 }
-                if (found)
+                if (cn > 0)
                 {
-                    float fm = bestM, fb = bestB;
+                    // MEDIAN across the channels - a channel that latched onto the wrong edge cannot
+                    // drag the answer, and the roll/y come from the middle of R/G/B.
+                    float[] rr = new float[cn]; Array.Copy(chRoll, rr, cn); Array.Sort(rr);
+                    float[] yy2 = new float[cn]; Array.Copy(chY, yy2, cn); Array.Sort(yy2);
+                    float medRoll = rr[cn / 2];
+                    float medY = yy2[cn / 2];
+                    float fm = (float)Math.Tan(medRoll * Math.PI / 180.0);
+                    float fb = medY - fm * (W / 2f);
                     // Require a real sky/ground step across the line (mostly-one-colour -> no lock), and
                     // reject a wild jump from the last good fix. Green channel used for the contrast test.
                     float above = 0f, below = 0f; int cc = 0;
