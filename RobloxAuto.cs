@@ -3480,8 +3480,11 @@ class RobloxAuto : Form
         if (dt <= 0f) return;
         if (dt > 0.1f) dt = 0.1f;
 
-        float sx = Math.Abs(_padLx) >= Math.Abs(_padRx) ? _padLx : _padRx;
-        float sy = Math.Abs(_padLy) >= Math.Abs(_padRy) ? _padLy : _padRy;
+        // Roll follows the right stick X (the attitude/camera stick), falling back to the left
+        // stick X. Pitch follows the RIGHT stick Y ONLY - the LEFT stick Y is the THROTTLE, and
+        // letting it drive the horizon made it climb/dive with throttle input.
+        float sx = _padRx != 0f ? _padRx : _padLx;
+        float sy = _padRy;
 
         // controller priority: integrate the stick every frame (rate -> angle)
         _hudFRoll += -sx * 150f * dt;
