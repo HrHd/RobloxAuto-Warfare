@@ -2327,12 +2327,17 @@ class RobloxAuto : Form
     {
         try
         {
+            // The TEAM BASE panel prints the SAME "Press Deploy button to lock in your choice" text,
+            // so the phrase alone is NOT enough - only treat it as a misclick when the TEAM BASE
+            // markers (header / Deploy As Drone / WARHEAD) are absent.
             List<string[]> ws = OcrWords();
-            if (PhraseIn("lock in your choice", ws)) return true;
-            if (PhraseIn("Press Deploy button", ws)) return true;
             List<string[]> ww = OcrWordsWhiten();
-            if (PhraseIn("lock in your choice", ww)) return true;
-            if (PhraseIn("Press Deploy button", ww)) return true;
+            bool phrase = PhraseIn("lock in your choice", ws) || PhraseIn("Press Deploy button", ws)
+                       || PhraseIn("lock in your choice", ww) || PhraseIn("Press Deploy button", ww);
+            if (!phrase) return false;
+            bool basePanel = PhraseIn("TEAM BASE", ws) || PhraseIn("DEPLOY AS DRONE", ws) || PhraseIn("WARHEAD", ws)
+                          || PhraseIn("TEAM BASE", ww) || PhraseIn("DEPLOY AS DRONE", ww) || PhraseIn("WARHEAD", ww);
+            return !basePanel;
         }
         catch { }
         return false;
