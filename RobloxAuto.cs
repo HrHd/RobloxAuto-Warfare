@@ -70,7 +70,7 @@ class RobloxAuto : Form
 
     // ================= ui =================
     TextBox txtServer, txtLog;
-    Button btnRejoin, btnRefresh, btnAuto, btnSetKey, btnStop, btnOpenLog;
+    Button btnRejoin, btnRefresh, btnAuto, btnSetKey, btnStop, btnOpenLog, btnHighPrio;
     Label lblKeyVal;
     bool _capturingKey = false;
     ComboBox cmbTeam, cmbDrone, cmbBomb, cmbPadRejoin, cmbPadAuto, cmbPadStop, cmbPadLand, cmbPadReconnect;
@@ -842,6 +842,14 @@ class RobloxAuto : Form
             catch (Exception ex) { Log("could not open the log: " + ex.Message); }
         };
         Controls.Add(btnOpenLog);
+
+        btnHighPrio = new Button();
+        btnHighPrio.Text = "roblox: HIGH";
+        btnHighPrio.FlatStyle = FlatStyle.Flat;
+        btnHighPrio.ForeColor = Color.Gainsboro;
+        btnHighPrio.SetBounds(x + w - 200, y - 2, 100, 21);
+        btnHighPrio.Click += delegate { SetRobloxPriority(); };
+        Controls.Add(btnHighPrio);
         y += 22;
 
         var lblLogHead = new Label();
@@ -1214,7 +1222,7 @@ class RobloxAuto : Form
             // Give the map time to finish opening after the DEPLOY click. Panning or zooming a
             // still-loading screen does nothing, so acting too early finds no Base and gives up.
             // Wait for the map to actually be up (POINT / Base on screen), capped.
-            Thread.Sleep(500);
+            Thread.Sleep(300);
             long mapWait = Environment.TickCount;
             while ((Environment.TickCount - mapWait) < 10000 && Alive(g))
             {
@@ -1242,7 +1250,7 @@ class RobloxAuto : Form
                     Log("   panning the map to look for the Base (" + (p + 1) + "/6)");
                     FocusRoblox();
                     DragPan(pans[p, 0], pans[p, 1]);
-                    Thread.Sleep(250);
+                    Thread.Sleep(180);
                     InvalidateOcr();
                     List<Hit> bh = FindPhraseAll("Base", null, OcrWordsWhiten());
                     if (bh.Count == 0) bh = FindPhraseAll("Base", null, OcrWords());
@@ -1275,7 +1283,7 @@ class RobloxAuto : Form
                 FocusRoblox();
                 MoveOverGameSoft(z);
                 ScrollOut(2);
-                Thread.Sleep(180);
+                Thread.Sleep(140);
             }
 
             if (!sawBase)
@@ -1794,13 +1802,13 @@ class RobloxAuto : Form
                     // focus/resync, and the second (a bare press, pointer already there) lands
                     // before the UI can change
                     ClickPrimaryLogged(h.X, h.Y, "\"" + used + "\"");
-                    Thread.Sleep(60);
+                    Thread.Sleep(45);
                     if (haveMacro) SendKey(_clickVk); else ClickAgain();
                 }
                 else if (attempt <= 4)
                 {
                     ClickLogged(h.X, h.Y, "\"" + used + "\"");
-                    Thread.Sleep(60);
+                    Thread.Sleep(45);
                     ClickAgain();
                 }
                 else
@@ -2087,7 +2095,7 @@ class RobloxAuto : Form
             // pointer off the grid, so only move on a retry (when it is sitting on the cell).
             if (t > 1) MoveToDeployAsDrone();
             InvalidateGrab();
-            Thread.Sleep(120);
+            Thread.Sleep(90);
 
             List<Point> cells = FindWarheadCells(count);
             if (cells.Count <= slot)
@@ -2123,12 +2131,12 @@ class RobloxAuto : Form
                 // two quick clicks - Roblox often swallows the first one (focus/resync). The
                 // second is a bare press since the pointer is already on the cell.
                 ClickPrimaryLogged(tx, ty, _bomb);
-                Thread.Sleep(60);
-                ClickAgain();
+                Thread.Sleep(45);
+                ClickAgain(40);
             }
             else if (t == 2 && _clickKeyOn && _clickVk != 0) ClickLogged(tx, ty, _bomb);
             else { ClickHard(tx, ty); InvalidateOcr(); }
-            Thread.Sleep(250);
+            Thread.Sleep(150);
 
             // Move off the cell and verify - but move toward the NEXT step (the Deploy As Drone
             // button) instead of parking far away and coming back. The translucent panel lets
@@ -2136,15 +2144,17 @@ class RobloxAuto : Form
             // cell to have actually CHANGED colour at its resting position.
             MoveToDeployAsDrone();
             InvalidateGrab();
-            Thread.Sleep(120);
+            Thread.Sleep(80);
             int[] after = CellSample(cells[slot].X, cells[slot].Y);
             int diff = Math.Abs(after[0] - before[0]) + Math.Abs(after[1] - before[1]) + Math.Abs(after[2] - before[2]);
-            if (diff >= 40 && CellIsGreen(cells[slot].X, cells[slot].Y))
+            bool green = diff >= 40 && CellIsGreen(cells[slot].X, cells[slot].Y);
+            bool named = green && WarheadDescMatches(_bomb);   // cross-reference the label
+            if (green && named)
             {
-                Log("   " + _bomb + " selected (green box, change=" + diff + ")");
+                Log("   " + _bomb + " confirmed (green + label)");
                 return true;
             }
-            Log("   " + _bomb + " cell did not change (diff=" + diff + ") - retrying");
+            Log("   " + _bomb + " not confirmed (green=" + green + " label=" + named + " diff=" + diff + ") - retrying");
         }
         Log("   " + _bomb + " is NOT green - leaving the flow here so we do not deploy the wrong loadout");
         return false;
@@ -2169,6 +2179,47 @@ class RobloxAuto : Form
             }
         if (n == 0) return new int[] { 0, 0, 0 };
         return new int[] { (int)(r / n), (int)(g / n), (int)(b / n) };
+    }
+
+    // Cross-reference for the warhead: the panel prints "WARHEAD: <name> - <desc>" above the
+    // grid. Read that line and check it names the bomb we wanted. Returns TRUE when the line
+    // cannot be read (so a bad OCR never blocks), and FALSE only when it IS read and clearly
+    // names a different warhead - that is the "false flag" guard.
+    bool WarheadDescMatches(string bomb)
+    {
+        string[] parts = bomb.ToUpperInvariant().Split(' ');
+        try
+        {
+            foreach (List<string[]> ws in new List<string[]>[] { OcrWords(), OcrWordsWhiten() })
+            {
+                for (int i = 0; i < ws.Count; i++)
+                {
+                    string t = (ws[i][4] ?? "").ToUpperInvariant();
+                    if (t.IndexOf("WARHEAD") < 0 && t.IndexOf("WARHE") < 0) continue;
+
+                    int y = int.Parse(ws[i][1]);
+                    System.Text.StringBuilder line = new System.Text.StringBuilder(t);
+                    for (int j = i + 1; j < ws.Count && j < i + 6; j++)
+                    {
+                        if (Math.Abs(int.Parse(ws[j][1]) - y) > 14) break;
+                        line.Append(' ').Append(ws[j][4] ?? "");
+                    }
+                    string words = line.ToString();
+
+                    int hit = 0;
+                    foreach (string p in parts)
+                    {
+                        if (p.Length < 2) { hit++; continue; }
+                        foreach (string w in words.Split(' '))
+                            if (SimPct(w, p) >= _matchPct || w.Contains(p) || p.Contains(w)) { hit++; break; }
+                    }
+                    Log("   warhead label: \"" + words + "\" -> " + hit + "/" + parts.Length + " match");
+                    return hit >= parts.Length;
+                }
+            }
+        }
+        catch { }
+        return true;   // not readable - do not block the flow on it
     }
 
     // Warhead cells are uniform grey rounded rectangles about 2:1. Find the grey ones, work
@@ -2849,7 +2900,7 @@ class RobloxAuto : Form
         // relative MOVE (raw input), step aside, come back, then sit still so the button
         // arms before we press.
         NudgeRaw(3, 2);
-        try { SetCursorPos(x + (_rng.Next(0, 2) == 0 ? -3 : 3), y); Thread.Sleep(30); SetCursorPos(x, y); } catch { }
+        try { SetCursorPos(x + (_rng.Next(0, 2) == 0 ? -3 : 3), y); Thread.Sleep(20); SetCursorPos(x, y); } catch { }
         NudgeRaw(-2, -1);
         try { SetCursorPos(x, y); } catch { }
         if (_hoverMs > 0) Thread.Sleep(_hoverMs);
@@ -2901,7 +2952,7 @@ class RobloxAuto : Form
         }
         return (int)(r1 + r2);
     }
-    static int ClickAgain() { return ClickAgain(50); }
+    static int ClickAgain() { return ClickAgain(40); }
 
     // a deliberately heavier press for when the normal click is being ignored
     static int ClickHard(int x, int y)
@@ -3125,6 +3176,20 @@ class RobloxAuto : Form
             }
         }
         return false;
+    }
+
+    // Raise the Roblox client's priority so the game keeps the CPU when the tool is working.
+    // Needs the elevated token the app already has, otherwise the OS refuses to raise it.
+    void SetRobloxPriority()
+    {
+        int n = 0;
+        foreach (Process p in Process.GetProcessesByName("RobloxPlayerBeta"))
+        {
+            try { p.PriorityClass = ProcessPriorityClass.High; n++; }
+            catch (Exception e) { Log("priority change failed: " + e.Message); }
+        }
+        if (n == 0) Log("no Roblox process running - start the game first");
+        else Log("set " + n + " Roblox process(es) to HIGH priority");
     }
 
     // ================= watchers =================
