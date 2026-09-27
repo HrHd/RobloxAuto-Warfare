@@ -5072,6 +5072,14 @@ class RobloxAuto : Form
             }
             byte[] buf = System.Text.Encoding.UTF8.GetBytes(body);
             c.Response.ContentType = ctype;
+            // tell the OBS browser source never to cache, so updated overlay.html is picked up
+            try
+            {
+                c.Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
+                c.Response.Headers["Pragma"] = "no-cache";
+                c.Response.Headers["Expires"] = "0";
+            }
+            catch { }
             try { c.Response.OutputStream.Write(buf, 0, buf.Length); c.Response.OutputStream.Close(); } catch { }
         }
     }
