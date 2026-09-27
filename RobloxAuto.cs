@@ -103,7 +103,6 @@ class RobloxAuto : Form
     float _hudDetRoll = 0f, _hudDetPitch = 0f;    // what DetectHorizon last measured (image-based)
     float _hudSmRoll = 0f, _hudSmPitch = 0f;      // smoothed across measurements
     bool _hudSmSeeded = false;
-    int _hudDetCount = 0;                         // door for periodic global re-acquire
     float _padLx = 0f, _padLy = 0f, _padRx = 0f, _padRy = 0f;   // sticks, -1..1, dead-zoned
     float _hudLockRoll = 0f, _hudLockPitch = 0f;  // base horizon (image-derived, corrected over time)
     float _hudCtrlRoll = 0f, _hudCtrlPitch = 0f;  // stick rotation integrated on top of the base
@@ -4927,74 +4926,46 @@ class RobloxAuto : Form
             if (sn == 0) { _hudDetValid = false; return; }
             sr /= sn; sg /= sn; sb /= sn;
 
-            // Temporal prior: search near the last horizon, but fully re-acquire every 4th pass so
-            // a teleport/rotation/map change is picked up quickly instead of locking onto nothing.
-            _hudDetCount++;
-            bool global = (_hudDetCount % 4) == 0;
-            bool havePrior = _hudDetValid && _hudSmSeeded && !global;
-            float pm = havePrior ? (float)Math.Tan(_hudSmRoll * Math.PI / 180.0) : 0f;
-            float pb = havePrior ? (H / 2f + _hudSmPitch - 12f) - pm * (W / 2f) : 0f;
-
             int maxPts = W / 4 + 4;
             float[] pxs = new float[maxPts], pys = new float[maxPts];
             int n = 0;
 
-            // --- method 1 (primary): GREEN dominance step ---
-            // Ground is always greener than sky, even through haze, so track (G-B): walk each column
-            // down and take the TOPMOST row where the band below is clearly greener than the band
-            // above. Topmost = the real sky/ground line, so a field boundary further down can never
-            // win. This is what fixes the "line sits too low / tilted" case on grassy maps.
+            // --- method 1 (primary): distance from the sampled sky colour, TOPMOST sustained run.
+            // The true horizon can be a faint haze edge, and the green step often sits far below it
+            // on the near field - which is why green-dominance kept drifting low. Sky is uniform and
+            // matches the top-band reference, so the first row where that stops being true, sustained
+            // for 6px, is the horizon. Global search: a temporal prior could trap it on a field edge.
             for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)
             {
-                int lo = yTop + 8, hi = yBot;
-                if (havePrior)
+                int run = 0;
+                for (int y = yTop; y < yBot; y++)
                 {
-                    int py = (int)(pm * x + pb);
-                    lo = Math.Max(yTop + 8, py - 60);
-                    hi = Math.Min(yBot, py + 60);
-                    if (hi - lo < 30) { lo = yTop + 8; hi = yBot; }
-                }
-                for (int y = lo; y + 24 < hi; y += 2)
-                {
-                    int above = 0, below = 0;
-                    for (int k = 1; k <= 8; k++) { int c = px[(y - k) * W + x]; above += ((c >> 8) & 0xFF) - (c & 0xFF); }
-                    for (int k = 0; k < 8; k++) { int c = px[(y + k) * W + x]; below += ((c >> 8) & 0xFF) - (c & 0xFF); }
-                    if (below - above > 100) { pxs[n] = x; pys[n] = y; n++; break; }
+                    int c = px[y * W + x];
+                    int dr = ((c >> 16) & 0xFF) - sr; if (dr < 0) dr = -dr;
+                    int dg = ((c >> 8) & 0xFF) - sg; if (dg < 0) dg = -dg;
+                    int db = (c & 0xFF) - sb; if (db < 0) db = -db;
+                    if (dr + dg + db > 40)
+                    {
+                        if (++run >= 6) { pxs[n] = x; pys[n] = y - 5; n++; break; }
+                    }
+                    else run = 0;
                 }
             }
 
-            // --- method A (fallback): colour boundary against the sampled sky reference ---
-            // Walk down each column and take the first row where the next ~24px have stopped
-            // looking like sky for a sustained stretch. Requiring a RUN rejects thin trees and
-            // speckle, which is exactly what grabs the old single-edge detector.
+            // --- method A (fallback): GREEN dominance step - when the whole frame is one hue the
+            //     sky reference is useless, but ground is still greener than sky ---
             if (n < 40)
             {
                 n = 0;
                 for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)
                 {
-                    int lo = yTop, hi = yBot;
-                    if (havePrior)
+                    for (int y = yTop + 8; y + 24 < yBot; y += 2)
                     {
-                        int py = (int)(pm * x + pb);
-                        lo = Math.Max(yTop, py - 60);
-                        hi = Math.Min(yBot, py + 60);
-                        if (hi - lo < 30) { lo = yTop; hi = yBot; }   // prior too tight -> go global
+                        int above = 0, below = 0;
+                        for (int kk = 1; kk <= 8; kk++) { int c = px[(y - kk) * W + x]; above += ((c >> 8) & 0xFF) - (c & 0xFF); }
+                        for (int kk = 0; kk < 8; kk++) { int c = px[(y + kk) * W + x]; below += ((c >> 8) & 0xFF) - (c & 0xFF); }
+                        if (below - above > 100) { pxs[n] = x; pys[n] = y; n++; break; }
                     }
-                    int bestY = -1;
-                    for (int y = lo; y + 24 < hi; y++)
-                    {
-                        int dep = 0;
-                        for (int yy = y; yy < y + 24; yy += 3)
-                        {
-                            int c = px[yy * W + x];
-                            int dr = ((c >> 16) & 0xFF) - sr; if (dr < 0) dr = -dr;
-                            int dg = ((c >> 8) & 0xFF) - sg; if (dg < 0) dg = -dg;
-                            int db = (c & 0xFF) - sb; if (db < 0) db = -db;
-                            if (dr + dg + db > 50) dep++;
-                        }
-                        if (dep >= 6) { bestY = y; break; }
-                    }
-                    if (bestY >= 0) { pxs[n] = x; pys[n] = bestY; n++; }
                 }
             }
 
