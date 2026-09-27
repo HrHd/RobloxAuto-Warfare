@@ -152,12 +152,15 @@ class RobloxAuto : Form
     float _hudImgGain = 1f;                         // how hard the image horizon corrects the gyro (complementary)
     float _hudRollOff = 0f;                         // manual roll offset, degrees (dial "roll off")
     float _hudPitOff = 0f;                          // manual pitch offset, px (dial "pitch off")
+    float _hudBadLift = 5f;                         // DEGREES to lift the horizon when detector quality is
+                                                    // poor (dial "bad lift") - a weak lock lands low, so
+                                                    // we raise it back toward where it belongs
     float _hudLeftPx = 0f;                         // px - max horizon offset from the LEFT stick (dial "thr pitch"); 0 = off
     float _hudPitStick = 280f;                      // px - DIRECT horizon offset from the RIGHT stick Y (dial "stick pitch")
                                                     //      push forward = line UP, pull back = line DOWN (signed: set - to invert)
     float _hudPitStickSm = 0f;                      // smoothed stick-pitch offset (glides, never jumps)
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick;
+    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numBadLift;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
@@ -612,6 +615,10 @@ class RobloxAuto : Form
         numPitOff = MkTune(x + 168, y, "height shift", (decimal)_hudPitOff, -400m, 400m, 5m, 0);
         numRollOff.ValueChanged += delegate { _hudRollOff = (float)numRollOff.Value; SaveCfg(); };
         numPitOff.ValueChanged += delegate { _hudPitOff = (float)numPitOff.Value; SaveCfg(); };
+        y += 28;
+
+        numBadLift = MkTune(x, y, "bad lift (deg)", (decimal)_hudBadLift, -30m, 30m, 1m, 0);
+        numBadLift.ValueChanged += delegate { _hudBadLift = (float)numBadLift.Value; SaveCfg(); };
         y += 28;
 
         numThr = MkTune(x, y, "throttle", (decimal)_hudLeftPx, 0m, 120m, 2m, 0);
@@ -4276,6 +4283,7 @@ class RobloxAuto : Form
         // harder the more confident the detector is. Stops drift and settles the lines flat when the
         // camera is genuinely level - without self-levelling a real bank (the image sees the bank too).
         bool det = _hudDetValid && (now - _hudDetAt) < 2000;
+        float badLift = 0f;
         if (det)
         {
             float conf = _hudDetConf; if (conf < 0.05f) conf = 0.05f; if (conf > 1f) conf = 1f;
@@ -4293,6 +4301,11 @@ class RobloxAuto : Form
             float a = 1f - (float)Math.Pow(0.5f, dt / tau);
             _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
             _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
+            // LOW-QUALITY LIFT: a weak/unsure detector tends to land LOW (on a terrain edge) - the
+            // foggier the worse. Nudge the line UP by up to the "bad lift" dial (in DEGREES, same units
+            // as the ladder), scaled by how bad the confidence is, so poor-quality frames sit where they
+            // should instead of dragging low.
+            badLift = (1f - conf) * _hudBadLift * _hudDpp;
         }
 
         // The LEFT stick (throttle) is a small, BOUNDED proportional nudge, NOT integrated. Adding
@@ -4909,6 +4922,7 @@ class RobloxAuto : Form
             else if (k == "hudPitOff") _hudPitOff = ParseF(v);
             else if (k == "hudThr") _hudLeftPx = ParseF(v);
             else if (k == "hudPStick") _hudPitStick = ParseF(v);
+            else if (k == "hudBadLift") _hudBadLift = ParseF(v);
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -4977,6 +4991,7 @@ class RobloxAuto : Form
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudThr=" + _hudLeftPx.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPStick=" + _hudPitStick.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudBadLift=" + _hudBadLift.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "uav=" + (_hudStyleUav ? "1" : "0"),
             "night=" + (_nightVision ? "1" : "0"),
             "nightKey=" + _hkNightKey,
