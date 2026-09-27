@@ -5113,6 +5113,7 @@ class RobloxAuto : Form
             // slides the whole ladder up/down.
             float tilt = Math.Min(1f, Math.Abs(PitchPx) / 900f + Math.Abs(Roll) / 180f);
             float spread = 1f + 1.1f * tilt;
+            float dxr = (float)Math.Cos(rad), dyr = (float)Math.Sin(rad);   // rung dir = parallel to horizon
             for (int d = -90; d <= 90; d += 10)
             {
                 float yy = PitchPx + d * Dpp * spread;       // dpp = px per degree, fanned by the tilt
@@ -5125,17 +5126,19 @@ class RobloxAuto : Form
                     ? new Pen(Color.FromArgb(aMain, 255, 255, 255), 2)
                     : new Pen(Color.FromArgb(aThin, 230, 230, 230), 1);
                 float ay = cy + yy;
-                PointF a = R(cx - half, ay, cx, cy, rad), b = R(cx + half, ay, cx, cy, rad);
+                float cxx = cx - (float)Math.Tan(rad) * yy * Shear;   // rail offset = the STAIRCASE
+                PointF a = new PointF(cxx - half * dxr, ay - half * dyr);
+                PointF b = new PointF(cxx + half * dxr, ay + half * dyr);
                 g.DrawLine(pen, a, b);
                 if (d == 0)
                 {
-                    g.DrawLine(pen, a, R(cx - half, ay + 12, cx, cy, rad));   // end caps
-                    g.DrawLine(pen, b, R(cx + half, ay + 12, cx, cy, rad));
+                    g.DrawLine(pen, a, new PointF(a.X, a.Y + 12));   // end caps
+                    g.DrawLine(pen, b, new PointF(b.X, b.Y + 12));
                 }
                 else
                 {
                     using (SolidBrush lb = new SolidBrush(Color.FromArgb(aTxt, 255, 255, 255)))
-                        g.DrawString((d > 0 ? "+" : "") + d, _f, lb, R(cx + half + 6, ay - 8, cx, cy, rad));
+                        g.DrawString((d > 0 ? "+" : "") + d, _f, lb, b.X + 6, b.Y + 5);
                 }
                 pen.Dispose();
             }

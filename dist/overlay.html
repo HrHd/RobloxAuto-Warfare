@@ -202,9 +202,11 @@ function drawHud(s, glitching) {
   // slides the whole ladder up/down.
   hctx.font = font;
   var dpp = (typeof s.dpp === 'number' && s.dpp > 0) ? s.dpp : 8;
+  var shear = (typeof s.shear === 'number') ? s.shear : 1;
   var lscale = (typeof s.len === 'number' && s.len > 0) ? s.len : 1;
   var tilt = Math.min(1, Math.abs(s.pit || 0) / 900 + Math.abs(s.roll || 0) / 180);
   var spread = 1 + 1.1 * tilt;
+  var dxr = Math.cos(rad), dyr = Math.sin(rad);      // rung direction: PARALLEL to the real horizon
   for (var d = -90; d <= 90; d += 10) {
     var yy = pit + d * dpp * sc * spread;
     var dist = Math.abs(yy);
@@ -212,21 +214,20 @@ function drawHud(s, glitching) {
     if (af <= 0.02) continue;
     var half = (d === 0 ? 150 : 70) * sc * lscale * (1 + 0.4 * tilt);
     var ay = cy + yy;
+    var cxx = cx - Math.tan(rad) * yy * shear;     // rail offset: the side-to-side STAIRCASE
     hctx.globalAlpha = af;
     hctx.strokeStyle = d === 0 ? col : thin;
     hctx.lineWidth = (d === 0 ? 2 : 1) * sc;
-    var a = R(cx - half, ay), b = R(cx + half, ay);
+    var a = [cxx - half * dxr, ay - half * dyr], b = [cxx + half * dxr, ay + half * dyr];
     hctx.beginPath(); hctx.moveTo(a[0], a[1]); hctx.lineTo(b[0], b[1]); hctx.stroke();
     if (d === 0) {
-      var e1 = R(cx - half, ay + 12 * sc), e2 = R(cx + half, ay + 12 * sc);
       hctx.beginPath();
-      hctx.moveTo(a[0], a[1]); hctx.lineTo(e1[0], e1[1]);
-      hctx.moveTo(b[0], b[1]); hctx.lineTo(e2[0], e2[1]);
+      hctx.moveTo(a[0], a[1]); hctx.lineTo(a[0], a[1] + 12 * sc);
+      hctx.moveTo(b[0], b[1]); hctx.lineTo(b[0], b[1] + 12 * sc);
       hctx.stroke();
     } else {
-      var t = R(cx + half + 6 * sc, ay + 5 * sc);
       hctx.fillStyle = col;
-      hctx.fillText((d > 0 ? '+' : '') + d, t[0], t[1]);
+      hctx.fillText((d > 0 ? '+' : '') + d, b[0] + 6 * sc, b[1] + 5 * sc);
     }
     hctx.globalAlpha = 1;
   }
