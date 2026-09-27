@@ -4082,13 +4082,16 @@ class RobloxAuto : Form
         _hudPitchVel += (vTargetPitch - _hudPitchVel) * av;
         _hudFPitch += _hudPitchVel * dt;
 
-        // HORIZON LOCK (pitch). The camera measurement is the absolute reference that keeps the
-        // ladder ON the real horizon instead of drifting away on accumulated stick error. Applied to
-        // PITCH only - the roll is the stick's job. A fix older than 1.5s is not trusted.
+        // HORIZON LOCK. The camera measurement is the absolute reference: it keeps the ladder flat on
+        // the REAL horizon (level line) and tilted to its real angle (diagonal when the ground is
+        // tilted) - the only source that works when the stick is not being moved. The stick stays the
+        // fast input; the camera is the slow truth. A fix older than 1.5s is not trusted.
         bool det = _hudDetValid && (now - _hudDetAt) < 1500;
         if (det)
         {
-            float a = 1f - (float)Math.Pow(0.5, dt / _hudFlyTau);
+            float tau = (sx == 0f && sy == 0f) ? _hudLockTau : _hudFlyTau;
+            float a = 1f - (float)Math.Pow(0.5, dt / tau);
+            _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
             _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
         }
 
