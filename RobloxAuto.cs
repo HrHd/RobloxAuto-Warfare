@@ -3622,7 +3622,8 @@ class RobloxAuto : Form
                 foreach (string[] w in ws)
                 {
                     string t = (w[4] ?? "").ToUpperInvariant();
-                    if (t.IndexOf("PAYLOAD") >= 0 || t.IndexOf("MOUNT") >= 0 || t.IndexOf("GRENADE") >= 0)
+                    // require the full "MOUNTED" (not "MOUNT") so loadout/menu text cannot match
+                    if (t.IndexOf("PAYLOAD") >= 0 || t.IndexOf("MOUNTED") >= 0 || t.IndexOf("GRENADE") >= 0)
                         return true;                          // payload readout = drone view
                 }
         }
@@ -4774,7 +4775,9 @@ class RobloxAuto : Form
             if (LinkWords(ws)) return true;
         }
         catch { }
-        return LinkWords(OcrWords());
+        // NO whole-screen fallback: any "LIVE"/"LINK" anywhere in the UI (chat, menus, the top
+        // bar) was matching and popping the drone HUD up when we were not in a drone at all.
+        return false;
     }
 
     // The game prints the payload bottom-right ("LIGHT ROCKET MOUNTED"). Rockets / RPG-type
@@ -4828,7 +4831,7 @@ class RobloxAuto : Form
         foreach (string[] w in ws)
         {
             string t = (w[4] ?? "").ToUpperInvariant();
-            if (t.IndexOf("LINK") >= 0 || t.IndexOf("LIVE") >= 0 || SimPct(t, "LINK") >= 70) return true;
+            if (t.IndexOf("LINK") >= 0 || t.IndexOf("LIVE") >= 0 || (t.Length >= 4 && SimPct(t, "LINK") >= 80)) return true;
         }
         return false;
     }
