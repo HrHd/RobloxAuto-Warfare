@@ -3676,8 +3676,10 @@ class RobloxAuto : Form
         }
         else if (sx == 0f && sy == 0f)
         {
-            // no camera fix and hands off: level the roll back
+            // no camera fix and hands off: level the roll back AND ease the pitch toward centre so
+            // a run of failed detections can't leave the horizon stuck way high or low
             _hudFRoll += (0f - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 0.6));
+            _hudFPitch += (0f - _hudFPitch) * (1f - (float)Math.Pow(0.5, dt / 1.5));
         }
 
         if (_hudFRoll > 180f) _hudFRoll = 180f;
@@ -5187,7 +5189,7 @@ class RobloxAuto : Form
                                 int c2 = px[(yl + kk) * W + x];
                                 below += Math.Abs(((c2 >> 16) & 0xFF) - sr) + Math.Abs(((c2 >> 8) & 0xFF) - sg) + Math.Abs((c2 & 0xFF) - sb);
                             }
-                            tot += below - above - (above >> 1); cnt++;   // weight the sky above heavier
+                            tot += below - above - (above >> 2); cnt++;   // sky above weighted 1.25x (was 1.5 - locked too high)
                         }
                         if (cnt >= 12) { float s2 = tot / cnt; if (s2 > bestScore) { bestScore = s2; bm10 = m10; bb = b; } }
                     }
@@ -5214,7 +5216,7 @@ class RobloxAuto : Form
                                     int c2 = px[(yl + kk) * W + x];
                                     below += Math.Abs(((c2 >> 16) & 0xFF) - sr) + Math.Abs(((c2 >> 8) & 0xFF) - sg) + Math.Abs((c2 & 0xFF) - sb);
                                 }
-                                tot += below - above - (above >> 1); cnt++;   // weight the sky above heavier
+                                tot += below - above - (above >> 2); cnt++;   // sky above weighted 1.25x (was 1.5 - locked too high)
                             }
                             if (cnt >= 12) { float s2 = tot / cnt; if (s2 > bestScore) { bestScore = s2; slope = m; icept = b; gOk = true; } }
                         }
