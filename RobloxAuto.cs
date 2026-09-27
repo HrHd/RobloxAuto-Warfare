@@ -2756,7 +2756,10 @@ class RobloxAuto : Form
         int W, H; int[] px = Grab(out W, out H);
         int baseOff = 85 + _whRowNudge;
         int bestOff = baseOff, bestHits = -1;
-        for (int off = 55; off <= 140; off += 5)
+        // Wide range on purpose: the grid can start anywhere from ~15px to ~150px below the
+        // anchor text, and if we only searched the lower part we locked onto the SECOND row and
+        // everything was off by one slot (that is what left the default warhead in place).
+        for (int off = 15; off <= 150; off += 5)
         {
             int hits = 0;
             for (int r = 0; r < 2; r++)
@@ -2797,9 +2800,12 @@ class RobloxAuto : Form
                 int b = v & 0xFF, g = (v >> 8) & 0xFF, r = (v >> 16) & 0xFF;
                 int mx = Math.Max(r, Math.Max(g, b)), mn = Math.Min(r, Math.Min(g, b));
                 int lum = (r * 299 + g * 587 + b * 114) / 1000;
-                bool green = (g - r) >= 12 && (g - b) >= 12 && g >= 70;
-                bool dark = lum < 100 && (mx - mn) <= 45;
-                if (green || dark) cell++;
+                // real capture: selected cell ~R75 G126 B50; unselected cells are neutral grey
+                // (~R114 G115 B113 and ~R45 G46 B43). Terrain is tinted, so low saturation is the
+                // real tell for an unselected cell.
+                bool green = (g - Math.Max(r, b)) >= 30 && g >= 95;
+                bool greyCell = lum <= 132 && (mx - mn) <= 32;
+                if (green || greyCell) cell++;
                 n++;
             }
         return n > 0 && cell * 2 >= n;
