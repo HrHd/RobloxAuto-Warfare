@@ -130,6 +130,8 @@ class RobloxAuto : Form
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
+    int _flightOcrBase = -1;                      // last FLIGHT mm:ss read from the OSD (seconds)
+    long _flightOcrAt = 0;                        // when that read was taken
     DateTime _leftAt = DateTime.MinValue;        // when the player voluntarily left a server
         ConsoleForm _black = null;          // terminal-style cover shown while reconnecting
     volatile bool _blackWatch = false;
@@ -4597,6 +4599,7 @@ class RobloxAuto : Form
                                                   // the feed never flashes up during the deploy
             _rfRun = true;
             _flightStart = DateTime.Now;
+            _flightOcrBase = -1; _flightOcrAt = 0;   // re-read the OSD flight clock for this flight
             _rfHomeText = "----";
             _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
             _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
@@ -4671,6 +4674,8 @@ class RobloxAuto : Form
                         }
                         if (shown)
                         {
+                            int fs = ReadFlightSecs();   // the game's own top-left FLIGHT clock
+                            if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
                             ReadHudTop();             // heading + AGL
                             DetectHorizon();          // bank the artificial horizon
                             bool mavic = DroneLooksMavic();   // top-right drone name, else payload
@@ -4686,7 +4691,12 @@ class RobloxAuto : Form
                     // the static creeps up and when it is dropping it creeps down. The trend
                     // is what drives it; no extra screenshots in between. ----
                     shownLvl += (targetLvl - shownLvl) * 0.08f;
-                    int secs = (int)(DateTime.Now - _flightStart).TotalSeconds;
+                    // the game's own FLIGHT clock when we have read it, ticking between reads;
+                    // otherwise fall back to our own elapsed count since Deploy As Drone
+                    int secs;
+                    if (_flightOcrBase >= 0) secs = _flightOcrBase + (int)((Environment.TickCount - _flightOcrAt) / 1000);
+                    else secs = (int)(DateTime.Now - _flightStart).TotalSeconds;
+                    if (secs < 0) secs = 0;
                     float lvl = shownLvl + 0.02f * (float)Math.Sin(secs * 0.7);
                     if (lvl < 0.02f) lvl = 0.02f;
                     if (lvl > 1f) lvl = 1f;
@@ -5109,6 +5119,24 @@ class RobloxAuto : Form
             sb.Append(w.Length > 4 ? w[4] : "?");
         }
         return sb.ToString();
+    }
+
+    // Top-left "FLIGHT mm:ss" - the game's own flight clock, used for the HUD timer + battery.
+    // Returns seconds, or -1 when unreadable (caller keeps the local elapsed count).
+    int ReadFlightSecs()
+    {
+        try
+        {
+            int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
+            List<string[]> ws = OcrMaskedRegion(2, 2, 340 * W / 1920, 64 * H / 1080, 4);
+            if (ws == null) return -1;
+            string all = "";
+            foreach (string[] w in ws) all += (w[4] ?? "") + " ";
+            Match m = Regex.Match(all, @"(\d{1,2})\s*:\s*(\d{2})");
+            if (!m.Success) return -1;
+            return int.Parse(m.Groups[1].Value) * 60 + int.Parse(m.Groups[2].Value);
+        }
+        catch { return -1; }
     }
 
     static string ValueAfterLabel(List<string[]> ws, string label)
