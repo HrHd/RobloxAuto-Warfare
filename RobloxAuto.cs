@@ -5625,7 +5625,21 @@ class RobloxAuto : Form
             Thread t = new Thread(delegate ()
             {
                 AddBlackLine("BF-DRONE LINK  v3.2.1   [rf uplink]", "");
-                Boot("operator  " + (_serverId == "" ? "----" : _serverId), "", 0.02f, "operator", 420);
+                // startup prompt: type a login like a real console, then sit at a standby prompt
+                Boot("> login operator " + (_serverId == "" ? "" : _serverId.Substring(0, 8)), "", 0.01f, "login", 620);
+                Boot("authenticating operator key", "OK", 0.02f, "auth", 360);
+                AddBlackLine("session established - console ready", "OK");
+                AddBlackLine("standby - awaiting command", "");
+                OverlayHub.I.SetProgress(_flowPct, "standby");
+
+                // hold at the standby prompt until the flow is actually started (or 30s), so the
+                // viewers see the idle console blink, then the connect command is typed live
+                int w0 = 0;
+                while (_blackWatch && !_running && w0 < 30000) { Thread.Sleep(150); w0 += 150; }
+
+                string ip = RandIp();
+                AddBlackLine("> connect " + ip + ":47320", "");
+                Thread.Sleep(650);
                 if (resuming)
                 {
                     AddBlackLine("!! FAULT 0x7F: telemetry link degraded", "BAD");
@@ -5633,7 +5647,7 @@ class RobloxAuto : Form
                     AddBlackLine("   recovery protocol engaged", "OK");
                     Thread.Sleep(240);
                 }
-                Boot("cold start - post rf module", "OK", 0.05f, "post", 340);
+                Boot("resolving ground station " + ip, "OK", 0.05f, "resolve", 340);
                 Boot("loading terrain database", "OK", 0.10f, "terrain db", 540);
                 Boot("calibrating inertial nav (imu)", "OK", 0.16f, "imu cal", 440);
                 Boot("spooling gyro stabiliser", "OK", 0.22f, "gyro", 380);
@@ -5733,6 +5747,12 @@ class RobloxAuto : Form
         AddBlackLine(text, status);
         AddBlackProgress(pct, label);
         Thread.Sleep(ms);
+    }
+
+    readonly Random _rand = new Random();
+    string RandIp()
+    {
+        return "192.168." + _rand.Next(0, 256) + "." + _rand.Next(1, 255);
     }
 
     void HideBlack()
