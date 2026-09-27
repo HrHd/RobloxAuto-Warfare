@@ -3578,7 +3578,7 @@ class RobloxAuto : Form
     {
         public string Readout = "RF LINK   HOME  ----";
         public int Phase = 0;
-        public float Static = 1f;          // 1 = full static (HOME read), 0.2 = degraded (no HOME)
+        public float Static = 1f;          // static level: 0.08 near HOME, 1 = full at 1.20 km
         readonly Font _f = new Font("Consolas", 24F, FontStyle.Bold);
         Bitmap[] _framesHi, _framesLo;
         int _fw, _fh;
@@ -3713,17 +3713,19 @@ class RobloxAuto : Form
                     if (d != null && d != _rfHomeText) { _rfHomeText = d; Log("   RF HOME: " + d); }
                     OverlayHub.I.SetHome(d);
 
-                    // stream static level from time since deploy: strongest just after connecting,
-                    // settling to a steady hum, with a slow shimmer on top
+                    // Static tracks the distance from HOME: faintest at the drone, fullest at
+                    // 1.20 km (the feed's furthest reach). A slow shimmer rides on top.
                     int secs = (int)(DateTime.Now - _flightStart).TotalSeconds;
-                    float slvl = 0.18f - 0.10f * Math.Min(1f, secs / 20f);   // 0.18 -> 0.08 over 20s
-                    slvl += 0.02f * (float)Math.Sin(secs * 0.7);
-                    if (slvl < 0.02f) slvl = 0.02f;
-                    OverlayHub.I.SetFlight(true, slvl, secs);
+                    float metres = HomeMetres(d);
+                    float lvl = (metres < 0f) ? 0.2f : metres / 1200f;
+                    if (lvl < 0.08f) lvl = 0.08f;
+                    if (lvl > 1f) lvl = 1f;
+                    lvl += 0.02f * (float)Math.Sin(secs * 0.7);
+                    if (lvl < 0.02f) lvl = 0.02f;
+                    if (lvl > 1f) lvl = 1f;
+                    OverlayHub.I.SetFlight(true, lvl, secs);
 
-                    // full static when HOME is read; only 20% when it is not (degraded signal)
                     string txt = "RF LINK   HOME  " + (d != null ? d : "----");
-                    float lvl = (d != null) ? 1f : 0.2f;
                     bool ok = linked;
                     try
                     {
@@ -3911,6 +3913,20 @@ class RobloxAuto : Form
         }
         catch (Exception e) { Log("HUD read failed: " + e.Message); return null; }
         finally { try { if (shot != null && File.Exists(shot)) File.Delete(shot); } catch { } }
+    }
+
+    // "0.2 m" / "560.7 m" / "1.20 km" -> metres as a float, or -1 when nothing readable
+    static float HomeMetres(string d)
+    {
+        if (d == null) return -1f;
+        string s = d.ToUpperInvariant();
+        string n = NumFromToken(s);
+        if (n == null) return -1f;
+        float v;
+        if (!float.TryParse(n, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out v)) return -1f;
+        if (s.IndexOf("KM") >= 0) v *= 1000f;
+        return v;
     }
 
     static string NumFromToken(string t)

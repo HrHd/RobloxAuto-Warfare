@@ -65,7 +65,7 @@ function tick() {
     document.getElementById('fill').style.width = Math.round(s.progress * 100) + '%';
     document.getElementById('plabel').textContent = Math.round(s.progress * 100) + '%   ' + s.label;
 
-    // RF static while flying: intensity comes from time since deploy
+    // RF static while flying: intensity follows the HOME distance (fullest at 1.20 km)
     nc.style.display = s.flight ? 'block' : 'none';
     nc.style.opacity = s.flight ? (s.level || 0) : 0;
 
