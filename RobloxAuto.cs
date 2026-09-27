@@ -4940,34 +4940,74 @@ class RobloxAuto : Form
             int maxPts = W / 4 + 4;
             float[] pxs = new float[maxPts], pys = new float[maxPts];
             int n = 0;
+            bool gOk = false; float slope = 0f, icept = 0f;
 
-            // --- method 1 (primary): distance from the sampled sky colour, TOPMOST sustained run.
-            // The true horizon can be a faint haze edge, and the green step often sits far below it
-            // on the near field - which is why green-dominance kept drifting low. Sky is uniform and
-            // matches the top-band reference, so the first row where that stops being true, sustained
-            // for 6px, is the horizon. Global search: a temporal prior could trap it on a field edge.
-            for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)
+            // --- primary: GLOBAL line search. Score every candidate near-horizontal line by how
+            // much "sky" (close to the top-band reference) sits above it and "ground" (far from it)
+            // sits below, averaged across the whole width. Unlike a per-column threshold this stays
+            // put at low altitude, where the ground fills the view and the haze horizon is faint.
+            // Coarse sweep, then a fine sweep around the winner. ---
             {
-                int run = 0;
-                for (int y = yTop; y < yBot; y++)
+                float bestScore = 0f; int bm10 = 0, bb = 0;
+                for (int m10 = -30; m10 <= 30; m10 += 5)
                 {
-                    int c = px[y * W + x];
-                    int dr = ((c >> 16) & 0xFF) - sr; if (dr < 0) dr = -dr;
-                    int dg = ((c >> 8) & 0xFF) - sg; if (dg < 0) dg = -dg;
-                    int db = (c & 0xFF) - sb; if (db < 0) db = -db;
-                    if (dr + dg + db > 40)
+                    float m = m10 / 100f;
+                    for (int b = 40; b <= H - 40; b += 20)
                     {
-                        if (++run >= 6) { pxs[n] = x; pys[n] = y - 5; n++; break; }
+                        float tot = 0f; int cnt = 0;
+                        for (int x = W / 12; x < W * 11 / 12; x += 40)
+                        {
+                            int yl = (int)(m * x + b);
+                            if (yl - 14 < 0 || yl + 14 >= H) continue;
+                            int above = 0, below = 0;
+                            for (int kk = 1; kk <= 14; kk++)
+                            {
+                                int c1 = px[(yl - kk) * W + x];
+                                above += Math.Abs(((c1 >> 16) & 0xFF) - sr) + Math.Abs(((c1 >> 8) & 0xFF) - sg) + Math.Abs((c1 & 0xFF) - sb);
+                                int c2 = px[(yl + kk) * W + x];
+                                below += Math.Abs(((c2 >> 16) & 0xFF) - sr) + Math.Abs(((c2 >> 8) & 0xFF) - sg) + Math.Abs((c2 & 0xFF) - sb);
+                            }
+                            tot += below - above; cnt++;
+                        }
+                        if (cnt >= 12) { float s2 = tot / cnt; if (s2 > bestScore) { bestScore = s2; bm10 = m10; bb = b; } }
                     }
-                    else run = 0;
+                }
+                if (bestScore > 22f)
+                {
+                    float fm = bm10 / 100f;
+                    for (int m10 = bm10 - 4; m10 <= bm10 + 4; m10++)
+                    {
+                        float m = m10 / 100f;
+                        for (int b = bb - 20; b <= bb + 20; b += 2)
+                        {
+                            if (b < 40 || b > H - 40) continue;
+                            float tot = 0f; int cnt = 0;
+                            for (int x = W / 12; x < W * 11 / 12; x += 16)
+                            {
+                                int yl = (int)(m * x + b);
+                                if (yl - 14 < 0 || yl + 14 >= H) continue;
+                                int above = 0, below = 0;
+                                for (int kk = 1; kk <= 14; kk++)
+                                {
+                                    int c1 = px[(yl - kk) * W + x];
+                                    above += Math.Abs(((c1 >> 16) & 0xFF) - sr) + Math.Abs(((c1 >> 8) & 0xFF) - sg) + Math.Abs((c1 & 0xFF) - sb);
+                                    int c2 = px[(yl + kk) * W + x];
+                                    below += Math.Abs(((c2 >> 16) & 0xFF) - sr) + Math.Abs(((c2 >> 8) & 0xFF) - sg) + Math.Abs((c2 & 0xFF) - sb);
+                                }
+                                tot += below - above; cnt++;
+                            }
+                            if (cnt >= 12) { float s2 = tot / cnt; if (s2 > bestScore) { bestScore = s2; slope = m; icept = b; gOk = true; } }
+                        }
+                    }
+                    if (!gOk) { slope = fm; icept = bb; gOk = true; }
                 }
             }
 
-            // --- method A (fallback): GREEN dominance step - when the whole frame is one hue the
-            //     sky reference is useless, but ground is still greener than sky ---
-            if (n < 40)
+            // --- fallback (only if the global search found nothing, e.g. looking straight down):
+            //     per-column edges + RANSAC ---
+            if (!gOk)
             {
-                n = 0;
+                // method A: GREEN dominance step
                 for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)
                 {
                     for (int y = yTop + 8; y + 24 < yBot; y += 2)
@@ -4978,73 +5018,67 @@ class RobloxAuto : Form
                         if (below - above > 100) { pxs[n] = x; pys[n] = y; n++; break; }
                     }
                 }
-            }
-
-            // --- method B (fallback): signed brightness step - no usable sky (looking straight
-            //     down) or the colour split is too subtle ---
-            if (n < 40)
-            {
-                n = 0;
-                for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)
+                // method B: signed brightness step
+                if (n < 40)
                 {
-                    int bestY = -1, bestG = 32;
-                    for (int y = yTop; y < yBot; y += 2)
+                    n = 0;
+                    for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)
                     {
-                        int c1 = px[(y - 4) * W + x], c2 = px[(y + 4) * W + x];
-                        int g1 = ((c1 >> 8) & 0xFF) + (c1 & 0xFF) + ((c1 >> 16) & 0xFF);
-                        int g2 = ((c2 >> 8) & 0xFF) + (c2 & 0xFF) + ((c2 >> 16) & 0xFF);
-                        int d = g1 - g2;
-                        if (d > bestG) { bestG = d; bestY = y; }
+                        int bestY = -1, bestG = 32;
+                        for (int y = yTop; y < yBot; y += 2)
+                        {
+                            int c1 = px[(y - 4) * W + x], c2 = px[(y + 4) * W + x];
+                            int g1 = ((c1 >> 8) & 0xFF) + (c1 & 0xFF) + ((c1 >> 16) & 0xFF);
+                            int g2 = ((c2 >> 8) & 0xFF) + (c2 & 0xFF) + ((c2 >> 16) & 0xFF);
+                            int d = g1 - g2;
+                            if (d > bestG) { bestG = d; bestY = y; }
+                        }
+                        if (bestY >= 0) { pxs[n] = x; pys[n] = bestY; n++; }
                     }
-                    if (bestY >= 0) { pxs[n] = x; pys[n] = bestY; n++; }
                 }
-            }
-            if (n < 30)
-            {
-                _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f;
-                if (Environment.TickCount - _hudLogAt >= 2000) { _hudLogAt = Environment.TickCount; Log("horizon det: too few boundary points (" + n + ") - no lock"); }
-                return;
-            }
-
-            // RANSAC: a horizon is near-horizontal, so reject steep candidate lines outright
-            Random rng = new Random();
-            float bs = 0f, bi = 0f; int bestIn = -1;
-            for (int it = 0; it < 240; it++)
-            {
-                int i1 = rng.Next(n), i2 = rng.Next(n);
-                if (i1 == i2) continue;
-                float x1 = pxs[i1], y1 = pys[i1], x2 = pxs[i2], y2 = pys[i2];
-                if (Math.Abs(x2 - x1) < 60f) continue;
-                float m = (y2 - y1) / (x2 - x1);
-                if (m > 0.8f || m < -0.8f) continue;          // steeper than ~39 deg is not the horizon
-                float b = y1 - m * x1;
-                int inl = 0;
+                if (n < 30)
+                {
+                    _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f;
+                    if (Environment.TickCount - _hudLogAt >= 2000) { _hudLogAt = Environment.TickCount; Log("horizon det: no global line, too few points (" + n + ") - no lock"); }
+                    return;
+                }
+                Random rng = new Random();
+                float bs = 0f, bi = 0f; int bestIn = -1;
+                for (int it = 0; it < 240; it++)
+                {
+                    int i1 = rng.Next(n), i2 = rng.Next(n);
+                    if (i1 == i2) continue;
+                    float x1 = pxs[i1], y1 = pys[i1], x2 = pxs[i2], y2 = pys[i2];
+                    if (Math.Abs(x2 - x1) < 60f) continue;
+                    float m = (y2 - y1) / (x2 - x1);
+                    if (m > 0.8f || m < -0.8f) continue;
+                    float b = y1 - m * x1;
+                    int inl = 0;
+                    for (int i = 0; i < n; i++)
+                        if (Math.Abs(pys[i] - (m * pxs[i] + b)) < 8f) inl++;
+                    if (inl > bestIn) { bestIn = inl; bs = m; bi = b; }
+                }
+                if (bestIn < n * 40 / 100)
+                {
+                    _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f;
+                    if (Environment.TickCount - _hudLogAt >= 2000) { _hudLogAt = Environment.TickCount; Log("horizon det: weak line (" + bestIn + "/" + n + " inliers) - no lock"); }
+                    return;
+                }
+                float sx = 0, sy = 0, sxy = 0, sxx = 0; int ck = 0;
                 for (int i = 0; i < n; i++)
-                    if (Math.Abs(pys[i] - (m * pxs[i] + b)) < 8f) inl++;   // slightly looser: noisy maps
-                if (inl > bestIn) { bestIn = inl; bs = m; bi = b; }
-            }
-            if (bestIn < n * 40 / 100)
-            {
-                _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f;
-                if (Environment.TickCount - _hudLogAt >= 2000) { _hudLogAt = Environment.TickCount; Log("horizon det: weak line (" + bestIn + "/" + n + " inliers) - no lock"); }
-                return;
+                {
+                    if (Math.Abs(pys[i] - (bs * pxs[i] + bi)) >= 8f) continue;
+                    sx += pxs[i]; sy += pys[i]; sxy += pxs[i] * pys[i]; sxx += pxs[i] * pxs[i]; ck++;
+                }
+                float den = ck * sxx - sx * sx;
+                if (ck < 20 || Math.Abs(den) < 1f) { _hudDetValid = false; return; }
+                slope = (ck * sxy - sx * sy) / den;
+                icept = (sy - slope * sx) / ck;
             }
 
-            // least-squares refit on the RANSAC inliers only
-            float sx = 0, sy = 0, sxy = 0, sxx = 0; int ck = 0;
-            for (int i = 0; i < n; i++)
-            {
-                if (Math.Abs(pys[i] - (bs * pxs[i] + bi)) >= 8f) continue;
-                sx += pxs[i]; sy += pys[i]; sxy += pxs[i] * pys[i]; sxx += pxs[i] * pxs[i]; ck++;
-            }
-            float den = ck * sxx - sx * sx;
-            if (ck < 20 || Math.Abs(den) < 1f) { _hudDetValid = false; return; }
-            float slope = (ck * sxy - sx * sy) / den;
-            float icept = (sy - slope * sx) / ck;
-
-            // --- refinement: re-find each column's edge within +-20px of that first fit at 1px
-            //     resolution and refit. The coarse pass used 2px rows and a 100-point threshold,
-            //     which biases the line; this tightens it onto the actual edge. ---
+            // --- refinement: snap each column to the first row within +-20px of the line where the
+            //     colour clearly departs from the sky reference, then refit. Tightens the coarse
+            //     (20px step) global search onto the actual edge. ---
             float rsx = 0, rsy = 0, rsxy = 0, rsxx = 0; int rk = 0;
             for (int x = W / 12; x < W * 11 / 12; x += 2)
             {
@@ -5054,10 +5088,9 @@ class RobloxAuto : Form
                 if (hi > yBot - 24) hi = yBot - 24;
                 for (int y = lo; y <= hi; y++)
                 {
-                    int above = 0, below = 0;
-                    for (int kk = 1; kk <= 8; kk++) { int c = px[(y - kk) * W + x]; above += ((c >> 8) & 0xFF) - (c & 0xFF); }
-                    for (int kk = 0; kk < 8; kk++) { int c = px[(y + kk) * W + x]; below += ((c >> 8) & 0xFF) - (c & 0xFF); }
-                    if (below - above > 100) { rsx += x; rsy += y; rsxy += x * y; rsxx += x * x; rk++; break; }
+                    int c = px[y * W + x];
+                    int d2 = Math.Abs(((c >> 16) & 0xFF) - sr) + Math.Abs(((c >> 8) & 0xFF) - sg) + Math.Abs((c & 0xFF) - sb);
+                    if (d2 > 36) { rsx += x; rsy += y; rsxy += x * y; rsxx += x * x; rk++; break; }
                 }
             }
             if (rk >= 40)
@@ -5090,7 +5123,7 @@ class RobloxAuto : Form
             if (Environment.TickCount - _hudLogAt >= 2000)
             {
                 _hudLogAt = Environment.TickCount;
-                Log("horizon det: " + n + " pts, roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px");
+                Log("horizon det: " + (gOk ? "global" : n + " pts") + ", roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px");
             }
         }
         catch { }
