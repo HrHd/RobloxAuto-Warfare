@@ -3689,59 +3689,85 @@ class RobloxAuto : Form
             Thread t = new Thread(delegate ()
             {
                 bool shown = false;
+                long lastOcr = 0;
+                float targetLvl = 0.2f;      // from the last HOME read (the "true" value)
+                float shownLvl = 0.2f;       // eased toward the target every tick
+                string txt = "RF LINK   HOME  ----";
+                float lastSet = -1f;
+                string lastTxt = null;
+                bool lastOk = false;
+
                 while (_rfRun)
                 {
-                    // the crash screen ("NO SIGNAL") means the drone is gone - reconnect to the
-                    // same server straight away
-                    if (IsNoSignal())
+                    // ---- slow path: the only screen reads, every ~1.5s. Everything between
+                    // them is pure maths, so we are not grabbing the screen 8x a second. ----
+                    if (Environment.TickCount - lastOcr >= 1500)
                     {
-                        Log("   NO SIGNAL detected - drone crashed, rejoining the same server");
-                        StopRfWatch();
-                        Rejoin("no signal");   // LAND NOW shows first, then the black cover follows
-                        return;
+                        lastOcr = Environment.TickCount;
+
+                        // the crash screen ("NO SIGNAL") means the drone is gone - reconnect to
+                        // the same server straight away
+                        if (IsNoSignal())
+                        {
+                            Log("   NO SIGNAL detected - drone crashed, rejoining the same server");
+                            StopRfWatch();
+                            Rejoin("no signal");   // LAND NOW shows first, then the black cover follows
+                            return;
+                        }
+
+                        // the top-right "LINK LIVE" indicator is the proof we are actually in
+                        // the drone view - without it the feed should not run at all
+                        bool linked = IsLinked();
+                        if (linked != shown)
+                        {
+                            shown = linked;
+                            Log(linked ? "   RF feed: LINK detected - overlay on" : "   RF feed: no LINK - overlay off");
+                        }
+                        string d = linked ? FindHomeDistance() : null;
+                        if (d != null && d != _rfHomeText) { _rfHomeText = d; Log("   RF HOME: " + d); }
+                        OverlayHub.I.SetHome(d);
+
+                        // target static from the distance: faintest at HOME, full at 1.20 km
+                        float metres = HomeMetres(d);
+                        targetLvl = (metres < 0f) ? 0.2f : metres / 1200f;
+                        if (targetLvl < 0.08f) targetLvl = 0.08f;
+                        if (targetLvl > 1f) targetLvl = 1f;
+                        txt = "RF LINK   HOME  " + (d != null ? d : "----");
                     }
 
-                    // the top-right "LINK LIVE" indicator is the proof we are actually in the
-                    // drone view - without it the feed should not run at all
-                    bool linked = IsLinked();
-                    if (linked != shown)
-                    {
-                        shown = linked;
-                        Log(linked ? "   RF feed: LINK detected - overlay on" : "   RF feed: no LINK - overlay off");
-                    }
-                    string d = linked ? FindHomeDistance() : null;
-                    if (d != null && d != _rfHomeText) { _rfHomeText = d; Log("   RF HOME: " + d); }
-                    OverlayHub.I.SetHome(d);
-
-                    // Static tracks the distance from HOME: faintest at the drone, fullest at
-                    // 1.20 km (the feed's furthest reach). A slow shimmer rides on top.
+                    // ---- fast path: ease toward the target, so when the distance is climbing
+                    // the static creeps up and when it is dropping it creeps down. The trend
+                    // is what drives it; no extra screenshots in between. ----
+                    shownLvl += (targetLvl - shownLvl) * 0.08f;
                     int secs = (int)(DateTime.Now - _flightStart).TotalSeconds;
-                    float metres = HomeMetres(d);
-                    float lvl = (metres < 0f) ? 0.2f : metres / 1200f;
-                    if (lvl < 0.08f) lvl = 0.08f;
-                    if (lvl > 1f) lvl = 1f;
-                    lvl += 0.02f * (float)Math.Sin(secs * 0.7);
+                    float lvl = shownLvl + 0.02f * (float)Math.Sin(secs * 0.7);
                     if (lvl < 0.02f) lvl = 0.02f;
                     if (lvl > 1f) lvl = 1f;
                     OverlayHub.I.SetFlight(true, lvl, secs);
 
-                    string txt = "RF LINK   HOME  " + (d != null ? d : "----");
-                    bool ok = linked;
-                    try
+                    // only touch the window when something actually changed; the 180ms blink
+                    // timer does the repaint, so the overlay is not recomposited every tick
+                    if (Math.Abs(lvl - lastSet) > 0.01f || txt != lastTxt || shown != lastOk)
                     {
-                        BeginInvoke((MethodInvoker)delegate
+                        lastSet = lvl; lastTxt = txt; lastOk = shown;
+                        bool ok = shown;
+                        float lc = lvl;
+                        string tc = txt;
+                        try
                         {
-                            if (_rfForm != null)
+                            BeginInvoke((MethodInvoker)delegate
                             {
-                                _rfForm.Visible = ok;
-                                _rfForm.Static = lvl;
-                                _rfForm.Readout = txt;
-                                if (ok) _rfForm.Invalidate();
-                            }
-                        });
+                                if (_rfForm != null)
+                                {
+                                    _rfForm.Visible = ok;
+                                    _rfForm.Static = lc;
+                                    _rfForm.Readout = tc;
+                                }
+                            });
+                        }
+                        catch { }
                     }
-                    catch { }
-                    Thread.Sleep(900);
+                    Thread.Sleep(120);
                 }
             });
             t.IsBackground = true;
