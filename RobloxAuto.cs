@@ -5155,24 +5155,25 @@ class RobloxAuto : Form
     // drone" tells. Scanned anywhere on screen, plain + whiten.
     bool DroneKeyword()
     {
-        try
+        try { if (DroneKeywordScan(OcrWords())) return true; } catch { }
+        try { if (DroneKeywordScan(OcrWordsWhiten())) return true; } catch { }
+        return false;
+    }
+
+    // POSITIONAL. The OSD prints "AGL" in the top-centre altitude readout and "MOUNTED" on the
+    // payload line bottom-right. Requiring the word AND its place means a stray "AGL"/"MOUNTED"
+    // anywhere else (menu text, OCR noise) can never be mistaken for the drone.
+    bool DroneKeywordScan(List<string[]> ws)
+    {
+        int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
+        foreach (string[] w in ws)
         {
-            foreach (string[] w in OcrWords())
-            {
-                string t = (w[4] ?? "").ToUpperInvariant();
-                if (t.IndexOf("AGL") >= 0 || t.IndexOf("MOUNTED") >= 0) return true;
-            }
+            int wx, wy;
+            try { wx = int.Parse(w[0]); wy = int.Parse(w[1]); } catch { continue; }
+            string n = Norm(w[4] ?? "");
+            if (n == "agl" && wy < H * 22 / 100 && wx > W * 28 / 100 && wx < W * 72 / 100) return true;
+            if (n.IndexOf("mounted") >= 0 && wy > H * 82 / 100 && wx > W * 50 / 100) return true;
         }
-        catch { }
-        try
-        {
-            foreach (string[] w in OcrWordsWhiten())
-            {
-                string t = (w[4] ?? "").ToUpperInvariant();
-                if (t.IndexOf("AGL") >= 0 || t.IndexOf("MOUNTED") >= 0) return true;
-            }
-        }
-        catch { }
         return false;
     }
 
@@ -5194,8 +5195,9 @@ class RobloxAuto : Form
             // the profile strip - "Level NN  Cash $NNNN  <name>" - is on EVERY menu screen and on
             // NO drone OSD, so it alone is proof we are not flying
             "CASH",
-            // TEAM BASE panel
-            "TEAM BASE", "DEPLOY AS DRONE", "WARHEAD",
+            // TEAM BASE panel / base. "BASE" is safe to use as a tell: the map prints a "Base"
+            // label and TEAM BASE contains it, and the drone OSD never prints the word at all.
+            "TEAM BASE", "BASE", "DEPLOY AS DRONE", "WARHEAD",
             // the map's objective panel
             "CAPTURE", "CONTROL", "ELIMINATE", "TOP KILLS", "COMPLETED",
             // team select / respawn / loading / crash (these screens have NO nav bar, which is why
@@ -5204,10 +5206,19 @@ class RobloxAuto : Form
             // the persistent SQUAD box
             "SQUAD", "GHILLE", "JOIN OR CREATE"
         };
+        // Multi-word labels are matched as PHRASES, not single tokens - OCR hands back "TEAM" and
+        // "BASE" separately, so the single-token scan above can never see "TEAM BASE".
+        string[] phrases = new string[] {
+            "TEAM BASE", "CHANGE TEAM", "SELECT DRONE", "DEPLOY AS DRONE", "TOP KILLS", "JOIN OR CREATE"
+        };
         why = "";
-        try
+        List<string[]>[] sets = new List<string[]>[2];
+        try { sets[0] = OcrWords(); } catch { }
+        try { sets[1] = OcrWordsWhiten(); } catch { }
+        foreach (List<string[]> set in sets)
         {
-            foreach (string[] w in OcrWords())
+            if (set == null) continue;
+            foreach (string[] w in set)
             {
                 string t = (w[4] ?? "").ToUpperInvariant();
                 for (int i = 0; i < keys.Length; i++)
@@ -5216,20 +5227,9 @@ class RobloxAuto : Form
                 if (_userName.Length >= 4 && Norm(t).IndexOf(Norm(_userName)) >= 0)
                 { why = "saw username"; return true; }
             }
+            foreach (string p in phrases)
+                if (FindPhraseAll(p, null, set).Count > 0) { why = "saw \"" + p + "\""; return true; }
         }
-        catch { }
-        try
-        {
-            foreach (string[] w in OcrWordsWhiten())
-            {
-                string t = (w[4] ?? "").ToUpperInvariant();
-                for (int i = 0; i < keys.Length; i++)
-                    if (t.IndexOf(keys[i]) >= 0) { why = "saw \"" + keys[i] + "\""; return true; }
-                if (_userName.Length >= 4 && Norm(t).IndexOf(Norm(_userName)) >= 0)
-                { why = "saw username"; return true; }
-            }
-        }
-        catch { }
         return false;
     }
 
@@ -5660,14 +5660,13 @@ class RobloxAuto : Form
         string up = all.ToUpperInvariant();
         bool label = up.IndexOf("FLIGHT") >= 0 || up.IndexOf("FLY") >= 0 ||
                      up.IndexOf("FL1GHT") >= 0 || up.IndexOf("FLGHT") >= 0 || up.IndexOf("FLIG") >= 0;
-        // mm:ss (colon may be dropped - then fall back to 4 digits, but only next to a FLIGHT label)
+        // Require the FLY/FLIGHT label first. A bare "mm:ss" is NOT proof of a drone - a menu can
+        // print a time too, and accepting one turned the HUD on over the map/base. No label, no read.
+        if (!label) return -1;
         Match m = Regex.Match(all, @"(\d{1,2})\s*[:.;]\s*(\d{2})");
         if (m.Success) return int.Parse(m.Groups[1].Value) * 60 + int.Parse(m.Groups[2].Value);
-        if (label)
-        {
-            Match d = Regex.Match(all, @"(\d{1,2})\s?(\d{2})\b");
-            if (d.Success) return int.Parse(d.Groups[1].Value) * 60 + int.Parse(d.Groups[2].Value);
-        }
+        Match d = Regex.Match(all, @"(\d{1,2})\s?(\d{2})\b");
+        if (d.Success) return int.Parse(d.Groups[1].Value) * 60 + int.Parse(d.Groups[2].Value);
         return -1;
     }
 
