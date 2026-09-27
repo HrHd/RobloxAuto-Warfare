@@ -1557,6 +1557,19 @@ class RobloxAuto : Form
                 try { AutoSteps(g); }
                 catch (Exception ex) { Log("AUTO error: " + ex.Message); }
                 if (!Alive(g) || _autoDeployed) break;
+                // If the Deploy As Drone button is actually on screen, the last click just did not
+                // register - retry it rather than backing out with Return (which used to fire even
+                // though the deploy button was right there).
+                if (PhraseOnScreen("Deploy As Drone") || PhraseOnScreenWhiten("Deploy As Drone"))
+                {
+                    Log("AUTO: Deploy As Drone is on screen - clicking it again instead of returning");
+                    if (ClickPhrasePersistent("Deploy As Drone", 12000, g))
+                    {
+                        _autoDeployed = true;
+                        if ((_watchHome || _hudOn) && _asDrone) StartRfWatch();
+                        break;
+                    }
+                }
                 Log("AUTO: stopped before deploy - back out with Return and re-plan (" + attempt + "/2)");
                 AddBlackError("0x2C", "deploy sequence incomplete - re-planning");
                 try { ClickRedReturn(); } catch { }
@@ -1868,6 +1881,17 @@ class RobloxAuto : Form
         }
         else Log("5) base step skipped (" + (panelUp ? "TEAM BASE already open" : "step off") + ")");
 
+        // MISCLICK GUARD: if the base click selected a map POINT instead, we are on the point-lock
+        // screen ("Press Deploy button to lock in your choice" + Deploy/Return). Never continue to
+        // the warhead / deploy steps from here - back out with Return and let the run re-plan.
+        if (MapPointLockUp())
+        {
+            Log("5) map POINT got selected instead of the Base (misclick) - backing out with Return");
+            ClickRedReturn();
+            Thread.Sleep(500);
+            return;
+        }
+
         // 6 - warhead. Click the fixed grid cell for the chosen warhead and confirm the
         //     green highlight, rather than trusting the tiny label text.
         if (!GoOn(g)) return;
@@ -1894,6 +1918,12 @@ class RobloxAuto : Form
             AddBlackError("0x13", "payload mismatch - aborting to loadout");
             ClickPhraseVerified("LOADOUT", g);
             HideBlack();
+            return;
+        }
+        if (MapPointLockUp())
+        {
+            Log("7) on the map point-lock screen (misclick) - backing out, NOT pressing Deploy");
+            ClickRedReturn();
             return;
         }
         if (TeamBaseUp(panelUp))
@@ -2286,6 +2316,25 @@ class RobloxAuto : Form
             InvalidateOcr();
             Thread.Sleep(200);
         }
+        return false;
+    }
+
+    // The MAP's "point lock" screen: a POINT got selected and it says to press Deploy to lock your
+    // choice, with a green Deploy and a maroon Return. Seeing this where the TEAM BASE panel should
+    // be means the base click MISSED and hit a map POINT - a misclick. We must back out with Return
+    // and never press Deploy here (that would lock a spawn point).
+    bool MapPointLockUp()
+    {
+        try
+        {
+            List<string[]> ws = OcrWords();
+            if (PhraseIn("lock in your choice", ws)) return true;
+            if (PhraseIn("Press Deploy button", ws)) return true;
+            List<string[]> ww = OcrWordsWhiten();
+            if (PhraseIn("lock in your choice", ww)) return true;
+            if (PhraseIn("Press Deploy button", ww)) return true;
+        }
+        catch { }
         return false;
     }
 
@@ -6128,43 +6177,51 @@ class RobloxAuto : Form
             {
                 int B = Math.Max(8, H / 25);
                 int gw = W / B, gh = H / B;
-                float[] lum = new float[gw * gh];
+                // Block images for R, G and B. The channel that SEES the horizon best depends on the
+                // scene (blue sky vs green ground vs dust), so we try all three and keep whichever
+                // gives the strongest sky/ground step. (Inverting is pointless - the step is the same.)
+                float[] imR = new float[gw * gh], imG = new float[gw * gh], imB = new float[gw * gh];
                 for (int gy = 0; gy < gh; gy++)
                     for (int gx = 0; gx < gw; gx++)
                     {
-                        long s = 0; int c = 0;
+                        long sr2 = 0, sg2 = 0, sb2 = 0; int c = 0;
                         for (int y = gy * B; y < gy * B + B && y < H; y++)
                             for (int x = gx * B; x < gx * B + B && x < W; x++)
-                            { int p = px[y * W + x]; s += (((p >> 16) & 0xFF) * 299 + ((p >> 8) & 0xFF) * 587 + (p & 0xFF) * 114) / 1000; c++; }
-                        lum[gy * gw + gx] = c > 0 ? s / (float)c : 0f;
+                            { int p = px[y * W + x]; sr2 += (p >> 16) & 0xFF; sg2 += (p >> 8) & 0xFF; sb2 += p & 0xFF; c++; }
+                        int ii = gy * gw + gx;
+                        imR[ii] = c > 0 ? sr2 / (float)c : 0f;
+                        imG[ii] = c > 0 ? sg2 / (float)c : 0f;
+                        imB[ii] = c > 0 ? sb2 / (float)c : 0f;
                     }
                 int gx0 = gw * 20 / 100, gx1 = gw * 80 / 100, gy0 = gh * 12 / 100, gy1 = gh * 88 / 100;
                 float[] bx2 = new float[gw], by2 = new float[gw], bg2 = new float[gw];
-                int pn = 0;
-                for (int gx = gx0; gx < gx1; gx++)
+                float bestGrad = 0f, bestM = 0f, bestB = 0f; bool found = false;
+                for (int ch = 0; ch < 3; ch++)
                 {
-                    float best = -1f; int by = -1;
-                    for (int gy = gy0 + 1; gy < gy1 - 1; gy++)
+                    float[] im = ch == 0 ? imR : (ch == 1 ? imG : imB);
+                    int pn = 0;
+                    for (int gx = gx0; gx < gx1; gx++)
                     {
-                        float g = Math.Abs(lum[(gy + 1) * gw + gx] - lum[(gy - 1) * gw + gx]);
-                        if (g > best) { best = g; by = gy; }
+                        float best = -1f; int by = -1;
+                        for (int gy = gy0 + 1; gy < gy1 - 1; gy++)
+                        {
+                            float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
+                            if (g > best) { best = g; by = gy; }
+                        }
+                        if (by < 0) continue;
+                        // SUB-PIXEL: parabolic interpolation of the gradient peak.
+                        float gA = Math.Abs(im[by * gw + gx] - im[(by - 2) * gw + gx]);
+                        float gB = best;
+                        float gC = Math.Abs(im[(by + 2) * gw + gx] - im[by * gw + gx]);
+                        float dnm = gA - 2f * gB + gC;
+                        float sub = Math.Abs(dnm) > 0.0001f ? 0.5f * (gA - gC) / dnm : 0f;
+                        if (sub > 0.5f) sub = 0.5f; if (sub < -0.5f) sub = -0.5f;
+                        bx2[pn] = gx * B + B / 2f;
+                        by2[pn] = (by + sub) * B + B / 2f;
+                        bg2[pn] = best;
+                        pn++;
                     }
-                    if (by < 0) continue;
-                    // SUB-PIXEL: parabolic interpolation of the gradient peak, so the horizon row is
-                    // estimated to a fraction of a block instead of snapping to the block centre.
-                    float gA = Math.Abs(lum[by * gw + gx] - lum[(by - 2) * gw + gx]);
-                    float gB = best;
-                    float gC = Math.Abs(lum[(by + 2) * gw + gx] - lum[by * gw + gx]);
-                    float dnm = gA - 2f * gB + gC;
-                    float sub = Math.Abs(dnm) > 0.0001f ? 0.5f * (gA - gC) / dnm : 0f;
-                    if (sub > 0.5f) sub = 0.5f; if (sub < -0.5f) sub = -0.5f;
-                    bx2[pn] = gx * B + B / 2f;
-                    by2[pn] = (by + sub) * B + B / 2f;
-                    bg2[pn] = best;
-                    pn++;
-                }
-                if (pn >= 12)
-                {
+                    if (pn < 12) continue;
                     float fm = 0f, fb = 0f;
                     for (int pass = 0; pass < 2; pass++)     // gradient-WEIGHTED fit, then outlier refit
                     {
@@ -6181,32 +6238,31 @@ class RobloxAuto : Form
                         fm = (float)((sw * swxy - swx * swy) / den);
                         fb = (float)((swy - fm * swx) / sw);
                     }
-                    if (Math.Abs(fm) <= 1.0f)
+                    if (Math.Abs(fm) > 1.0f) continue;
+                    float gsum = 0f, wsum = 0f;
+                    for (int i = 0; i < pn; i++) if (Math.Abs(by2[i] - (fm * bx2[i] + fb)) <= 24f) { gsum += bg2[i] * bg2[i]; wsum += bg2[i]; }
+                    float gm = wsum > 0 ? gsum / wsum : 0f;
+                    if (gm > bestGrad) { bestGrad = gm; bestM = fm; bestB = fb; found = true; }
+                }
+                if (found)
+                {
+                    float fm = bestM, fb = bestB;
+                    // Require a real sky/ground step across the line (mostly-one-colour -> no lock), and
+                    // reject a wild jump from the last good fix. Green channel used for the contrast test.
+                    float above = 0f, below = 0f; int cc = 0;
+                    for (int gx = gx0; gx < gx1; gx++)
                     {
-                        float gsum = 0f, wsum = 0f;
-                        for (int i = 0; i < pn; i++) if (Math.Abs(by2[i] - (fm * bx2[i] + fb)) <= 24f) { gsum += bg2[i] * bg2[i]; wsum += bg2[i]; }
-                        float gm = wsum > 0 ? gsum / wsum : 0f;
-                        // Require a real SKY/GROUND brightness step across the line. If the view is mostly
-                        // ONE colour (pitched hard up = all sky, or hard down = all ground) there is no
-                        // horizon to measure - so we do NOT lock, and the ladder simply carries on from
-                        // the stick and runs off the screen, exactly like the real ground line would.
-                        float above = 0f, below = 0f; int cc = 0;
-                        for (int gx = gx0; gx < gx1; gx++)
-                        {
-                            int yb = (int)((fm * (gx * B + B / 2f) + fb) / B);
-                            if (yb - 3 < 0 || yb + 3 >= gh) continue;
-                            above += lum[(yb - 3) * gw + gx];
-                            below += lum[(yb + 3) * gw + gx];
-                            cc++;
-                        }
-                        float contrast = cc > 0 ? Math.Abs(below - above) / cc : 0f;
-                        // Also reject a wild jump from the last good fix - a false line during a fast
-                        // pitch/roll. The complementary filter then just coasts on the stick.
-                        float rollNow = (float)(Math.Atan(fm) * 180.0 / Math.PI);
-                        bool jump = _hudSmSeeded && Math.Abs(rollNow - _hudSmRoll) > 50f;
-                        if (gm > 1.5f && contrast > 2.5f && !jump)
-                        { slope = fm; icept = fb; gOk = true; conf = Math.Min(1f, gm / 12f); }
+                        int yb = (int)((fm * (gx * B + B / 2f) + fb) / B);
+                        if (yb - 3 < 0 || yb + 3 >= gh) continue;
+                        above += imG[(yb - 3) * gw + gx];
+                        below += imG[(yb + 3) * gw + gx];
+                        cc++;
                     }
+                    float contrast = cc > 0 ? Math.Abs(below - above) / cc : 0f;
+                    float rollNow = (float)(Math.Atan(fm) * 180.0 / Math.PI);
+                    bool jump = _hudSmSeeded && Math.Abs(rollNow - _hudSmRoll) > 50f;
+                    if (bestGrad > 1.5f && contrast > 2.5f && !jump)
+                    { slope = fm; icept = fb; gOk = true; conf = Math.Min(1f, bestGrad / 12f); }
                 }
             }
 
