@@ -4063,23 +4063,18 @@ class RobloxAuto : Form
         if (dt <= 0f) return;
         if (dt > 0.1f) dt = 0.1f;
 
-        // BANK input. The RIGHT stick X is the roll axis, but the LEFT stick X is YAW and the drone
-        // BANKS INTO A TURN - which is exactly the tilt the user wants to see. So whichever stick is
-        // deflected more drives the ladder's roll. (The old code ignored the left stick entirely, so
-        // banking by turning never tilted the HUD - it stayed flat while the world rolled.)
+        // ROLL = the RIGHT stick X ONLY. The LEFT stick X is YAW (turning) and must NOT tilt the
+        // ladder - moving the left stick right/left should not affect the horizon at all.
         float sx = _padRx;
-        float yaw = _padLx;
         float sy = _padRy;
         if (sx > -0.05f && sx < 0.05f) sx = 0f;
-        if (yaw > -0.05f && yaw < 0.05f) yaw = 0f;
         if (sy > -0.05f && sy < 0.05f) sy = 0f;
-        float bankIn = Math.Abs(sx) >= Math.Abs(yaw) ? sx : yaw;
 
         // ACCELERATION model. The stick no longer sets the horizon's SPEED directly - it sets a
         // TARGET speed, and the horizon's actual speed eases toward it. So a stick flick makes the
         // line accelerate into motion and ease to a stop instead of snapping to a new speed and
         // slamming to rest, which is what read as "jumpy". dt-correct so it is identical at any FPS.
-        float vTargetRoll = -bankIn * _hudRollRate;    // deg/s (roll)
+        float vTargetRoll = -sx * _hudRollRate;    // deg/s (roll)
         float vTargetPitch = -sy * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
         float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
         _hudRollVel += (vTargetRoll - _hudRollVel) * av;
@@ -4102,9 +4097,9 @@ class RobloxAuto : Form
             float a = 1f - (float)Math.Pow(0.5, dt / _hudFlyTau);
             _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
         }
-        if (bankIn == 0f)
+        if (sx == 0f)
         {
-            // hands off the roll/yaw stick: ease back to level (no camera roll reference)
+            // hands off the roll stick: ease back to level (no camera roll reference)
             _hudFRoll += (0f - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 0.6));
             if (!det) _hudFPitch += (0f - _hudFPitch) * (1f - (float)Math.Pow(0.5, dt / 1.5));
         }
