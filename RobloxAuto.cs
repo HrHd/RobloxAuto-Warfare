@@ -1533,6 +1533,11 @@ class RobloxAuto : Form
         Thread.Sleep(500);
         HideBlack();
 
+        // The payload we just selected tells us which HUD to use, so lock the style in the
+        // moment we click Deploy As Drone (no need to wait to read it off the HUD).
+        _hudStyleUav = MavicBomb(_bomb);
+        Log("   HUD style from payload: " + (_hudStyleUav ? "UAV (DJI)" : "FPV"));
+
         // now that we are flying, keep reading the HOME distance / telemetry. The loop drives
         // the fake RF feed (if RF watch is on) and the FPV/UAV HUD (if the HUD is on), so it
         // starts when EITHER is wanted.
@@ -3690,6 +3695,12 @@ class RobloxAuto : Form
     // The two drones carry completely different warheads. MAVIC drops grenade racks; FPV
     // uses the rocket/grenade launcher rounds. Keeping them separate stops us clicking a
     // warhead that is not on the panel.
+    static bool MavicBomb(string b)
+    {
+        foreach (string x in BombsFor("MAVIC")) if (x == b) return true;
+        return false;
+    }
+
     static string[] BombsFor(string drone)
     {
         if (drone == "MAVIC")
@@ -4124,9 +4135,7 @@ class RobloxAuto : Form
 
             DrawLadder(g, W, cy, true, Spd);                       // speed on the left
             DrawLadder(g, W, cy, false, Alt != "" ? Alt : Agl);     // ALT on the right
-
-            g.DrawString("HOME " + Home, _fb, _g, cx - 70, cy + 120);
-            // no fly timer / style text - the game already prints those; we only ADD to the OSD
+            // no centre HOME, no fly timer / style text - the game already prints those
             base.OnPaint(e);
         }
 
@@ -4331,19 +4340,25 @@ class RobloxAuto : Form
                             _hudPitch = _hudPitchTarget = _hudLockPitch;
                         }
 
-                        // Controller ROTATES the locked horizon (rate control: the stick is a
-                        // velocity). Centred stick slowly springs back to the lock.
-                        _hudRollTarget += -_padLx * 70f * dt;
-                        _hudPitchTarget += _padLy * 130f * dt;
-                        if (_padLx == 0f) _hudRollTarget += (_hudLockRoll - _hudRollTarget) * 0.03f;
-                        if (_padLy == 0f) _hudPitchTarget += (_hudLockPitch - _hudPitchTarget) * 0.03f;
-                        if (_hudRollTarget > 75f) _hudRollTarget = 75f;
-                        if (_hudRollTarget < -75f) _hudRollTarget = -75f;
-                        if (_hudPitchTarget > 200f) _hudPitchTarget = 200f;
-                        if (_hudPitchTarget < -200f) _hudPitchTarget = -200f;
+                        // Use BOTH sticks: whichever the player is flying with rotates the horizon
+                        // (Roblox maps the right stick to the camera and the left to movement, and
+                        // either can bank). Rate control: the stick is a velocity, not an angle.
+                        float sx = Math.Abs(_padLx) >= Math.Abs(_padRx) ? _padLx : _padRx;
+                        float sy = Math.Abs(_padLy) >= Math.Abs(_padRy) ? _padLy : _padRy;
+                        _hudRollTarget += -sx * 110f * dt;
+                        _hudPitchTarget += sy * 200f * dt;
+                        if (sx == 0f) _hudRollTarget += (_hudLockRoll - _hudRollTarget) * 0.015f;
+                        if (sy == 0f) _hudPitchTarget += (_hudLockPitch - _hudPitchTarget) * 0.015f;
+                        if (_hudRollTarget > 80f) _hudRollTarget = 80f;
+                        if (_hudRollTarget < -80f) _hudRollTarget = -80f;
+                        if (_hudPitchTarget > 220f) _hudPitchTarget = 220f;
+                        if (_hudPitchTarget < -220f) _hudPitchTarget = -220f;
 
-                        _hudRoll += (_hudRollTarget - _hudRoll) * 0.2f;
-                        _hudPitch += (_hudPitchTarget - _hudPitch) * 0.2f;
+                        float rollBefore = _hudRoll;
+                        _hudRoll += (_hudRollTarget - _hudRoll) * 0.25f;
+                        _hudPitch += (_hudPitchTarget - _hudPitch) * 0.25f;
+                        if (Math.Abs(_hudRoll - rollBefore) > 7f)
+                            Log("   horizon roll " + _hudRoll.ToString("0") + "°  (stick x " + sx.ToString("0.00") + ")");
                         bool wantHud = shown && _hudOn;
                         string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
                         OverlayHub.I.SetHud(wantHud, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudRoll, _hudPitch, _hudStyleUav);
