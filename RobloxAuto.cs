@@ -118,6 +118,13 @@ class RobloxAuto : Form
     bool _hudStyleUav = false;                     // MAVIC gets the UAV-style layout
     FpvHudForm _hudForm = null;
     CheckBox chkHud, chkNight;
+    // ---- HUD tuning dials (live-adjustable, hotkeys below) ----
+    float _hudPitchRate = 660f;                    // px/s the horizon moves per unit of stick pitch
+    float _hudRollRate = 220f;                     // deg/s per unit of stick roll
+    float _hudLockTau = 0.25f;                     // s - camera lock time constant when centred (small = snappy)
+    float _hudFlyTau = 0.9f;                       // s - camera correction while flying
+    float _hudBias = 6f;                           // px - constant downward offset of the detected line
+    NumericUpDown numPitch, numRoll, numLock, numFly, numBias;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
@@ -143,6 +150,13 @@ class RobloxAuto : Form
     // ================= win32 =================
     const int WM_HOTKEY = 0x0312;
     const int HK_REJOIN = 0x5A01, HK_AUTO = 0x5A02, HK_NIGHT = 0x5A03;
+    // live HUD tuning hotkeys (Ctrl+Alt+...)
+    const int HK_TUN_PU = 0x5A10, HK_TUN_PD = 0x5A11;   // Up / Down    -> pitch px/s
+    const int HK_TUN_RU = 0x5A12, HK_TUN_RD = 0x5A13;   // Right / Left -> roll deg/s
+    const int HK_TUN_BU = 0x5A14, HK_TUN_BD = 0x5A15;   // O / P        -> bias px
+    const int HK_TUN_LU = 0x5A16, HK_TUN_LD = 0x5A17;   // K / L        -> lock seconds
+    const uint MOD_CA = 0x1 | 0x2;                       // ALT | CONTROL
+    const uint VK_UP = 0x26, VK_DOWN = 0x28, VK_LEFT = 0x25, VK_RIGHT = 0x27;
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
     [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
 
@@ -1026,6 +1040,29 @@ class RobloxAuto : Form
         Controls.Add(btnOpenLog);
         y += 32;
 
+        var lblTune = new Label();
+        lblTune.Text = "HUD tuning  (Ctrl+Alt+Arrows / O P K L to nudge live)";
+        lblTune.ForeColor = Color.Gainsboro;
+        lblTune.SetBounds(x, y, w, 16);
+        Controls.Add(lblTune);
+        y += 20;
+
+        numPitch = MkTune(x, y, "pitch px/s", (decimal)_hudPitchRate, 80m, 4000m, 40m, 0);
+        numRoll = MkTune(x + 168, y, "roll deg/s", (decimal)_hudRollRate, 20m, 900m, 10m, 0);
+        numPitch.ValueChanged += delegate { _hudPitchRate = (float)numPitch.Value; SaveCfg(); };
+        numRoll.ValueChanged += delegate { _hudRollRate = (float)numRoll.Value; SaveCfg(); };
+        y += 28;
+
+        numLock = MkTune(x, y, "lock s", (decimal)_hudLockTau, 0.05m, 2.0m, 0.05m, 2);
+        numFly = MkTune(x + 168, y, "drift s", (decimal)_hudFlyTau, 0.10m, 3.0m, 0.1m, 2);
+        numLock.ValueChanged += delegate { _hudLockTau = (float)numLock.Value; SaveCfg(); };
+        numFly.ValueChanged += delegate { _hudFlyTau = (float)numFly.Value; SaveCfg(); };
+        y += 28;
+
+        numBias = MkTune(x, y, "bias px", (decimal)_hudBias, -120m, 120m, 2m, 0);
+        numBias.ValueChanged += delegate { _hudBias = (float)numBias.Value; SaveCfg(); };
+        y += 30;
+
         var lblLogHead = new Label();
         lblLogHead.Text = "what it is doing";
         lblLogHead.ForeColor = Color.Gainsboro;
@@ -1125,6 +1162,33 @@ class RobloxAuto : Form
             finally { try { if (them != 0 && them != us) AttachThreadInput(us, them, false); } catch { } }
             Thread.Sleep(50);
         }
+    }
+
+    static float ParseF(string s)
+    {
+        float f;
+        float.TryParse(s, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out f);
+        return f;
+    }
+
+    // caption + numeric spinner for a HUD tuning dial
+    NumericUpDown MkTune(int cx, int cy, string caption, decimal val, decimal min, decimal max, decimal inc, int decimals)
+    {
+        var lbl = new Label();
+        lbl.Text = caption;
+        lbl.ForeColor = Color.Silver;
+        lbl.SetBounds(cx, cy, 90, 20);
+        Controls.Add(lbl);
+        var nud = new NumericUpDown();
+        nud.Minimum = min; nud.Maximum = max; nud.Increment = inc;
+        nud.DecimalPlaces = decimals;
+        nud.Value = val;
+        nud.BackColor = Color.FromArgb(14, 15, 18);
+        nud.ForeColor = Color.Gainsboro;
+        nud.SetBounds(cx + 92, cy - 2, 70, 24);
+        Controls.Add(nud);
+        return nud;
     }
 
     CheckBox MkChk(Control parent, string text, int cx, int cy, bool val)
@@ -3587,9 +3651,9 @@ class RobloxAuto : Form
         if (sy > -0.05f && sy < 0.05f) sy = 0f;
 
         // controller priority: integrate the stick every frame (rate -> angle)
-        _hudFRoll += -sx * 220f * dt;   // came back down from 300 - it overshot the stick input
-        _hudFPitch -= sy * 660f * dt;   // inverted on purpose: pitching up must move the horizon
-                                        // DOWN (against the input), not with it; doubled for speed
+        _hudFRoll += -sx * _hudRollRate * dt;    // tunable (roll deg/s)
+        _hudFPitch -= sy * _hudPitchRate * dt;   // tunable (pitch px/s); inverted on purpose:
+                                                 // pitching up must move the horizon DOWN
 
         // Complementary filter: the STICK is the fast rate input, the CAMERA is the slow absolute
         // reference - so the correction runs ALWAYS, not only when centred (gating it meant that
@@ -3599,7 +3663,7 @@ class RobloxAuto : Form
         bool det = _hudDetValid && (now - _hudDetAt) < 1500;
         if (det)
         {
-            float tau = (sx == 0f && sy == 0f) ? 0.3f : 0.9f;
+            float tau = (sx == 0f && sy == 0f) ? _hudLockTau : _hudFlyTau;
             float a = 1f - (float)Math.Pow(0.5, dt / tau);
             _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
             _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
@@ -3845,6 +3909,41 @@ class RobloxAuto : Form
             Log("WARNING: could not register F5 - another app already has it.");
         if (!RegisterHotKey(Handle, HK_NIGHT, 0, _hkNightKey))
             Log("WARNING: could not register " + ((Keys)_hkNightKey) + " for night vision - another app already has it.");
+
+        // HUD tuning nudge hotkeys
+        UnregisterHotKey(Handle, HK_TUN_PU); UnregisterHotKey(Handle, HK_TUN_PD);
+        UnregisterHotKey(Handle, HK_TUN_RU); UnregisterHotKey(Handle, HK_TUN_RD);
+        UnregisterHotKey(Handle, HK_TUN_BU); UnregisterHotKey(Handle, HK_TUN_BD);
+        UnregisterHotKey(Handle, HK_TUN_LU); UnregisterHotKey(Handle, HK_TUN_LD);
+        RegisterHotKey(Handle, HK_TUN_PU, MOD_CA, VK_UP);
+        RegisterHotKey(Handle, HK_TUN_PD, MOD_CA, VK_DOWN);
+        RegisterHotKey(Handle, HK_TUN_RU, MOD_CA, VK_RIGHT);
+        RegisterHotKey(Handle, HK_TUN_RD, MOD_CA, VK_LEFT);
+        RegisterHotKey(Handle, HK_TUN_BU, MOD_CA, 0x4F);   // O
+        RegisterHotKey(Handle, HK_TUN_BD, MOD_CA, 0x50);   // P
+        RegisterHotKey(Handle, HK_TUN_LU, MOD_CA, 0x4B);   // K
+        RegisterHotKey(Handle, HK_TUN_LD, MOD_CA, 0x4C);   // L
+    }
+
+    // nudge a HUD dial by d, clamp, sync the spinner and the config
+    void NudgePitch(float d) { _hudPitchRate = ClampF(_hudPitchRate + d, 80f, 4000f); SyncDials(); }
+    void NudgeRoll(float d) { _hudRollRate = ClampF(_hudRollRate + d, 20f, 900f); SyncDials(); }
+    void NudgeBias(float d) { _hudBias = ClampF(_hudBias + d, -120f, 120f); SyncDials(); }
+    void NudgeLock(float d) { _hudLockTau = ClampF(_hudLockTau + d, 0.05f, 2f); SyncDials(); }
+    static float ClampF(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+    void SyncDials()
+    {
+        try
+        {
+            if (numPitch != null) numPitch.Value = (decimal)ClampF(_hudPitchRate, 80f, 4000f);
+            if (numRoll != null) numRoll.Value = (decimal)ClampF(_hudRollRate, 20f, 900f);
+            if (numBias != null) numBias.Value = (decimal)ClampF(_hudBias, -120f, 120f);
+            if (numLock != null) numLock.Value = (decimal)ClampF(_hudLockTau, 0.05f, 2f);
+        }
+        catch { }
+        SaveCfg();
+        Log("HUD tune: pitch " + _hudPitchRate.ToString("0") + " px/s, roll " + _hudRollRate.ToString("0") +
+            " deg/s, bias " + _hudBias.ToString("0") + " px, lock " + _hudLockTau.ToString("0.00") + " s");
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -3889,6 +3988,14 @@ class RobloxAuto : Form
             if (id == HK_REJOIN) { Log("hotkey " + ((Keys)_hkRejoinKey) + " pressed"); Rejoin("hotkey"); }
             else if (id == HK_AUTO) AutoRun();
             else if (id == HK_NIGHT) ToggleNightVision();
+            else if (id == HK_TUN_PU) NudgePitch(+40f);
+            else if (id == HK_TUN_PD) NudgePitch(-40f);
+            else if (id == HK_TUN_RU) NudgeRoll(+10f);
+            else if (id == HK_TUN_RD) NudgeRoll(-10f);
+            else if (id == HK_TUN_BU) NudgeBias(+2f);
+            else if (id == HK_TUN_BD) NudgeBias(-2f);
+            else if (id == HK_TUN_LU) NudgeLock(-0.05f);   // smaller = snappier lock
+            else if (id == HK_TUN_LD) NudgeLock(+0.05f);
         }
         base.WndProc(ref m);
     }
@@ -3918,6 +4025,10 @@ class RobloxAuto : Form
         UnregisterHotKey(Handle, HK_REJOIN);
         UnregisterHotKey(Handle, HK_AUTO);
         UnregisterHotKey(Handle, HK_NIGHT);
+        UnregisterHotKey(Handle, HK_TUN_PU); UnregisterHotKey(Handle, HK_TUN_PD);
+        UnregisterHotKey(Handle, HK_TUN_RU); UnregisterHotKey(Handle, HK_TUN_RD);
+        UnregisterHotKey(Handle, HK_TUN_BU); UnregisterHotKey(Handle, HK_TUN_BD);
+        UnregisterHotKey(Handle, HK_TUN_LU); UnregisterHotKey(Handle, HK_TUN_LD);
         ApplyNightVision(false);   // never leave the display inverted after exit
         SaveCfg();
         base.OnFormClosing(e);
@@ -3990,6 +4101,11 @@ class RobloxAuto : Form
                 else if (k == "preRejoinMs") _preRejoinMs = int.Parse(v);
                 else if (k == "watchHome") _watchHome = v == "1";
             else if (k == "hud") _hudOn = v == "1";
+            else if (k == "hudPitch") _hudPitchRate = ParseF(v);
+            else if (k == "hudRoll") _hudRollRate = ParseF(v);
+            else if (k == "hudLock") _hudLockTau = ParseF(v);
+            else if (k == "hudFly") _hudFlyTau = ParseF(v);
+            else if (k == "hudBias") _hudBias = ParseF(v);
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -4036,6 +4152,11 @@ class RobloxAuto : Form
             "watchHome=" + (_watchHome ? "1" : "0"),
             "blackScreen=" + (_blackScreen ? "1" : "0"),
             "hud=" + (_hudOn ? "1" : "0"),
+            "hudPitch=" + _hudPitchRate.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudRoll=" + _hudRollRate.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudLock=" + _hudLockTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudFly=" + _hudFlyTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudBias=" + _hudBias.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "uav=" + (_hudStyleUav ? "1" : "0"),
             "night=" + (_nightVision ? "1" : "0"),
             "nightKey=" + _hkNightKey,
@@ -5198,7 +5319,7 @@ class RobloxAuto : Form
             float roll = (float)(Math.Atan(slope) * 180.0 / Math.PI);
             if (roll > 45f) roll = 45f; if (roll < -45f) roll = -45f;
             float pitch = (slope * (W / 2f) + icept) - H / 2f;
-            pitch += 6f;   // small downward bias only; the green step sits on the true horizon
+            pitch += _hudBias;   // tunable downward bias (dial "bias px")
             if (pitch > H / 4f) pitch = H / 4f; if (pitch < -H / 4f) pitch = -H / 4f;
             // smooth across measurements (measurements are only ~3/s, so a single noisy fit would
             // make the lock twitch) - seeded on the first good fix so it is not biased to 0
