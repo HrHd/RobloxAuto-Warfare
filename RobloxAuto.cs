@@ -3639,35 +3639,14 @@ class RobloxAuto : Form
     string _detDbg = "";
     bool DroneViewOnScreen()
     {
-        try
-        {
-            int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
-            // The drone OSD ALWAYS shows "RC LIVE" (MAVIC) or "LINK LIVE" (FPV) in the top-right
-            // corner. That word "LIVE" is the tell - the loadout / menus / nav bar do not have it
-            // there. Do NOT match MAVIC / FPV / GRENADE / PAYLOAD here: the loadout screen shows
-            // those words, and that is exactly what was popping the HUD up in the loadout.
-            List<string[]> tr = OcrMaskedRegion(W * 78 / 100, 2, W, 130, 3);
-            _detDbg = DumpWords(tr);
-            if (tr != null)
-                foreach (string[] w in tr)
-                {
-                    string t = (w[4] ?? "").ToUpperInvariant();
-                    if (t.IndexOf("LIVE") >= 0 || t.IndexOf("LINK") >= 0) return true;
-                }
-            // second chance with the plain read of that same corner (white text over pale sky can
-            // defeat the whiten mask)
-            int W2 = W * 78 / 100;
-            foreach (string[] w in OcrWords())
-            {
-                int wx, wy;
-                try { wx = int.Parse(w[0]); wy = int.Parse(w[1]); } catch { continue; }
-                if (wx < W2 || wy > 130) continue;
-                string t = (w[4] ?? "").ToUpperInvariant();
-                if (t.IndexOf("LIVE") >= 0 || t.IndexOf("LINK") >= 0) return true;
-            }
-        }
-        catch { }
-        return false;
+        // Big, high-contrast OSD text is far easier for the OCR than the small top-right badge:
+        //  * the game's own FLIGHT mm:ss clock (top-left) - only exists in the drone view
+        //  * the top-right RC LIVE / LINK LIVE badge
+        // Any one of them means we are in a drone. The loadout / menus have neither.
+        bool flight = ReadFlightSecs() >= 0;
+        bool linked = !flight && CornerLinked();
+        _detDbg = "flightClock=" + (flight ? "yes" : "no") + "  rcL live=" + (linked ? "yes" : "no");
+        return flight || linked;
     }
 
     // 50fps horizon fusion on the UI thread. A complementary filter: the CONTROLLER is the
@@ -4776,24 +4755,40 @@ class RobloxAuto : Form
         catch { }
     }
 
-    // Is the top-right "LINK LIVE" indicator on screen? That is the proof we are in the drone
-    // view, so the RF feed only runs when it is present.
-    bool IsLinked()
+    // THE single "are we in a drone view" test. The drone OSD always shows "RC LIVE" (MAVIC) or
+    // "LINK LIVE" (FPV) in the TOP-RIGHT corner. That combination - "LIVE" AND ("RC" or "LINK") -
+    // in that corner is specific to the drone: menus, chat, the nav bar and the loadout never have
+    // it there. Everything that decides the HUD/feed goes through this.
+    bool CornerLinked()
     {
-        // The top-right "LINK LIVE" is small white text; the whole-screen read drops it once the
-        // foliage behind it is busy, which made the feed flicker off a second after it started.
-        // Read that corner on its own with the outlined-text mask, then fall back to a plain read.
         try
         {
-            int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
-            List<string[]> ws = OcrMaskedRegion(W * 82 / 100, 4, W, 96, 3);
-            if (LinkWords(ws)) return true;
+            int W = Screen.PrimaryScreen.Bounds.Width;
+            string all = "";
+            List<string[]> ws = OcrMaskedRegion(W * 78 / 100, 2, W, 130, 3);
+            if (ws != null) foreach (string[] w in ws) all += (w[4] ?? "").ToUpperInvariant() + " ";
+            if (CornerOk(all)) return true;
+            // plain read of the SAME corner (white text over pale sky can defeat the whiten mask)
+            string all2 = "";
+            foreach (string[] w in OcrWords())
+            {
+                int wx, wy;
+                try { wx = int.Parse(w[0]); wy = int.Parse(w[1]); } catch { continue; }
+                if (wx < W * 78 / 100 || wy > 130) continue;
+                all2 += (w[4] ?? "").ToUpperInvariant() + " ";
+            }
+            return CornerOk(all2);
         }
-        catch { }
-        // NO whole-screen fallback: any "LIVE"/"LINK" anywhere in the UI (chat, menus, the top
-        // bar) was matching and popping the drone HUD up when we were not in a drone at all.
-        return false;
+        catch { return false; }
     }
+
+    static bool CornerOk(string all)
+    {
+        if (string.IsNullOrEmpty(all)) return false;
+        return all.IndexOf("LIVE") >= 0 && (all.IndexOf("RC") >= 0 || all.IndexOf("LINK") >= 0);
+    }
+
+    bool IsLinked() { return CornerLinked(); }
 
     // The game prints the payload bottom-right ("LIGHT ROCKET MOUNTED"). Rockets / RPG-type
     // payloads mean the FPV drone, rack/grenade payloads mean the MAVIC - so the OSD itself
@@ -4874,15 +4869,12 @@ class RobloxAuto : Form
         return -1;
     }
 
-    static bool LinkWords(List<string[]> ws)
+    static bool LinkWords(List<string[]> ws)   // retained for any legacy callers
     {
         if (ws == null) return false;
-        foreach (string[] w in ws)
-        {
-            string t = (w[4] ?? "").ToUpperInvariant();
-            if (t.IndexOf("LINK") >= 0 || t.IndexOf("LIVE") >= 0 || (t.Length >= 4 && SimPct(t, "LINK") >= 80)) return true;
-        }
-        return false;
+        string all = "";
+        foreach (string[] w in ws) all += (w[4] ?? "").ToUpperInvariant() + " ";
+        return CornerOk(all);
     }
 
     // The crash screen is a big white "NO SIGNAL" on light grey - the plain read sees it, the
