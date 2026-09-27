@@ -5098,7 +5098,16 @@ class RobloxAuto : Form
             System.Windows.Forms.Timer life = new System.Windows.Forms.Timer();
             life.Interval = 6000;
             // once the alert has had its 6s, put the black cover over the reconnect
-            life.Tick += delegate { life.Stop(); blink.Stop(); if (_land == f) _land = null; try { f.Close(); } catch { } ShowBlack(); };
+            // once the alert has had its 6s: take the LAND NOW text down, stop the RF static too
+            // (pressing LAND NOW means we are leaving this feed), then put the black cover up
+            life.Tick += delegate
+            {
+                life.Stop(); blink.Stop();
+                if (_land == f) _land = null;
+                try { f.Close(); } catch { }
+                StopRfWatch();
+                ShowBlack();
+            };
             life.Start();
 
             // NOT excluded from capture - LAND NOW shows up in recordings. OCR is not needed
