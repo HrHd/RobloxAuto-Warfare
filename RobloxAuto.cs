@@ -4257,19 +4257,30 @@ class RobloxAuto : Form
 
     void PadTick(object sender, EventArgs e)
     {
+        // COMBINE every connected XInput pad instead of using only the first one. The joystick app
+        // creates a VIRTUAL pad that it centres while you fly FPV (pause_on_fpv), so if the tool
+        // read that pad the sticks looked dead - no roll/pitch reached the HUD and the ladder never
+        // tilted. Taking the largest |value| across all pads means it always follows the pad you
+        // are actually moving, whichever XInput index it lands on.
         ushort buttons = 0; bool conn = false;
+        short lx = 0, ly = 0, rx = 0, ry = 0;
         for (int i = 0; i < 4; i++)
         {
             XINPUT_STATE st;
             if (TryPad(i, out st))
             {
-                conn = true; buttons = st.Gamepad.wButtons;
-                _padLx = NormStick(st.Gamepad.lx);
-                _padLy = NormStick(st.Gamepad.ly);
-                _padRx = NormStick(st.Gamepad.rx);
-                _padRy = NormStick(st.Gamepad.ry);
-                break;
+                conn = true;
+                buttons |= st.Gamepad.wButtons;
+                if (Math.Abs(st.Gamepad.lx) > Math.Abs(lx)) lx = st.Gamepad.lx;
+                if (Math.Abs(st.Gamepad.ly) > Math.Abs(ly)) ly = st.Gamepad.ly;
+                if (Math.Abs(st.Gamepad.rx) > Math.Abs(rx)) rx = st.Gamepad.rx;
+                if (Math.Abs(st.Gamepad.ry) > Math.Abs(ry)) ry = st.Gamepad.ry;
             }
+        }
+        if (conn)
+        {
+            _padLx = NormStick(lx); _padLy = NormStick(ly);
+            _padRx = NormStick(rx); _padRy = NormStick(ry);
         }
 
         if (!conn)
