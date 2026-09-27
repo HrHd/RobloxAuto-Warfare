@@ -328,7 +328,7 @@ class RobloxAuto : Form
         _cfgPath = Path.Combine(_appDir, "settings.ini");
 
         Text = "Roblox Auto - Warfare";
-        ClientSize = new Size(500, 646);
+        ClientSize = new Size(500, 800);
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -827,30 +827,36 @@ class RobloxAuto : Form
         y += 26;
 
         lblPadStatus = new Label();
-        lblPadStatus.SetBounds(x, y, w - 90, 18);
+        lblPadStatus.SetBounds(x, y, w, 18);
         lblPadStatus.ForeColor = Color.Silver;
         Controls.Add(lblPadStatus);
+        y += 22;
+
+        // own row, taller, so the captions are not clipped
+        btnHighPrio = new Button();
+        btnHighPrio.Text = "roblox: HIGH priority";
+        btnHighPrio.FlatStyle = FlatStyle.Flat;
+        btnHighPrio.BackColor = Color.FromArgb(45, 48, 54);
+        btnHighPrio.ForeColor = Color.Gainsboro;
+        btnHighPrio.UseVisualStyleBackColor = false;
+        btnHighPrio.SetBounds(x, y, 200, 26);
+        btnHighPrio.Click += delegate { SetRobloxPriority(); };
+        Controls.Add(btnHighPrio);
 
         btnOpenLog = new Button();
         btnOpenLog.Text = "open log";
         btnOpenLog.FlatStyle = FlatStyle.Flat;
+        btnOpenLog.BackColor = Color.FromArgb(45, 48, 54);
         btnOpenLog.ForeColor = Color.Gainsboro;
-        btnOpenLog.SetBounds(x + w - 96, y - 2, 96, 21);
+        btnOpenLog.UseVisualStyleBackColor = false;
+        btnOpenLog.SetBounds(x + 208, y, 120, 26);
         btnOpenLog.Click += delegate
         {
             try { Process.Start("notepad.exe", Path.Combine(_appDir, "auto.log")); }
             catch (Exception ex) { Log("could not open the log: " + ex.Message); }
         };
         Controls.Add(btnOpenLog);
-
-        btnHighPrio = new Button();
-        btnHighPrio.Text = "roblox: HIGH";
-        btnHighPrio.FlatStyle = FlatStyle.Flat;
-        btnHighPrio.ForeColor = Color.Gainsboro;
-        btnHighPrio.SetBounds(x + w - 200, y - 2, 100, 21);
-        btnHighPrio.Click += delegate { SetRobloxPriority(); };
-        Controls.Add(btnHighPrio);
-        y += 22;
+        y += 32;
 
         var lblLogHead = new Label();
         lblLogHead.Text = "what it is doing";
@@ -867,13 +873,16 @@ class RobloxAuto : Form
         txtLog.ForeColor = Color.Silver;
         txtLog.Font = new Font("Consolas", 8.5F);
         txtLog.BorderStyle = BorderStyle.FixedSingle;
-        txtLog.SetBounds(x, y, w, 170);
+        txtLog.SetBounds(x, y, w, 132);
         Controls.Add(txtLog);
-        y += 170 + 8;
+        y += 132 + 8;
 
-        // grow the window so the log actually fits - it used to get a negative height and
-        // was never drawn, which is why the log was invisible
-        ClientSize = new Size(ClientSize.Width, y);
+        // grow the window to fit the content, but never taller than the screen - if it is,
+        // clamp and let the form scroll, otherwise the log and buttons fall off the bottom
+        int wantH = y;
+        int maxH = Screen.PrimaryScreen.WorkingArea.Height - 40;
+        if (wantH > maxH) { wantH = maxH; AutoScroll = true; }
+        ClientSize = new Size(ClientSize.Width, wantH);
     }
 
     CheckBox MkChk(Control parent, string text, int cx, int cy, bool val)
@@ -2104,10 +2113,6 @@ class RobloxAuto : Form
                 Thread.Sleep(200);
                 continue;
             }
-            // debug: dump the detected grid and the panel so a miss can be diagnosed
-            for (int ci = 0; ci < cells.Count; ci++)
-                Log("      cell[" + ci + "] = (" + cells[ci].X + "," + cells[ci].Y + ")");
-            SaveGrab("warhead");
             if (CellIsGreen(cells[slot].X, cells[slot].Y))
             {
                 Log("   " + _bomb + " already equipped (green box)");
