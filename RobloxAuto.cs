@@ -2242,6 +2242,8 @@ class RobloxAuto : Form
         int slot = idx - 1;                       // 0-based grid position
         int count = BombsFor(_drone).Length - 1;  // number of warheads on the panel
 
+        Thread.Sleep(250);   // let the TEAM BASE panel finish laying out before measuring the grid
+
         for (int t = 1; t <= 4 && Alive(g); t++)
         {
             // Hovering a cell animates/scales it, which nudges the whole grid, so measure with
@@ -2337,7 +2339,27 @@ class RobloxAuto : Form
     // names a different warhead - that is the "false flag" guard.
     bool WarheadDescMatches(string bomb)
     {
-        string[] parts = bomb.ToUpperInvariant().Split(' ');
+        // The label OCR mangles words (e.g. "Light Rocket" -> "Light - s ripped-do M"), so do
+        // not demand every word. Instead score the label against EVERY warhead this drone can
+        // carry and take the closest one: if that is our bomb we are good, if it is clearly a
+        // different one the click hit the wrong cell, and if nothing scores we do not block.
+        string label = WarheadLabelText();
+        if (label == "") return true;
+        string best = null; int bestScore = 0;
+        foreach (string b in BombsFor(_drone))
+        {
+            if (b == "(none)") continue;
+            int s = TokenOverlap(label, b);
+            if (s > bestScore) { bestScore = s; best = b; }
+        }
+        Log("   warhead label: \"" + label + "\" -> closest \"" + (best == null ? "-" : best) + "\" (" + bestScore + ")");
+        if (bestScore == 0) return true;      // nothing recognisable - do not block
+        return best == bomb;
+    }
+
+    // The panel prints "WARHEAD: <name> - <desc>". Return that line, or "" when not read.
+    string WarheadLabelText()
+    {
         try
         {
             foreach (List<string[]> ws in new List<string[]>[] { OcrWords(), OcrWordsWhiten() })
@@ -2345,31 +2367,39 @@ class RobloxAuto : Form
                 for (int i = 0; i < ws.Count; i++)
                 {
                     string t = (ws[i][4] ?? "").ToUpperInvariant();
-                    if (t.IndexOf("WARHEAD") < 0 && t.IndexOf("WARHE") < 0) continue;
-
-                    int y = int.Parse(ws[i][1]);
-                    System.Text.StringBuilder line = new System.Text.StringBuilder(t);
+                    if (t.IndexOf("WARHEAD") < 0 && t.IndexOf("ARHEAD") < 0 && t.IndexOf("WARHE") < 0) continue;
+                    int y;
+                    try { y = int.Parse(ws[i][1]); } catch { continue; }
+                    System.Text.StringBuilder sb = new System.Text.StringBuilder(t);
                     for (int j = i + 1; j < ws.Count && j < i + 6; j++)
                     {
-                        if (Math.Abs(int.Parse(ws[j][1]) - y) > 14) break;
-                        line.Append(' ').Append(ws[j][4] ?? "");
+                        int wy;
+                        try { wy = int.Parse(ws[j][1]); } catch { break; }
+                        if (Math.Abs(wy - y) > 14) break;
+                        sb.Append(' ').Append(ws[j][4] ?? "");
                     }
-                    string words = line.ToString();
-
-                    int hit = 0;
-                    foreach (string p in parts)
-                    {
-                        if (p.Length < 2) { hit++; continue; }
-                        foreach (string w in words.Split(' '))
-                            if (SimPct(w, p) >= _matchPct || w.Contains(p) || p.Contains(w)) { hit++; break; }
-                    }
-                    Log("   warhead label: \"" + words + "\" -> " + hit + "/" + parts.Length + " match");
-                    return hit >= parts.Length;
+                    return sb.ToString();
                 }
             }
         }
         catch { }
-        return true;   // not readable - do not block the flow on it
+        return "";
+    }
+
+    static int TokenOverlap(string label, string bomb)
+    {
+        string[] lw = label.ToUpperInvariant().Split(' ');
+        int hit = 0;
+        foreach (string p in bomb.ToUpperInvariant().Split(' '))
+        {
+            if (p.Length < 2) continue;
+            foreach (string w in lw)
+            {
+                if (w.Length < 2) continue;
+                if (w.Contains(p) || p.Contains(w) || SimPct(w, p) >= 70) { hit++; break; }
+            }
+        }
+        return hit;
     }
 
     // Warhead cells are uniform grey rounded rectangles about 2:1. Find the grey ones, work
@@ -3988,6 +4018,8 @@ class RobloxAuto : Form
             _rfForm.SetBounds(0, 0, Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
             _rfForm.Show();
             ExcludeFromCapture(_rfForm.Handle);   // keep the feed out of the OCR's screen grabs
+            _rfForm.Visible = false;              // stay hidden until "LINK LIVE" is confirmed, so
+                                                  // the feed never flashes up during the deploy
             _rfRun = true;
             _flightStart = DateTime.Now;
             OverlayHub.I.SetFlight(true, 0.18f, 0);
