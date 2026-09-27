@@ -1440,7 +1440,11 @@ class RobloxAuto : Form
         AddBlackLine("!! LINK PAUSED - operator halt", "BAD");
         AddBlackLine("   awaiting re-establishment...", "");
         OverlayHub.I.SetProgress(_flowPct, "paused - awaiting re-establishment");
-        Log("STOP pressed - stopped AUTO, RF feed, covers and LAND NOW");
+        // STOP = "I'll take it from here". Turn the drone screen-detect ON, so if we are sitting
+        // in a drone the user picked by hand the HUD/RF feed comes straight back up on its own.
+        _hudAutoDetect = true;
+        if (chkHudAuto != null) chkHudAuto.Checked = true;
+        Log("STOP pressed - stopped AUTO, RF feed, covers and LAND NOW (drone detect on)");
     }
 
     bool Alive(int g) { return g == _autoGen; }
