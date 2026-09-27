@@ -4693,9 +4693,9 @@ class RobloxAuto : Form
                         // LIVE badge (top-right) only exist in the drone OSD - the map, loadout and
                         // menus have neither. If they are both gone for a few seconds we have left
                         // the drone, so drop the HUD instead of leaving it stuck on screen.
-                        int fs = ReadFlightSecs();   // the game's own top-left FLIGHT clock
+                        int fs = ReadFlightSecs();   // FLIGHT (MAVIC) / FLY (FPV) clock
                         bool corner = CornerLinked();
-                        bool inDrone = fs >= 0 || corner;
+                        bool inDrone = fs >= 0 || corner || DroneKeyword();
                         if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
                         if (inDrone)
                         {
@@ -4855,6 +4855,32 @@ class RobloxAuto : Form
     }
 
     bool IsLinked() { return CornerLinked(); }
+
+    // Drone-ONLY words: "AGL" (the altitude readout) and "MOUNTED" (the payload line). Neither
+    // appears on the nav bar, the loadout, the map or any menu, so they are safe "we are in the
+    // drone" tells. Scanned anywhere on screen, plain + whiten.
+    bool DroneKeyword()
+    {
+        try
+        {
+            foreach (string[] w in OcrWords())
+            {
+                string t = (w[4] ?? "").ToUpperInvariant();
+                if (t.IndexOf("AGL") >= 0 || t.IndexOf("MOUNTED") >= 0) return true;
+            }
+        }
+        catch { }
+        try
+        {
+            foreach (string[] w in OcrWordsWhiten())
+            {
+                string t = (w[4] ?? "").ToUpperInvariant();
+                if (t.IndexOf("AGL") >= 0 || t.IndexOf("MOUNTED") >= 0) return true;
+            }
+        }
+        catch { }
+        return false;
+    }
 
     // The game prints the payload bottom-right ("LIGHT ROCKET MOUNTED"). Rockets / RPG-type
     // payloads mean the FPV drone, rack/grenade payloads mean the MAVIC - so the OSD itself
