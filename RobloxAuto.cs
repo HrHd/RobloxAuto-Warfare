@@ -121,6 +121,7 @@ class RobloxAuto : Form
     int _hudSecs = 0;
     bool _hudLocked = false;
     bool _hudNeedLock = false;                    // true from Deploy As Drone until we lock
+    float _hudDetSky = 1f;                        // 0..1 - fraction of the frame that is SKY (above the line)
     bool _hudDetValid = false;                    // DetectHorizon found a confident line
     float _hudDetConf = 0f;                       // 0..1 - how sure the detector is (drives the fusion weight)
     float _hudTrkM = 0f, _hudTrkB = 0f;           // last accepted horizon line (slope/intercept)
@@ -4276,7 +4277,12 @@ class RobloxAuto : Form
             float act = Math.Max(Math.Abs(sx), Math.Abs(sy));
             if (act > 0.3f) act = 0.3f;
             act /= 0.3f;                                   // 0 = centred, 1 = deflected
-            float imgW = (1f - 0.85f * act) * _hudImgGain;
+            // SKY COVERAGE: more ground / less sky = the image horizon is far less reliable (it is a
+            // thin hazy band, if it is in frame at all), so the GYRO/stick should drive. With a decent
+            // slice of sky (~35%+) the image is trustworthy and takes the effect back. Ramps 10%->35% sky.
+            float skyW = (_hudDetSky - 0.10f) / 0.25f;
+            if (skyW < 0f) skyW = 0f; if (skyW > 1f) skyW = 1f;
+            float imgW = (1f - 0.85f * act) * _hudImgGain * skyW;
             float tau = (0.15f + 1.6f * (1f - conf)) / Math.Max(0.05f, imgW);
             float a = 1f - (float)Math.Pow(0.5, dt / tau);
             _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
@@ -6634,6 +6640,9 @@ class RobloxAuto : Form
             _hudDetRoll = _hudSmRoll;
             _hudDetPitch = _hudSmPitch;
             _hudDetConf = conf;
+            float skyFrac = (slope * (W / 2f) + icept) / H;      // how much of the frame sits above the line
+            if (skyFrac < 0f) skyFrac = 0f; if (skyFrac > 1f) skyFrac = 1f;
+            _hudDetSky = skyFrac;
             _hudTrkM = slope; _hudTrkB = icept; _hudTrkAt = Environment.TickCount;   // guide the next frame
             _hudDetValid = true;
             _hudDetAt = Environment.TickCount;
