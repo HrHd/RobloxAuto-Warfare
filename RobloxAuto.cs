@@ -122,6 +122,7 @@ class RobloxAuto : Form
     bool _hudLocked = false;
     bool _hudNeedLock = false;                    // true from Deploy As Drone until we lock
     bool _hudDetValid = false;                    // DetectHorizon found a confident line
+    float _hudDetConf = 0f;                       // 0..1 - how sure the detector is (drives the fusion weight)
     long _hudDetAt = 0;                           // when it did (so a stale fix is not trusted)
     long _hudLogAt = 0;
     long _hudPrevTick = 0;
@@ -144,9 +145,10 @@ class RobloxAuto : Form
     float _hudDpp = 8f;                            // px per degree of pitch (rung spacing)
     float _hudShear = 0.9f;                         // 0 = lines never slide, 1 = exact geometric shear
     float _hudLen = 1f;                             // rung length scale
+    float _hudImgGain = 1f;                         // how hard the image horizon corrects the gyro (complementary)
     float _hudLeftPx = 50f;                        // px - max horizon offset from the LEFT stick (bounded)
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen;
+    NumericUpDown numDpp, numShear, numLen, numImg;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
@@ -591,6 +593,10 @@ class RobloxAuto : Form
 
         numLen = MkTune(x, y, "rung len", (decimal)_hudLen, 0.3m, 2.5m, 0.1m, 2);
         numLen.ValueChanged += delegate { _hudLen = (float)numLen.Value; SaveCfg(); };
+        y += 28;
+
+        numImg = MkTune(x, y, "img lock", (decimal)_hudImgGain, 0m, 4m, 0.1m, 1);
+        numImg.ValueChanged += delegate { _hudImgGain = (float)numImg.Value; SaveCfg(); };
         y += 32;
 
         var l1 = new Label();
@@ -4098,27 +4104,27 @@ class RobloxAuto : Form
         // The DETECTED horizon (gradient detector) is the reference: the ladder SMOOTHLY TRAVELS TO IT,
         // so it reads flat when the ground line is flat and diagonal when the ground line tilts. When
         // there is no confident fix we fall back to integrating the controller so it still moves.
-        // The IMAGE horizon is only trustworthy for the MAVIC (hover). For the ACRO FPV the picture's
-        // strongest edge is usually the sloped TERRAIN, which is not the horizon - it tilts the line
-        // even when the camera is dead level. So the FPV takes its roll from the CONTROLLER: centred
-        // stick = the line sits flat with the screen.
-        bool det = _hudStyleUav && _hudDetValid && (now - _hudDetAt) < 2000;
+        // --- Complementary filter, exactly like a real drone IMU ---
+        // GYRO = the controller: fast, integrates the stick rate, and because it is ACRO it HOLDS.
+        float vTargetRoll = -sx * _hudRollRate;    // deg/s (bank RATE)
+        float vTargetPitch = -sy * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
+        float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
+        _hudRollVel += (vTargetRoll - _hudRollVel) * av;
+        _hudPitchVel += (vTargetPitch - _hudPitchVel) * av;
+        _hudFRoll += _hudRollVel * dt;
+        _hudFPitch += _hudPitchVel * dt;
+
+        // ACCEL = the image horizon: slow, but ABSOLUTE. Cross-reference the gyro against it, pulling
+        // harder the more confident the detector is. Stops drift and settles the lines flat when the
+        // camera is genuinely level - without self-levelling a real bank (the image sees the bank too).
+        bool det = _hudDetValid && (now - _hudDetAt) < 2000;
         if (det)
         {
-            float a = 1f - (float)Math.Pow(0.5, dt / 0.25f);
+            float conf = _hudDetConf; if (conf < 0.05f) conf = 0.05f; if (conf > 1f) conf = 1f;
+            float tau = (0.15f + 1.6f * (1f - conf)) / Math.Max(0.05f, _hudImgGain);
+            float a = 1f - (float)Math.Pow(0.5, dt / tau);
             _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
             _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
-            _hudRollVel = 0f; _hudPitchVel = 0f;
-        }
-        else
-        {
-            float vTargetRoll = -sx * _hudRollRate;    // deg/s (bank RATE)
-            float vTargetPitch = -sy * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
-            float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
-            _hudRollVel += (vTargetRoll - _hudRollVel) * av;
-            _hudPitchVel += (vTargetPitch - _hudPitchVel) * av;
-            _hudFRoll += _hudRollVel * dt;
-            _hudFPitch += _hudPitchVel * dt;
         }
 
         // The LEFT stick (throttle) is a small, BOUNDED proportional nudge, NOT integrated. Adding
@@ -4717,6 +4723,7 @@ class RobloxAuto : Form
             else if (k == "hudDpp") _hudDpp = ParseF(v);
             else if (k == "hudShear") _hudShear = ParseF(v);
             else if (k == "hudLen") _hudLen = ParseF(v);
+            else if (k == "hudImg") _hudImgGain = ParseF(v);
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -4780,6 +4787,7 @@ class RobloxAuto : Form
             "hudDpp=" + _hudDpp.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudShear=" + _hudShear.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudLen=" + _hudLen.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "uav=" + (_hudStyleUav ? "1" : "0"),
             "night=" + (_nightVision ? "1" : "0"),
             "nightKey=" + _hkNightKey,
@@ -6088,7 +6096,7 @@ class RobloxAuto : Form
             int maxPts = W / 4 + 4;
             float[] pxs = new float[maxPts], pys = new float[maxPts];
             int n = 0;
-            bool gOk = false; float slope = 0f, icept = 0f;
+            bool gOk = false; float slope = 0f, icept = 0f; float conf = 0f;
 
             // --- primary: GLOBAL line search on the VERTICAL GRADIENT. The horizon is the strongest
             // near-horizontal edge in the view, so we score candidate lines by the mean vertical
@@ -6143,6 +6151,7 @@ class RobloxAuto : Form
                         }
                     }
                     if (!gOk) { slope = bm; icept = bb; gOk = true; }
+                    if (gOk) conf = Math.Min(1f, bestScore / 30f);   // edge strength -> confidence
                 }
             }
 
@@ -6207,6 +6216,7 @@ class RobloxAuto : Form
                     if (Environment.TickCount - _hudLogAt >= 2000) { _hudLogAt = Environment.TickCount; Log("horizon det: weak line (" + bestIn + "/" + n + " inliers) - no lock"); }
                     return;
                 }
+                conf = (float)bestIn / Math.Max(1, n);   // inlier fraction -> confidence
                 float sx = 0, sy = 0, sxy = 0, sxx = 0; int ck = 0;
                 for (int i = 0; i < n; i++)
                 {
@@ -6246,6 +6256,9 @@ class RobloxAuto : Form
                 }
             }
 
+            if (rk >= 40) conf += 0.25f;   // the per-column refinement agreeing is extra confidence
+            if (conf < 0.05f) conf = 0.05f; if (conf > 1f) conf = 1f;
+
             float roll = (float)(Math.Atan(slope) * 180.0 / Math.PI);
             if (roll > 45f) roll = 45f; if (roll < -45f) roll = -45f;
             float pitch = (slope * (W / 2f) + icept) - H / 2f;
@@ -6261,6 +6274,7 @@ class RobloxAuto : Form
             }
             _hudDetRoll = _hudSmRoll;
             _hudDetPitch = _hudSmPitch;
+            _hudDetConf = conf;
             _hudDetValid = true;
             _hudDetAt = Environment.TickCount;
             if (Environment.TickCount - _hudLogAt >= 2000)
