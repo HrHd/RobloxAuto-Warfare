@@ -569,45 +569,45 @@ class RobloxAuto : Form
         Controls.Add(lblTune);
         y += 22;
 
-        numPitch = MkTune(x, y, "pitch px/s", (decimal)_hudPitchRate, 80m, 4000m, 40m, 0);
-        numRoll = MkTune(x + 168, y, "roll deg/s", (decimal)_hudRollRate, 20m, 900m, 10m, 0);
+        numPitch = MkTune(x, y, "pitch speed", (decimal)_hudPitchRate, 80m, 4000m, 40m, 0);
+        numRoll = MkTune(x + 168, y, "roll speed", (decimal)_hudRollRate, 20m, 900m, 10m, 0);
         numPitch.ValueChanged += delegate { _hudPitchRate = (float)numPitch.Value; SaveCfg(); };
         numRoll.ValueChanged += delegate { _hudRollRate = (float)numRoll.Value; SaveCfg(); };
         y += 28;
 
-        numLock = MkTune(x, y, "lock s", (decimal)_hudLockTau, 0.05m, 2.0m, 0.05m, 2);
-        numFly = MkTune(x + 168, y, "drift s", (decimal)_hudFlyTau, 0.10m, 3.0m, 0.1m, 2);
+        numLock = MkTune(x, y, "lock speed", (decimal)_hudLockTau, 0.05m, 2.0m, 0.05m, 2);
+        numFly = MkTune(x + 168, y, "drift speed", (decimal)_hudFlyTau, 0.10m, 3.0m, 0.1m, 2);
         numLock.ValueChanged += delegate { _hudLockTau = (float)numLock.Value; SaveCfg(); };
         numFly.ValueChanged += delegate { _hudFlyTau = (float)numFly.Value; SaveCfg(); };
         y += 28;
 
-        numBias = MkTune(x, y, "bias px", (decimal)_hudBias, -120m, 120m, 2m, 0);
-        numAccel = MkTune(x + 168, y, "accel s", (decimal)_hudAccelTau, 0.02m, 1.0m, 0.02m, 2);
+        numBias = MkTune(x, y, "height adj", (decimal)_hudBias, -120m, 120m, 2m, 0);
+        numAccel = MkTune(x + 168, y, "smoothing", (decimal)_hudAccelTau, 0.02m, 1.0m, 0.02m, 2);
         numBias.ValueChanged += delegate { _hudBias = (float)numBias.Value; SaveCfg(); };
         numAccel.ValueChanged += delegate { _hudAccelTau = (float)numAccel.Value; SaveCfg(); };
         y += 28;
 
-        numDpp = MkTune(x, y, "rung px/deg", (decimal)_hudDpp, 1m, 40m, 1m, 0);
-        numShear = MkTune(x + 168, y, "shear", (decimal)_hudShear, -2m, 2m, 0.05m, 2);
+        numDpp = MkTune(x, y, "line gap", (decimal)_hudDpp, 1m, 40m, 1m, 0);
+        numShear = MkTune(x + 168, y, "staircase", (decimal)_hudShear, -2m, 2m, 0.05m, 2);
         numDpp.ValueChanged += delegate { _hudDpp = (float)numDpp.Value; SaveCfg(); };
         numShear.ValueChanged += delegate { _hudShear = (float)numShear.Value; SaveCfg(); };
         y += 28;
 
-        numLen = MkTune(x, y, "rung len", (decimal)_hudLen, 0.3m, 2.5m, 0.1m, 2);
+        numLen = MkTune(x, y, "line length", (decimal)_hudLen, 0.3m, 2.5m, 0.1m, 2);
         numLen.ValueChanged += delegate { _hudLen = (float)numLen.Value; SaveCfg(); };
         y += 28;
 
-        numImg = MkTune(x, y, "img lock", (decimal)_hudImgGain, 0m, 4m, 0.1m, 1);
+        numImg = MkTune(x, y, "camera trust", (decimal)_hudImgGain, 0m, 4m, 0.1m, 1);
         numImg.ValueChanged += delegate { _hudImgGain = (float)numImg.Value; SaveCfg(); };
         y += 28;
 
-        numRollOff = MkTune(x, y, "roll off", (decimal)_hudRollOff, -180m, 180m, 1m, 0);
-        numPitOff = MkTune(x + 168, y, "pitch off", (decimal)_hudPitOff, -400m, 400m, 5m, 0);
+        numRollOff = MkTune(x, y, "roll shift", (decimal)_hudRollOff, -180m, 180m, 1m, 0);
+        numPitOff = MkTune(x + 168, y, "height shift", (decimal)_hudPitOff, -400m, 400m, 5m, 0);
         numRollOff.ValueChanged += delegate { _hudRollOff = (float)numRollOff.Value; SaveCfg(); };
         numPitOff.ValueChanged += delegate { _hudPitOff = (float)numPitOff.Value; SaveCfg(); };
         y += 28;
 
-        numThr = MkTune(x, y, "thr pitch", (decimal)_hudLeftPx, 0m, 120m, 2m, 0);
+        numThr = MkTune(x, y, "throttle", (decimal)_hudLeftPx, 0m, 120m, 2m, 0);
         numThr.ValueChanged += delegate { _hudLeftPx = (float)numThr.Value; SaveCfg(); };
         y += 32;
 
