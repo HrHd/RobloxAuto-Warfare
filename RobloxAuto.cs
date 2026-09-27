@@ -113,6 +113,8 @@ class RobloxAuto : Form
     bool _hudLocked = false;
     bool _hudNeedLock = false;                    // true from Deploy As Drone until we lock
     bool _hudDetValid = false;                    // DetectHorizon found a confident line
+    long _hudDetAt = 0;                           // when it did (so a stale fix is not trusted)
+    long _hudLogAt = 0;
     long _hudPrevTick = 0;
     bool _hudStyleUav = false;                     // MAVIC gets the UAV-style layout
     FpvHudForm _hudForm = null;
@@ -3488,6 +3490,10 @@ class RobloxAuto : Form
         // (the left stick Y is throttle).
         float sx = _padRx;
         float sy = _padRy;
+        // kill stick rest/drift below 5% so "centred" actually happens - a stick sitting at 0.13
+        // used to leave sx non-zero and the camera correction never ran (lines never levelled)
+        if (sx > -0.05f && sx < 0.05f) sx = 0f;
+        if (sy > -0.05f && sy < 0.05f) sy = 0f;
 
         // controller priority: integrate the stick every frame (rate -> angle)
         _hudFRoll += -sx * 220f * dt;   // came back down from 300 - it overshot the stick input
@@ -3495,10 +3501,11 @@ class RobloxAuto : Form
                                         // DOWN (against the input), not with it; doubled for speed
 
         // camera correction only when the sticks are centred, so input is never cancelled out.
-        // Time constant ~0.35s: slow enough to let the controller lead, fast enough to kill drift.
+        // A fix older than 1.5s is not trusted - the drone may have turned since it was taken.
+        bool det = _hudDetValid && (now - _hudDetAt) < 1500;
         if (sx == 0f && sy == 0f)
         {
-            if (_hudDetValid)
+            if (det)
             {
                 float a = 1f - (float)Math.Pow(0.5, dt / 0.25);   // quicker lock onto the camera
                 _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
@@ -3506,9 +3513,8 @@ class RobloxAuto : Form
             }
             else
             {
-                // centring with no camera fix: gently level the roll back so it never stays
-                // stuck banked after a turn
-                _hudFRoll += (0f - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 1.2));
+                // centring with no camera fix: level the roll back so it never stays stuck banked
+                _hudFRoll += (0f - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 0.6));
             }
         }
 
@@ -4982,7 +4988,12 @@ class RobloxAuto : Form
                     if (bestY >= 0) { pxs[n] = x; pys[n] = bestY; n++; }
                 }
             }
-            if (n < 30) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
+            if (n < 30)
+            {
+                _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f;
+                if (Environment.TickCount - _hudLogAt >= 2000) { _hudLogAt = Environment.TickCount; Log("horizon det: too few boundary points (" + n + ") - no lock"); }
+                return;
+            }
 
             // RANSAC: a horizon is near-horizontal, so reject steep candidate lines outright
             Random rng = new Random();
@@ -5001,7 +5012,12 @@ class RobloxAuto : Form
                     if (Math.Abs(pys[i] - (m * pxs[i] + b)) < 8f) inl++;   // slightly looser: noisy maps
                 if (inl > bestIn) { bestIn = inl; bs = m; bi = b; }
             }
-            if (bestIn < n * 40 / 100) { _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f; return; }
+            if (bestIn < n * 40 / 100)
+            {
+                _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f;
+                if (Environment.TickCount - _hudLogAt >= 2000) { _hudLogAt = Environment.TickCount; Log("horizon det: weak line (" + bestIn + "/" + n + " inliers) - no lock"); }
+                return;
+            }
 
             // least-squares refit on the RANSAC inliers only
             float sx = 0, sy = 0, sxy = 0, sxx = 0; int k = 0;
@@ -5031,6 +5047,12 @@ class RobloxAuto : Form
             _hudDetRoll = _hudSmRoll;
             _hudDetPitch = _hudSmPitch;
             _hudDetValid = true;
+            _hudDetAt = Environment.TickCount;
+            if (Environment.TickCount - _hudLogAt >= 2000)
+            {
+                _hudLogAt = Environment.TickCount;
+                Log("horizon det: " + n + " pts, roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px");
+            }
         }
         catch { }
     }
