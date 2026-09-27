@@ -3625,13 +3625,23 @@ class RobloxAuto : Form
                 Log("drone view detected -> starting the RF/HUD");
                 StartRfWatch();
             }
-            else if (_lastDroneDet) Log("drone view lost");
+            else
+            {
+                if (_lastDroneDet) Log("drone view lost");
+                else if (Environment.TickCount - _lastDetLog >= 6000)
+                {
+                    _lastDetLog = Environment.TickCount;
+                    Log("   drone detect: nothing found - screen read: " + _detDbg);
+                }
+            }
             _lastDroneDet = dv;
         }
         catch { }
     }
 
     volatile bool _lastDroneDet = false;
+    long _lastDetLog = 0;
+    string _detDbg = "";
     bool DroneViewOnScreen()
     {
         try
@@ -3656,6 +3666,19 @@ class RobloxAuto : Form
                     if (t.IndexOf("PAYLOAD") >= 0 || t.IndexOf("MOUNTED") >= 0 ||
                         t.IndexOf("GRENADE") >= 0 || t.IndexOf("READY") >= 0)
                         return true;                          // payload readout = drone view
+                }
+            // 3) last resort: plain full-screen read for DRONE-SPECIFIC words only (never "live"/
+            // "link" on their own - those are what used to false-flag). Detect is opt-in so this
+            // broad read cannot pop the HUD up by accident.
+            List<string[]> all = OcrWords();
+            _detDbg = DumpWords(all);
+            if (all != null)
+                foreach (string[] w in all)
+                {
+                    string t = (w[4] ?? "").ToUpperInvariant();
+                    if (t.IndexOf("MAVIC") >= 0 || t.IndexOf("FPV") >= 0 || t.IndexOf("PAYLOAD") >= 0 ||
+                        t.IndexOf("GRENADE") >= 0 || t.IndexOf("MOUNTED") >= 0)
+                        return true;
                 }
         }
         catch { }
