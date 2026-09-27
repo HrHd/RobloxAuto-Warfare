@@ -4023,6 +4023,10 @@ class RobloxAuto : Form
     {
         base.OnShown(e);
         ApplyNoActivate();
+        // Keep the panel OUT of our own screen grabs. Tabbing out of the game brings this window
+        // forward, and the OCR was then reading the panel (including log lines like "NO SIGNAL")
+        // and deciding the drone had crashed - which stopped the HUD the moment you tabbed away.
+        ExcludeFromCapture(Handle);
         _hudStyleUav = _drone == "MAVIC";   // the OSD style is set by the chosen drone
         // Always start with a clean display: if a previous run died while the colour effect was
         // on (the invert bug), this clears it so a restart is never needed.
@@ -4663,15 +4667,9 @@ class RobloxAuto : Form
 
                         // the top-right "LINK LIVE" indicator is the proof we are actually in
                         // the drone view - without it the feed should not run at all
-                        bool linked = IsLinked();
-                        if (linked) lastLink = Environment.TickCount;
-                        // LINK is only a watchdog now: the overlay stays up unless it has been gone
-                        // a full 90s (a real crash is caught by the NO SIGNAL check above)
-                        if (!linked && Environment.TickCount - lastLink >= 90000)
-                        {
-                            shown = false;
-                            Log("   RF feed: no LINK for 90s - overlay off (kept the last reading)");
-                        }
+                        // NOTE: no LINK-based auto-off any more. The watch only starts when we ARE in
+                        // the drone, and the flaky corner read was shutting the HUD off at random.
+                        // A real crash is caught by the NO SIGNAL check above.
                         if (shown)
                         {
                             int fs = ReadFlightSecs();   // the game's own top-left FLIGHT clock
@@ -4869,9 +4867,16 @@ class RobloxAuto : Form
     {
         try
         {
+            int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
             bool no = false, sig = false;
             foreach (string[] w in OcrWords())
             {
+                // the crash screen is big text in the MIDDLE of the view - only trust words there,
+                // so a stray "no"/"signal" in the UI, nav bar or another window cannot match
+                int wx, wy;
+                try { wx = int.Parse(w[0]); wy = int.Parse(w[1]); } catch { continue; }
+                if (wx < W * 25 / 100 || wx > W * 75 / 100) continue;
+                if (wy < H * 28 / 100 || wy > H * 72 / 100) continue;
                 string t = (w[4] ?? "").ToUpperInvariant();
                 if (t.IndexOf("SIGNAL") >= 0) sig = true;
                 if (t == "NO" || t.IndexOf("NOSIG") >= 0) no = true;
