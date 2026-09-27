@@ -193,43 +193,41 @@ function drawHud(s, glitching) {
     return [cx + dx * Math.cos(rad) - dy * Math.sin(rad), cy + dx * Math.sin(rad) + dy * Math.cos(rad)];
   }
 
-  // artificial horizon + pitch ladder. Flat/level at neutral and ROTATED to diagonal as it banks
-  // (right stick X), and the rungs FAN OUT from the centre - close in the middle, wider apart at
-  // the ends - so it reads like a real drone HUD.
+  // artificial horizon + pitch ladder. Every rung is ALWAYS a HORIZONTAL line on the monitor (never
+  // tilted): pitch slides them up/down and the bank slides each one SIDEWAYS, so a bank reads as a
+  // leaning staircase of flat lines instead of rotating the lines themselves.
   hctx.font = font;
   var tilt = Math.min(1, Math.abs(s.pit || 0) / 900 + Math.abs(s.roll || 0) / 180);
   var spread = 1 + 1.1 * tilt;
   for (var d = -90; d <= 90; d += 10) {
     var yy = pit + d * 8 * sc * spread;
+    var xoff = rad * yy * 0.9;                    // bank slides the rung sideways (line stays flat)
     var dist = Math.abs(yy);
     var af = dist <= 200 * sc ? 1 : 1 - (dist - 200 * sc) / (320 * sc);   // fade 200px -> 520px
     if (af <= 0.02) continue;
     var half = (d === 0 ? 150 : 70) * sc * (1 + 0.4 * tilt);
-    var a = R(cx - half, cy + yy), b = R(cx + half, cy + yy);
+    var ay = cy + yy;
     hctx.globalAlpha = af;
     hctx.strokeStyle = d === 0 ? col : thin;
     hctx.lineWidth = (d === 0 ? 2 : 1) * sc;
-    hctx.beginPath(); hctx.moveTo(a[0], a[1]); hctx.lineTo(b[0], b[1]); hctx.stroke();
+    hctx.beginPath(); hctx.moveTo(cx - half + xoff, ay); hctx.lineTo(cx + half + xoff, ay); hctx.stroke();
     if (d === 0) {
-      var e1 = R(cx - half, cy + yy + 12 * sc), e2 = R(cx + half, cy + yy + 12 * sc);
       hctx.beginPath();
-      hctx.moveTo(a[0], a[1]); hctx.lineTo(e1[0], e1[1]);
-      hctx.moveTo(b[0], b[1]); hctx.lineTo(e2[0], e2[1]);
+      hctx.moveTo(cx - half + xoff, ay); hctx.lineTo(cx - half + xoff, ay + 12 * sc);
+      hctx.moveTo(cx + half + xoff, ay); hctx.lineTo(cx + half + xoff, ay + 12 * sc);
       hctx.stroke();
     } else {
-      var t = R(cx + half + 6 * sc, cy + yy + 5 * sc);
       hctx.fillStyle = col;
-      hctx.fillText((d > 0 ? '+' : '') + d, t[0], t[1]);
+      hctx.fillText((d > 0 ? '+' : '') + d, cx + half + 6 * sc + xoff, ay + 5 * sc);
     }
     hctx.globalAlpha = 1;
   }
 
-  // bank indicator: fixed tick at the top, marker swings with the bank
+  // bank indicator: fixed tick at the top, marker slides sideways with the bank (never rotates)
   hctx.strokeStyle = thin; hctx.lineWidth = 1 * sc;
   hctx.beginPath(); hctx.moveTo(cx, 26 * sc); hctx.lineTo(cx, 40 * sc); hctx.stroke();
-  var bm = R(cx, 34 * sc);
   hctx.fillStyle = col;
-  hctx.beginPath(); hctx.arc(bm[0], bm[1], 5 * sc, 0, Math.PI * 2); hctx.fill();
+  hctx.beginPath(); hctx.arc(cx + (s.roll || 0) * 1.2 * sc, 34 * sc, 5 * sc, 0, Math.PI * 2); hctx.fill();
 
   // centre reticle (with the small ring the monitor draws)
   hctx.strokeStyle = col; hctx.lineWidth = 2 * sc;

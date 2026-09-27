@@ -4081,11 +4081,14 @@ class RobloxAuto : Form
         // The DETECTED horizon (gradient detector) is the reference: the ladder SMOOTHLY TRAVELS TO IT,
         // so it reads flat when the ground line is flat and diagonal when the ground line tilts. When
         // there is no confident fix we fall back to integrating the controller so it still moves.
-        bool det = _hudDetValid && (now - _hudDetAt) < 2000;
+        // The IMAGE horizon is only trustworthy for the MAVIC (hover). For the ACRO FPV the picture's
+        // strongest edge is usually the sloped TERRAIN, which is not the horizon - it tilts the line
+        // even when the camera is dead level. So the FPV takes its roll from the CONTROLLER: centred
+        // stick = the line sits flat with the screen.
+        bool det = _hudStyleUav && _hudDetValid && (now - _hudDetAt) < 2000;
         if (det)
         {
-            float tau = _hudStyleUav ? 0.25f : 0.45f;
-            float a = 1f - (float)Math.Pow(0.5, dt / tau);
+            float a = 1f - (float)Math.Pow(0.5, dt / 0.25f);
             _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
             _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
             _hudRollVel = 0f; _hudPitchVel = 0f;
@@ -5053,14 +5056,15 @@ class RobloxAuto : Form
 
             if (Uav) { DrawMavic(g, W, H); base.OnPaint(e); return; }   // DJI-Fly style
 
-            // artificial horizon + pitch ladder. Flat/level at neutral and ROTATED to diagonal as it
-            // banks (right stick X); the rungs also FAN OUT from the centre - close in the middle,
-            // wider apart at the ends - like a real drone HUD.
+            // artificial horizon + pitch ladder. Every rung is ALWAYS a HORIZONTAL line on the monitor
+            // (never tilted): pitch slides them up/down and the bank slides each one SIDEWAYS, so a
+            // bank reads as a leaning staircase of flat lines instead of rotating the lines.
             float tilt = Math.Min(1f, Math.Abs(PitchPx) / 900f + Math.Abs(Roll) / 180f);
             float spread = 1f + 1.1f * tilt;
             for (int d = -90; d <= 90; d += 10)
             {
                 float yy = PitchPx + d * 8f * spread;        // 10 deg = 8px, fanned by the tilt
+                float xoff = rad * yy * 0.9f;                // bank slides the rung sideways
                 float dist = Math.Abs(yy);
                 float af = dist <= 200f ? 1f : 1f - (dist - 200f) / 320f;   // fade 200px -> 520px
                 if (af <= 0.02f) continue;
@@ -5069,27 +5073,24 @@ class RobloxAuto : Form
                 Pen pen = d == 0
                     ? new Pen(Color.FromArgb(aMain, 255, 255, 255), 2)
                     : new Pen(Color.FromArgb(aThin, 230, 230, 230), 1);
-                // The ladder ROTATES with the roll (right-stick X) so the lines tilt to follow the
-                // horizon, like a real drone HUD.
-                PointF a = R(cx - half, cy + yy, cx, cy, rad), b = R(cx + half, cy + yy, cx, cy, rad);
-                g.DrawLine(pen, a, b);
+                float ay = cy + yy;
+                g.DrawLine(pen, cx - half + xoff, ay, cx + half + xoff, ay);
                 if (d == 0)
                 {
-                    g.DrawLine(pen, a, R(cx - half, cy + yy + 12, cx, cy, rad));   // end caps
-                    g.DrawLine(pen, b, R(cx + half, cy + yy + 12, cx, cy, rad));
+                    g.DrawLine(pen, cx - half + xoff, ay, cx - half + xoff, ay + 12);   // end caps
+                    g.DrawLine(pen, cx + half + xoff, ay, cx + half + xoff, ay + 12);
                 }
                 else
                 {
                     using (SolidBrush lb = new SolidBrush(Color.FromArgb(aTxt, 255, 255, 255)))
-                        g.DrawString((d > 0 ? "+" : "") + d, _f, lb, R(cx + half + 6, cy + yy - 8, cx, cy, rad));
+                        g.DrawString((d > 0 ? "+" : "") + d, _f, lb, cx + half + 6 + xoff, ay - 8);
                 }
                 pen.Dispose();
             }
 
-            // bank indicator: fixed tick at the top, marker swings with the roll
+            // bank indicator: fixed tick at the top, marker slides sideways with the roll (never rotates)
             g.DrawLine(_pt, cx, 26, cx, 40);
-            PointF bm = R(cx, 34, cx, cy, rad);
-            g.FillEllipse(_g, bm.X - 5, bm.Y - 5, 10, 10);
+            g.FillEllipse(_g, cx + Roll * 1.2f - 5, 34 - 5, 10, 10);
 
             // centre reticle
             g.DrawLine(_p, cx - 42, cy, cx - 12, cy);
