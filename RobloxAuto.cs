@@ -4869,6 +4869,7 @@ class RobloxAuto : Form
                 bool lastOk = false;
                 long lastHud = 0;
                 long lastDet = 0;      // horizon measurement cadence (faster than the slow path)
+                int inHits = 0, outHits = 0;   // debounce so one bad OCR frame cannot flap the feed
 
                 while (_rfRun)
                 {
@@ -4926,17 +4927,21 @@ class RobloxAuto : Form
                             || sn == "team base" || sn == "loading";
                         bool inDrone = (fs >= 0 || corner || DroneKeyword()) && !menu;
                         if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
-                        if (inDrone)
+
+                        // Debounce BOTH directions. A single frame of bad OCR used to drop the
+                        // feed, and the very next frame turned it back on - so the HUD flapped off
+                        // and on "at random". Require two consecutive reads to agree.
+                        if (inDrone) { inHits++; outHits = 0; } else { outHits++; inHits = 0; }
+                        if (inHits >= 2)
                         {
                             _lastInDroneAt = Environment.TickCount;
                             if (!shown) { shown = true; Log("   RF feed: drone view - overlay on"); }
                         }
-                        else if (shown && (menu || Environment.TickCount - _lastInDroneAt > 30000))
+                        if (shown && (outHits >= 2 || Environment.TickCount - _lastInDroneAt > 30000))
                         {
-                            // a menu word is proof we are not flying -> drop the HUD instantly;
-                            // otherwise the OSD simply went quiet, so give it the full 30s.
+                            // two agreeing "not flying" reads (or the 30s quiet timeout) -> drop.
                             shown = false;
-                            Log(menu ? "   menu on screen - overlay off" : "   RF feed: 30s with no drone view - overlay off");
+                            Log(menu ? "   menu on screen - overlay off" : "   RF feed: no drone view - overlay off");
                             // tell the OBS terminal so it visibly drops back to the CLI instead of
                             // freezing on the last HUD frame
                             AddBlackLine(menu ? "returning to command line - menu detected"
