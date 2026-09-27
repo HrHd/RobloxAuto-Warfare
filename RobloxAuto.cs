@@ -1,4 +1,4 @@
-﻿// RobloxAuto.cs - one window for the Warfare loop.
+// RobloxAuto.cs - one window for the Warfare loop.
 //
 //   REJOIN      rejoin the last server (deep link), auto-reconnect, OCR loading watch
 //   AUTO RUN    wait for load -> team -> drone -> DEPLOY -> Base -> Deploy As Drone
@@ -6320,7 +6320,7 @@ class RobloxAuto : Form
                         for (int gy = 0; gy < trows; gy++) for (int gx = gx0; gx < gx1; gx++) { skyRef += im[gy * gw + gx]; sc++; }
                         skyRef = sc > 0 ? skyRef / sc : 0f;
                     }
-                    bool trk = _hudTrkAt != 0 && (Environment.TickCount - _hudTrkAt) < 1500;
+                    bool trk = _hudTrkAt != 0 && (Environment.TickCount - _hudTrkAt) < 3000;
                     for (int gx = gx0; gx < gx1; gx++)
                     {
                         float best = -1e9f; int by = -1; float byGrad = 0f;
@@ -6328,13 +6328,13 @@ class RobloxAuto : Form
                         // ground just below. Using the whole column above (a running mean) stayed
                         // sky-ish for terrain edges near the top, so at altitude sharp tree/field lines
                         // just under the horizon stole the lock and parked the roll near -10. Local fixes it.
-                        for (int gy = gy0 + 3; gy < gy1 - 3; gy++)
+                        for (int gy = (gy0 > 3 ? gy0 : 3); gy < gy1 - 3; gy++)
                         {
                             bool inBand = true;
                             if (trk)
                             {
                                 int pyb = (int)((_hudTrkM * (gx * B + B / 2f) + _hudTrkB) / B);
-                                inBand = gy >= pyb - 8 && gy <= pyb + 8;
+                                inBand = gy >= pyb - 6 && gy <= pyb + 6;
                             }
                             if (!inBand) continue;
                             float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
@@ -6345,7 +6345,7 @@ class RobloxAuto : Form
                         }
                         if (by < 0 && trk)      // band empty -> fall back to the whole column
                         {
-                            for (int gy = gy0 + 3; gy < gy1 - 3; gy++)
+                            for (int gy = (gy0 > 3 ? gy0 : 3); gy < gy1 - 3; gy++)
                             {
                                 float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
                                 float above = (im[(gy - 1) * gw + gx] + im[(gy - 2) * gw + gx] + im[(gy - 3) * gw + gx]) / 3f;
