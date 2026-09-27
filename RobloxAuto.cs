@@ -5108,15 +5108,14 @@ class RobloxAuto : Form
 
             if (Uav) { DrawMavic(g, W, H); base.OnPaint(e); return; }   // DJI-Fly style
 
-            // artificial horizon + pitch ladder. Every rung is ALWAYS a HORIZONTAL line on the monitor
-            // (never tilted): pitch slides them up/down and the bank slides each one SIDEWAYS, so a
-            // bank reads as a leaning staircase of flat lines instead of rotating the lines.
+            // artificial horizon + pitch ladder. Each rung is ROTATED by the roll so it stays PARALLEL
+            // TO THE REAL HORIZON (tilted like the ground line), like a gyro/instrument horizon. Pitch
+            // slides the whole ladder up/down.
             float tilt = Math.Min(1f, Math.Abs(PitchPx) / 900f + Math.Abs(Roll) / 180f);
             float spread = 1f + 1.1f * tilt;
             for (int d = -90; d <= 90; d += 10)
             {
                 float yy = PitchPx + d * Dpp * spread;       // dpp = px per degree, fanned by the tilt
-                float xoff = -(float)Math.Tan(rad) * yy * Shear;   // exact shear of a rotated horizon
                 float dist = Math.Abs(yy);
                 float af = dist <= 200f ? 1f : 1f - (dist - 200f) / 320f;   // fade 200px -> 520px
                 if (af <= 0.02f) continue;
@@ -5126,16 +5125,17 @@ class RobloxAuto : Form
                     ? new Pen(Color.FromArgb(aMain, 255, 255, 255), 2)
                     : new Pen(Color.FromArgb(aThin, 230, 230, 230), 1);
                 float ay = cy + yy;
-                g.DrawLine(pen, cx - half + xoff, ay, cx + half + xoff, ay);
+                PointF a = R(cx - half, ay, cx, cy, rad), b = R(cx + half, ay, cx, cy, rad);
+                g.DrawLine(pen, a, b);
                 if (d == 0)
                 {
-                    g.DrawLine(pen, cx - half + xoff, ay, cx - half + xoff, ay + 12);   // end caps
-                    g.DrawLine(pen, cx + half + xoff, ay, cx + half + xoff, ay + 12);
+                    g.DrawLine(pen, a, R(cx - half, ay + 12, cx, cy, rad));   // end caps
+                    g.DrawLine(pen, b, R(cx + half, ay + 12, cx, cy, rad));
                 }
                 else
                 {
                     using (SolidBrush lb = new SolidBrush(Color.FromArgb(aTxt, 255, 255, 255)))
-                        g.DrawString((d > 0 ? "+" : "") + d, _f, lb, cx + half + 6 + xoff, ay - 8);
+                        g.DrawString((d > 0 ? "+" : "") + d, _f, lb, R(cx + half + 6, ay - 8, cx, cy, rad));
                 }
                 pen.Dispose();
             }

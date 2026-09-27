@@ -197,19 +197,16 @@ function drawHud(s, glitching) {
     return [cx + dx * Math.cos(rad) - dy * Math.sin(rad), cy + dx * Math.sin(rad) + dy * Math.cos(rad)];
   }
 
-  // artificial horizon + pitch ladder. Every rung is ALWAYS a HORIZONTAL line on the monitor (never
-  // tilted): pitch slides them up/down and the bank slides each one SIDEWAYS, so a bank reads as a
-  // leaning staircase of flat lines instead of rotating the lines themselves.
+  // artificial horizon + pitch ladder. Each rung is ROTATED by the detected roll so it stays PARALLEL
+  // TO THE REAL HORIZON (tilted like the ground line), exactly like a gyro/instrument horizon. Pitch
+  // slides the whole ladder up/down.
   hctx.font = font;
-  // geometry dials (from settings via /state). dpp = px per degree, shear = sideways slide, len = rung length
   var dpp = (typeof s.dpp === 'number' && s.dpp > 0) ? s.dpp : 8;
-  var shear = (typeof s.shear === 'number') ? s.shear : 0.9;
   var lscale = (typeof s.len === 'number' && s.len > 0) ? s.len : 1;
   var tilt = Math.min(1, Math.abs(s.pit || 0) / 900 + Math.abs(s.roll || 0) / 180);
   var spread = 1 + 1.1 * tilt;
   for (var d = -90; d <= 90; d += 10) {
     var yy = pit + d * dpp * sc * spread;
-    var xoff = -Math.tan(rad) * yy * shear;       // exact shear of a rotated horizon (line stays flat)
     var dist = Math.abs(yy);
     var af = dist <= 200 * sc ? 1 : 1 - (dist - 200 * sc) / (320 * sc);   // fade 200px -> 520px
     if (af <= 0.02) continue;
@@ -218,15 +215,18 @@ function drawHud(s, glitching) {
     hctx.globalAlpha = af;
     hctx.strokeStyle = d === 0 ? col : thin;
     hctx.lineWidth = (d === 0 ? 2 : 1) * sc;
-    hctx.beginPath(); hctx.moveTo(cx - half + xoff, ay); hctx.lineTo(cx + half + xoff, ay); hctx.stroke();
+    var a = R(cx - half, ay), b = R(cx + half, ay);
+    hctx.beginPath(); hctx.moveTo(a[0], a[1]); hctx.lineTo(b[0], b[1]); hctx.stroke();
     if (d === 0) {
+      var e1 = R(cx - half, ay + 12 * sc), e2 = R(cx + half, ay + 12 * sc);
       hctx.beginPath();
-      hctx.moveTo(cx - half + xoff, ay); hctx.lineTo(cx - half + xoff, ay + 12 * sc);
-      hctx.moveTo(cx + half + xoff, ay); hctx.lineTo(cx + half + xoff, ay + 12 * sc);
+      hctx.moveTo(a[0], a[1]); hctx.lineTo(e1[0], e1[1]);
+      hctx.moveTo(b[0], b[1]); hctx.lineTo(e2[0], e2[1]);
       hctx.stroke();
     } else {
+      var t = R(cx + half + 6 * sc, ay + 5 * sc);
       hctx.fillStyle = col;
-      hctx.fillText((d > 0 ? '+' : '') + d, cx + half + 6 * sc + xoff, ay + 5 * sc);
+      hctx.fillText((d > 0 ? '+' : '') + d, t[0], t[1]);
     }
     hctx.globalAlpha = 1;
   }
