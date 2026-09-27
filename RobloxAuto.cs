@@ -2336,6 +2336,52 @@ class RobloxAuto : Form
         return false;
     }
 
+    // PIXEL check (no OCR): the TEAM BASE panel is drawn with a GREEN "Deploy", a MAROON "Return" and
+    // a GOLD "Deploy As Drone" button stacked at the SAME x. The map's POINT-lock screen has only the
+    // first two. So a wide maroon bar with a wide green bar above AND a wide gold bar below proves we
+    // are on the TEAM BASE panel - even when the bright map defeats Windows OCR entirely. This is what
+    // stops the flow pressing Return (backing out) when it is actually sitting right on the panel.
+    bool BasePanelVisual()
+    {
+        try
+        {
+            int W, H; int[] px = Grab(out W, out H);
+            if (px == null || W < 100 || H < 100) return false;
+            int x0 = W * 12 / 100, x1 = W * 82 / 100;
+            for (int y = H * 26 / 100; y < H * 74 / 100; y++)
+            {
+                int mc; int ml = HudRun(px, W, y, x0, x1, HudMaroon, out mc);
+                if (ml < 150) continue;                       // the maroon "Return" button
+                bool green = false;
+                for (int yy = y - 95; yy < y - 15; yy++)
+                {
+                    if (yy < 0) continue;
+                    int c; if (HudRun(px, W, yy, x0, x1, HudGreen, out c) >= 150 && Math.Abs(c - mc) < 70) { green = true; break; }
+                }
+                if (!green) continue;                          // the green "Deploy" above it
+                for (int yy = y + 18; yy < y + 100 && yy < H; yy++)
+                {
+                    int c; if (HudRun(px, W, yy, x0, x1, HudGold, out c) >= 150 && Math.Abs(c - mc) < 70) return true;
+                }                                              // the gold "Deploy As Drone" below it
+            }
+        }
+        catch { }
+        return false;
+    }
+    static bool HudMaroon(int p) { int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255; return r > 88 && r < 160 && g > 38 && g < 88 && b > 38 && b < 90 && r > g + 28 && r > b + 26; }
+    static bool HudGold(int p) { int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255; return r > 128 && g > 98 && g < 178 && b < 108 && r > g + 6 && g > b + 16; }
+    static bool HudGreen(int p) { int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255; return g > r + 14 && g > b + 24 && g > 88; }
+    static int HudRun(int[] px, int W, int y, int x0, int x1, Func<int, bool> f, out int centre)
+    {
+        int best = 0, bc = -1, cur = 0, cs = -1, row = y * W;
+        for (int x = x0; x < x1; x++)
+        {
+            if (f(px[row + x])) { if (cur == 0) cs = x; cur++; if (cur > best) { best = cur; bc = cs + cur / 2; } }
+            else cur = 0;
+        }
+        centre = bc; return best;
+    }
+
     // The MAP's "point lock" screen: a POINT got selected and it says to press Deploy to lock your
     // choice, with a green Deploy and a maroon Return. Seeing this where the TEAM BASE panel should
     // be means the base click MISSED and hit a map POINT - a misclick. We must back out with Return
@@ -2344,13 +2390,18 @@ class RobloxAuto : Form
     {
         try
         {
+            // PIXEL truth first: if the green/maroon/gold button stack is on screen, we ARE on the
+            // TEAM BASE panel - never call it a misclick (OCR is blind on the bright map).
+            if (BasePanelVisual()) return false;
             // The TEAM BASE panel prints the SAME "Press Deploy button to lock in your choice" text,
             // so the phrase alone is NOT enough - only treat it as a misclick when the TEAM BASE
-            // markers (header / Deploy As Drone / WARHEAD) are absent.
+            // markers (header / Deploy As Drone / WARHEAD / the warhead cells) are absent.
             List<string[]> ws = OcrWords();
             List<string[]> ww = OcrWordsWhiten();
             bool basePanel = PhraseIn("TEAM BASE", ws) || PhraseIn("DEPLOY AS DRONE", ws) || PhraseIn("WARHEAD", ws)
-                          || PhraseIn("TEAM BASE", ww) || PhraseIn("DEPLOY AS DRONE", ww) || PhraseIn("WARHEAD", ww);
+                          || PhraseIn("TEAM BASE", ww) || PhraseIn("DEPLOY AS DRONE", ww) || PhraseIn("WARHEAD", ww)
+                          || PhraseIn("Standard Frag", ws) || PhraseIn("PG-7VS", ws) || PhraseIn("TBG-7", ws)
+                          || PhraseIn("Standard Frag", ww) || PhraseIn("PG-7VS", ww) || PhraseIn("TBG-7", ww);
             if (basePanel) return false;
             // COUNT the POINT labels: the normal map shows SEVERAL (POINT A..F) -> we are on the map
             // with the Base, fine. EXACTLY ONE POINT means a point got selected - the bad lock screen.
