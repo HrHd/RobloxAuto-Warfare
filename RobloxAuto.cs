@@ -4070,39 +4070,22 @@ class RobloxAuto : Form
         if (sx > -0.05f && sx < 0.05f) sx = 0f;
         if (sy > -0.05f && sy < 0.05f) sy = 0f;
 
-        // ROLL is a BANK ANGLE proportional to the right stick X - it turns a little and holds,
-        // then eases back to level when you centre the stick. A proportional angle (not a rate)
-        // is what matches the view: pushing the stick turns the lines a bit with the horizon
-        // instead of spinning them round.
-        float rollTarget = -sx * 45f;              // up to ~45 deg at full deflection
-        _hudFRoll += (rollTarget - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 0.15));
-
-        // PITCH keeps the acceleration model (stick sets a target speed, eased toward).
+        // The RIGHT stick drives the ladder DIRECTLY: X = bank/tilt, Y = pitch. Both INTEGRATE (a
+        // rate) and HOLD, with the acceleration easing the motion. So when you bank, the lines stay
+        // banked with the horizon - they no longer snap back flat the moment you centre the stick to
+        // hold the turn. There is NO camera correction and NO self-levelling any more: the broken
+        // horizon detector was permanently forcing roll 0 / pitch -270 and flattening everything.
+        float vTargetRoll = -sx * _hudRollRate;    // deg/s (bank)
         float vTargetPitch = -sy * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
         float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
+        _hudRollVel += (vTargetRoll - _hudRollVel) * av;
         _hudPitchVel += (vTargetPitch - _hudPitchVel) * av;
+        _hudFRoll += _hudRollVel * dt;
         _hudFPitch += _hudPitchVel * dt;
 
         // The LEFT stick (throttle) is a small, BOUNDED proportional nudge, NOT integrated. Adding
         // it to the rate meant holding throttle walked the horizon clean off the screen.
         float leftPitch = -_padLy * _hudLeftPx;
-
-        // The ROLL is driven DIRECTLY by the right stick (integrated above) - the camera is NOT
-        // allowed to pull it back any more. That pull was flattening the ladder to level while the
-        // drone was clearly banked, so right-stick X never turned the lines diagonal. The camera
-        // only corrects PITCH now. When the stick is centred the roll eases back to level, so a
-        // banked turn still self-levels like a real drone in angle mode.
-        bool det = _hudDetValid && (now - _hudDetAt) < 1500;
-        if (det)
-        {
-            float a = 1f - (float)Math.Pow(0.5, dt / _hudFlyTau);
-            _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
-        }
-        if (!det && sx == 0f && sy == 0f)
-        {
-            // no camera fix and hands off: ease the pitch back to centre (roll self-levels above)
-            _hudFPitch += (0f - _hudFPitch) * (1f - (float)Math.Pow(0.5, dt / 1.5));
-        }
 
         if (_hudFRoll > 180f) _hudFRoll = 180f;
         if (_hudFRoll < -180f) _hudFRoll = -180f;
