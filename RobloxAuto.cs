@@ -6098,35 +6098,38 @@ class RobloxAuto : Form
             int n = 0;
             bool gOk = false; float slope = 0f, icept = 0f; float conf = 0f;
 
-            // --- primary: GLOBAL line search on the VERTICAL GRADIENT. The horizon is the strongest
-            // near-horizontal edge in the view, so we score candidate lines by the mean vertical
-            // gradient along them. This is what survives fog, where the sky and ground colours are
-            // nearly identical and the old colour-match approach just latched onto "flat" (roll 0).
-            // Coarse sweep over slope+intercept, then a fine sweep around the winner. ---
+            // --- primary: GLOBAL line search on the VERTICAL GRADIENT, scored ROBUSTLY. We found the
+            // MEAN gradient is fooled by a localized, very-high-contrast streak (a smoke plume) - it
+            // scored the plume edge above the horizon. The horizon is instead a MODERATE edge present
+            // across the WHOLE width, so we score by the 40th PERCENTILE of the per-column gradient
+            // and require good WIDTH COVERAGE. Coarse sweep, then fine sweep around the winner. ---
+            float[] ns = new float[(W * 5 / 6 - W / 6) / 2 + 4];
             {
                 float bestScore = 0f; float bm = 0f; int bb = H / 2;
-                for (int m100 = -70; m100 <= 70; m100 += 4)
+                for (int m100 = -60; m100 <= 60; m100 += 4)
                 {
                     float m = m100 / 100f;
                     for (int b = (int)(H * 0.18f); b <= (int)(H * 0.82f); b += 6)
                     {
-                        float tot = 0f; int cnt = 0;
+                        int cnt = 0;
                         for (int x = W / 6; x < W * 5 / 6; x += 5)
                         {
                             int yl = (int)(m * x + b);
                             if (yl < 3 || yl >= H - 3) continue;
                             int a = px[(yl - 2) * W + x], c = px[(yl + 2) * W + x];
-                            int gy = Math.Abs(((a >> 16) & 0xFF) - ((c >> 16) & 0xFF))
-                                   + Math.Abs(((a >> 8) & 0xFF) - ((c >> 8) & 0xFF))
-                                   + Math.Abs((a & 0xFF) - (c & 0xFF));
-                            tot += gy; cnt++;
+                            ns[cnt++] = Math.Abs(((a >> 16) & 0xFF) - ((c >> 16) & 0xFF))
+                                      + Math.Abs(((a >> 8) & 0xFF) - ((c >> 8) & 0xFF))
+                                      + Math.Abs((a & 0xFF) - (c & 0xFF));
                         }
-                        if (cnt < 10) continue;
-                        float s2 = tot / cnt;
+                        if (cnt < 40) continue;
+                        int cov = 0; for (int q = 0; q < cnt; q++) if (ns[q] > 10f) cov++;
+                        if ((float)cov / cnt < 0.45f) continue;      // a real horizon spans the width
+                        Array.Sort(ns, 0, cnt);
+                        float s2 = ns[(int)(cnt * 0.40f)];           // robust 40th percentile
                         if (s2 > bestScore) { bestScore = s2; bm = m; bb = b; }
                     }
                 }
-                if (bestScore > 7f)
+                if (bestScore > 6f)
                 {
                     for (int m100 = (int)(bm * 100f) - 4; m100 <= (int)(bm * 100f) + 4; m100++)
                     {
@@ -6134,24 +6137,24 @@ class RobloxAuto : Form
                         for (int b = bb - 6; b <= bb + 6; b += 1)
                         {
                             if (b < 3 || b > H - 3) continue;
-                            float tot = 0f; int cnt = 0;
+                            int cnt = 0;
                             for (int x = W / 6; x < W * 5 / 6; x += 2)
                             {
                                 int yl = (int)(m * x + b);
                                 if (yl < 3 || yl >= H - 3) continue;
                                 int a = px[(yl - 2) * W + x], c = px[(yl + 2) * W + x];
-                                int gy = Math.Abs(((a >> 16) & 0xFF) - ((c >> 16) & 0xFF))
-                                       + Math.Abs(((a >> 8) & 0xFF) - ((c >> 8) & 0xFF))
-                                       + Math.Abs((a & 0xFF) - (c & 0xFF));
-                                tot += gy; cnt++;
+                                ns[cnt++] = Math.Abs(((a >> 16) & 0xFF) - ((c >> 16) & 0xFF))
+                                          + Math.Abs(((a >> 8) & 0xFF) - ((c >> 8) & 0xFF))
+                                          + Math.Abs((a & 0xFF) - (c & 0xFF));
                             }
-                            if (cnt < 10) continue;
-                            float s2 = tot / cnt;
+                            if (cnt < 40) continue;
+                            Array.Sort(ns, 0, cnt);
+                            float s2 = ns[(int)(cnt * 0.40f)];
                             if (s2 > bestScore) { bestScore = s2; slope = m; icept = b; gOk = true; }
                         }
                     }
                     if (!gOk) { slope = bm; icept = bb; gOk = true; }
-                    if (gOk) conf = Math.Min(1f, bestScore / 30f);   // edge strength -> confidence
+                    conf = Math.Min(1f, bestScore / 80f);   // 40th-pct scale is larger than the old mean
                 }
             }
 
