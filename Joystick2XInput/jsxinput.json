@@ -1,0 +1,36 @@
+{
+  "device_name": "Extreme",
+  "poll_hz": 125,
+  "deadzone": 0.05,
+  "axes": {
+    "0": {
+      "target": "rx",
+      "inv": false
+    },
+    "1": {
+      "target": "ry",
+      "inv": true
+    },
+    "2": {
+      "target": "ly",
+      "inv": false
+    }
+  },
+  "hat_axes": {
+    "x": "lx",
+    "y": ""
+  },
+  "hat_dpad": false,
+  "buttons": {
+    "0": "A",
+    "1": "B",
+    "2": "X",
+    "3": "Y",
+    "4": "LEFT_SHOULDER",
+    "5": "RIGHT_SHOULDER",
+    "6": "BACK",
+    "7": "START",
+    "8": "LEFT_THUMB",
+    "9": "RIGHT_THUMB"
+  }
+}
