@@ -448,7 +448,7 @@ class RobloxAuto : Form
         timerPad = new System.Windows.Forms.Timer(); timerPad.Interval = 60; timerPad.Tick += PadTick; timerPad.Start();
         timerLog = new System.Windows.Forms.Timer(); timerLog.Interval = 2000; timerLog.Tick += LogTick; timerLog.Start();
         timerOcr = new System.Windows.Forms.Timer(); timerOcr.Interval = 4000; timerOcr.Tick += OcrTick; timerOcr.Start();
-        timerDrone = new System.Windows.Forms.Timer(); timerDrone.Interval = 3000; timerDrone.Tick += DroneTick; timerDrone.Start();
+        timerDrone = new System.Windows.Forms.Timer(); timerDrone.Interval = 2000; timerDrone.Tick += DroneTick; timerDrone.Start();
         timerHud = new System.Windows.Forms.Timer(); timerHud.Interval = 20; timerHud.Tick += HudTick; timerHud.Start();
     }
 
@@ -3619,28 +3619,42 @@ class RobloxAuto : Form
             // drone view when the user opts in, i.e. they picked a drone by hand. Otherwise the
             // scan false-flagged on random UI text and popped the HUD up out of nowhere.
             if (!_hudAutoDetect) return;
-            if (DroneViewOnScreen())
+            bool dv = DroneViewOnScreen();
+            if (dv)
             {
-                Log("drone view already on screen - starting the RF/HUD");
+                Log("drone view detected -> starting the RF/HUD");
                 StartRfWatch();
             }
+            else if (_lastDroneDet) Log("drone view lost");
+            _lastDroneDet = dv;
         }
         catch { }
     }
 
+    volatile bool _lastDroneDet = false;
     bool DroneViewOnScreen()
     {
         try
         {
-            if (IsLinked()) return true;                     // "RC LIVE" / "LINK LIVE"
             int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
-            List<string[]> ws = OcrMaskedRegion(W * 62 / 100, H - 60 * H / 1080, W, H - 6 * H / 1080, 3);
+            // 1) top-right names the drone: "RC LIVE" over "MAVIC" / "FPV". Fastest, most reliable.
+            List<string[]> tr = OcrMaskedRegion(W * 80 / 100, 4, W, 120, 3);
+            if (tr != null)
+                foreach (string[] w in tr)
+                {
+                    string t = (w[4] ?? "").ToUpperInvariant();
+                    if (t.IndexOf("MAVIC") >= 0 || t.IndexOf("FPV") >= 0 || t.IndexOf("LIVE") >= 0 || t.IndexOf("LINK") >= 0)
+                        return true;
+                }
+            if (IsLinked()) return true;
+            // 2) bottom-right payload block ("PAYLOAD / 2 grenades ready"), widened to catch "ready"
+            List<string[]> ws = OcrMaskedRegion(W * 62 / 100, H - 95 * H / 1080, W, H - 4 * H / 1080, 3);
             if (ws != null)
                 foreach (string[] w in ws)
                 {
                     string t = (w[4] ?? "").ToUpperInvariant();
-                    // require the full "MOUNTED" (not "MOUNT") so loadout/menu text cannot match
-                    if (t.IndexOf("PAYLOAD") >= 0 || t.IndexOf("MOUNTED") >= 0 || t.IndexOf("GRENADE") >= 0)
+                    if (t.IndexOf("PAYLOAD") >= 0 || t.IndexOf("MOUNTED") >= 0 ||
+                        t.IndexOf("GRENADE") >= 0 || t.IndexOf("READY") >= 0)
                         return true;                          // payload readout = drone view
                 }
         }
