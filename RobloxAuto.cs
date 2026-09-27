@@ -151,8 +151,10 @@ class RobloxAuto : Form
     float _hudRollOff = 0f;                         // manual roll offset, degrees (dial "roll off")
     float _hudPitOff = 0f;                          // manual pitch offset, px (dial "pitch off")
     float _hudLeftPx = 0f;                         // px - max horizon offset from the LEFT stick (dial "thr pitch"); 0 = off
+    float _hudPitStick = 150f;                      // px - DIRECT horizon offset from the RIGHT stick Y (dial "stick pitch")
+                                                    //      push forward = line UP, pull back = line DOWN (signed: set - to invert)
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr;
+    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
@@ -611,6 +613,8 @@ class RobloxAuto : Form
 
         numThr = MkTune(x, y, "throttle", (decimal)_hudLeftPx, 0m, 120m, 2m, 0);
         numThr.ValueChanged += delegate { _hudLeftPx = (float)numThr.Value; SaveCfg(); };
+        numPitStick = MkTune(x + 168, y, "stick pitch", (decimal)_hudPitStick, -350m, 350m, 10m, 0);
+        numPitStick.ValueChanged += delegate { _hudPitStick = (float)numPitStick.Value; SaveCfg(); };
         y += 32;
 
         var l1 = new Label();
@@ -4230,6 +4234,10 @@ class RobloxAuto : Form
         // The LEFT stick (throttle) is a small, BOUNDED proportional nudge, NOT integrated. Adding
         // it to the rate meant holding throttle walked the horizon clean off the screen.
         float leftPitch = -_padLy * _hudLeftPx;
+        // RIGHT stick Y as a DIRECT horizon lift: push FORWARD -> the line RAISES (smaller px = up),
+        // pull BACK -> it drops. Bounded (not integrated) so holding the stick holds the offset and
+        // releasing returns it - the pilot's pitch input visibly drives the horizon.
+        float stickPitch = -sy * _hudPitStick;
 
         if (_hudFRoll > 180f) _hudFRoll = 180f;
         if (_hudFRoll < -180f) _hudFRoll = -180f;
@@ -4237,7 +4245,7 @@ class RobloxAuto : Form
         if (_hudFPitch < -900f) _hudFPitch = -900f;
 
         _hudRoll = _hudFRoll + _hudRollOff;                 // + manual roll offset (dial)
-        _hudPitch = _hudFPitch + leftPitch + _hudPitOff;    // + left-stick nudge + manual pitch offset
+        _hudPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff;   // + left-stick + right-stick pitch + manual offset
 
         // Simulated FPV pack voltage. It starts at half, rises with throttle (left stick Y up), and
         // a spring + ripple gives the sag/bounce of a real pack under load. 4S range 13.2V..16.8V.
@@ -4827,6 +4835,7 @@ class RobloxAuto : Form
             else if (k == "hudRollOff") _hudRollOff = ParseF(v);
             else if (k == "hudPitOff") _hudPitOff = ParseF(v);
             else if (k == "hudThr") _hudLeftPx = ParseF(v);
+            else if (k == "hudPStick") _hudPitStick = ParseF(v);
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -4894,6 +4903,7 @@ class RobloxAuto : Form
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudThr=" + _hudLeftPx.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudPStick=" + _hudPitStick.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "uav=" + (_hudStyleUav ? "1" : "0"),
             "night=" + (_nightVision ? "1" : "0"),
             "nightKey=" + _hkNightKey,
