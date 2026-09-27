@@ -5047,17 +5047,19 @@ class RobloxAuto : Form
                 Pen pen = d == 0
                     ? new Pen(Color.FromArgb(aMain, 255, 255, 255), 2)
                     : new Pen(Color.FromArgb(aThin, 230, 230, 230), 1);
-                PointF a = R(cx - half, cy + yy, cx, cy, rad), b = R(cx + half, cy + yy, cx, cy, rad);
+                // LINES STAY HORIZONTAL on screen - not rotated by the roll, so banking the drone
+                // tilts the world around level lines. Only pitch (up/down) moves them.
+                PointF a = new PointF(cx - half, cy + yy), b = new PointF(cx + half, cy + yy);
                 g.DrawLine(pen, a, b);
                 if (d == 0)
                 {
-                    g.DrawLine(pen, a, R(cx - half, cy + yy + 12, cx, cy, rad));   // end caps
-                    g.DrawLine(pen, b, R(cx + half, cy + yy + 12, cx, cy, rad));
+                    g.DrawLine(pen, a, new PointF(cx - half, cy + yy + 12));   // end caps
+                    g.DrawLine(pen, b, new PointF(cx + half, cy + yy + 12));
                 }
                 else
                 {
                     using (SolidBrush lb = new SolidBrush(Color.FromArgb(aTxt, 255, 255, 255)))
-                        g.DrawString((d > 0 ? "+" : "") + d, _f, lb, R(cx + half + 6, cy + yy - 8, cx, cy, rad));
+                        g.DrawString((d > 0 ? "+" : "") + d, _f, lb, new PointF(cx + half + 6, cy + yy - 8));
                 }
                 pen.Dispose();
             }
