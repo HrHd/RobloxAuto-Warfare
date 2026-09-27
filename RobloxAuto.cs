@@ -396,6 +396,7 @@ class RobloxAuto : Form
         Font = new Font("Segoe UI", 9F);
         BackColor = Color.FromArgb(22, 24, 28);
         ForeColor = Color.Gainsboro;
+        KeyPreview = true;   // the form sees the key first - needed to capture a keybind
 
         LoadCfg();
         BuildUi();
@@ -424,6 +425,36 @@ class RobloxAuto : Form
             if (_noActivate) cp.ExStyle |= WS_EX_NOACTIVATE;
             return cp;
         }
+    }
+
+    // Start listening for a keybind. The panel is WS_EX_NOACTIVATE so the game keeps focus and
+    // never gets tabbed out of - but that means Windows never delivers keyboard input to us
+    // either, so the "press..." button would wait forever. We drop the flag only for as long as
+    // it takes to read the key, then restore it.
+    void BeginCaptureKey(bool night)
+    {
+        _capturingKey = !night;
+        _capturingNight = night;
+        Button b = night ? btnSetNight : btnSetKey;
+        if (b != null) b.Text = "press...";
+        try
+        {
+            int ex = GetWindowLong(Handle, GWL_EXSTYLE);
+            SetWindowLong(Handle, GWL_EXSTYLE, ex & ~WS_EX_NOACTIVATE);
+            Activate();
+            Focus();
+        }
+        catch { }
+        Log("press the key for " + (night ? "NIGHT VISION" : "REJOIN") + "  (Esc cancels)");
+    }
+
+    void EndCaptureKey()
+    {
+        _capturingKey = false;
+        _capturingNight = false;
+        if (btnSetKey != null) btnSetKey.Text = "Set key...";
+        if (btnSetNight != null) btnSetNight.Text = "Set key...";
+        ApplyNoActivate();
     }
 
     void ApplyNoActivate()
@@ -592,12 +623,7 @@ class RobloxAuto : Form
         btnSetKey = new Button();
         btnSetKey.Text = "Set key...";
         btnSetKey.SetBounds(x + 168, y, 92, 26);
-        btnSetKey.Click += delegate
-        {
-            _capturingKey = true;
-            btnSetKey.Text = "press...";
-            Log("press the key you want for REJOIN  (Esc cancels)");
-        };
+        btnSetKey.Click += delegate { BeginCaptureKey(false); };
         Controls.Add(btnSetKey);
 
         var lblKeyHint = new Label();
@@ -621,12 +647,7 @@ class RobloxAuto : Form
         btnSetNight = new Button();
         btnSetNight.Text = "Set key...";
         btnSetNight.SetBounds(x + 168, y, 92, 26);
-        btnSetNight.Click += delegate
-        {
-            _capturingNight = true;
-            btnSetNight.Text = "press...";
-            Log("press the key for NIGHT VISION  (Esc cancels)");
-        };
+        btnSetNight.Click += delegate { BeginCaptureKey(true); };
         Controls.Add(btnSetNight);
 
         var lblNightHint = new Label();
@@ -3539,8 +3560,7 @@ class RobloxAuto : Form
             e.SuppressKeyPress = true;
             if (e.KeyCode == Keys.Escape)
             {
-                _capturingKey = false; _capturingNight = false;
-                btnSetKey.Text = "Set key..."; btnSetNight.Text = "Set key...";
+                EndCaptureKey();
                 Log("key capture cancelled");
                 return;
             }
@@ -3550,19 +3570,16 @@ class RobloxAuto : Form
             if (_capturingNight)
             {
                 _hkNightKey = (uint)e.KeyCode;
-                _capturingNight = false;
-                btnSetNight.Text = "Set key...";
-                lblNightVal.Text = e.KeyCode.ToString();
+                if (lblNightVal != null) lblNightVal.Text = e.KeyCode.ToString();
                 Log("night vision keybind set to " + e.KeyCode);
             }
             else
             {
                 _hkRejoinKey = (uint)e.KeyCode;
-                _capturingKey = false;
-                btnSetKey.Text = "Set key...";
-                lblKeyVal.Text = e.KeyCode.ToString();
+                if (lblKeyVal != null) lblKeyVal.Text = e.KeyCode.ToString();
                 Log("rejoin keybind set to " + e.KeyCode);
             }
+            EndCaptureKey();
             RegisterHotkeys();
             SaveCfg();
             return;
