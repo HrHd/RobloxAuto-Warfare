@@ -4649,8 +4649,12 @@ class RobloxAuto : Form
                         bool corner = CornerLinked();
                         bool inDrone = fs >= 0 || corner;
                         if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
-                        if (inDrone) _lastInDroneAt = Environment.TickCount;
-                        if (shown && !inDrone && Environment.TickCount - _lastInDroneAt > 6000)
+                        if (inDrone)
+                        {
+                            _lastInDroneAt = Environment.TickCount;
+                            if (!shown) { shown = true; Log("   RF feed: drone view - overlay on"); }
+                        }
+                        else if (shown && Environment.TickCount - _lastInDroneAt > 8000)
                         {
                             shown = false;
                             Log("   RF feed: left the drone view - overlay off");
@@ -5178,9 +5182,19 @@ class RobloxAuto : Form
             if (ws == null) return -1;
             string all = "";
             foreach (string[] w in ws) all += (w[4] ?? "") + " ";
-            Match m = Regex.Match(all, @"(\d{1,2})\s*:\s*(\d{2})");
-            if (!m.Success) return -1;
-            return int.Parse(m.Groups[1].Value) * 60 + int.Parse(m.Groups[2].Value);
+            string up = all.ToUpperInvariant();
+            // must actually say FLIGHT (fuzzy - the OCR mangles it) so we do not match a stray number
+            bool label = up.IndexOf("FLIGHT") >= 0 || up.IndexOf("FL1GHT") >= 0 ||
+                         up.IndexOf("FLGHT") >= 0 || up.IndexOf("FLIG") >= 0;
+            // mm:ss (the OCR often drops the colon - then take the 4 digits after the label)
+            Match m = Regex.Match(all, @"(\d{1,2})\s*[:.;]\s*(\d{2})");
+            if (m.Success) return int.Parse(m.Groups[1].Value) * 60 + int.Parse(m.Groups[2].Value);
+            if (label)
+            {
+                Match d = Regex.Match(all, @"(\d{1,2})\s?(\d{2})\b");
+                if (d.Success) return int.Parse(d.Groups[1].Value) * 60 + int.Parse(d.Groups[2].Value);
+            }
+            return -1;
         }
         catch { return -1; }
     }
