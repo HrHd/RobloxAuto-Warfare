@@ -104,6 +104,9 @@ class RobloxAuto : Form
     float _padLx = 0f, _padLy = 0f, _padRx = 0f, _padRy = 0f;   // sticks, -1..1, dead-zoned
     float _hudLockRoll = 0f, _hudLockPitch = 0f;  // base horizon (image-derived, corrected over time)
     float _hudCtrlRoll = 0f, _hudCtrlPitch = 0f;  // stick rotation integrated on top of the base
+    float _hudFRoll = 0f, _hudFPitch = 0f;        // fused horizon (complementary filter, 50fps)
+    volatile bool _hudShown = false;              // RF loop tells HudTick the feed is up
+    int _hudSecs = 0;
     bool _hudLocked = false;
     bool _hudNeedLock = false;                    // true from Deploy As Drone until we lock
     bool _hudDetValid = false;                    // DetectHorizon found a confident line
@@ -129,7 +132,7 @@ class RobloxAuto : Form
     TextBox txtWatch;
     NumericUpDown numStuck, numMatch;
     Label lblPadStatus;
-    System.Windows.Forms.Timer timerPad, timerLog, timerOcr, timerDrone;
+    System.Windows.Forms.Timer timerPad, timerLog, timerOcr, timerDrone, timerHud;
 
     // ================= win32 =================
     const int WM_HOTKEY = 0x0312;
@@ -424,6 +427,7 @@ class RobloxAuto : Form
         timerLog = new System.Windows.Forms.Timer(); timerLog.Interval = 2000; timerLog.Tick += LogTick; timerLog.Start();
         timerOcr = new System.Windows.Forms.Timer(); timerOcr.Interval = 4000; timerOcr.Tick += OcrTick; timerOcr.Start();
         timerDrone = new System.Windows.Forms.Timer(); timerDrone.Interval = 3000; timerDrone.Tick += DroneTick; timerDrone.Start();
+        timerHud = new System.Windows.Forms.Timer(); timerHud.Interval = 20; timerHud.Tick += HudTick; timerHud.Start();
     }
 
     // Keep the panel out of the activation race entirely. ShowWithoutActivation stops the
@@ -3449,6 +3453,61 @@ class RobloxAuto : Form
         return false;
     }
 
+    // 50fps horizon fusion on the UI thread. A complementary filter: the CONTROLLER is the
+    // primary (rate) source and the camera is the absolute reference that removes drift. Running
+    // this every 20ms makes the horizon smooth instead of stepping once per RF-loop tick.
+    void HudTick(object sender, EventArgs e)
+    {
+        if (!_hudShown || !_hudOn) { if (_hudForm != null) StopHud(); return; }
+        long now = Environment.TickCount;
+        if (_hudPrevTick == 0) { _hudPrevTick = now; return; }
+        float dt = (now - _hudPrevTick) / 1000f;
+        _hudPrevTick = now;
+        if (dt <= 0f) return;
+        if (dt > 0.1f) dt = 0.1f;
+
+        float sx = Math.Abs(_padLx) >= Math.Abs(_padRx) ? _padLx : _padRx;
+        float sy = Math.Abs(_padLy) >= Math.Abs(_padRy) ? _padLy : _padRy;
+
+        // controller priority: integrate the stick every frame (rate -> angle)
+        _hudFRoll += -sx * 150f * dt;
+        _hudFPitch += sy * 330f * dt;
+
+        // camera correction only when the sticks are centred, so input is never cancelled out.
+        // Time constant ~0.35s: slow enough to let the controller lead, fast enough to kill drift.
+        if (_hudDetValid && sx == 0f && sy == 0f)
+        {
+            float a = 1f - (float)Math.Pow(0.5, dt / 0.35);
+            _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
+            _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
+        }
+
+        if (_hudFRoll > 85f) _hudFRoll = 85f;
+        if (_hudFRoll < -85f) _hudFRoll = -85f;
+        if (_hudFPitch > 280f) _hudFPitch = 280f;
+        if (_hudFPitch < -280f) _hudFPitch = -280f;
+
+        _hudRoll = _hudFRoll;
+        _hudPitch = _hudFPitch;
+
+        string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
+        OverlayHub.I.SetHud(true, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudFRoll, _hudFPitch, _hudStyleUav);
+
+        if (_hudForm == null) EnsureHud();          // UI thread - safe to create here
+        if (_hudForm != null)
+        {
+            _hudForm.Home = _hudHome;
+            _hudForm.Spd = _hudSpd;
+            _hudForm.Agl = alt;
+            _hudForm.Hdg = _hudHdg;
+            _hudForm.Roll = _hudFRoll;
+            _hudForm.PitchPx = _hudFPitch;
+            _hudForm.Uav = _hudStyleUav;
+            _hudForm.Timer = string.Format("{0:00}:{1:00}", _hudSecs / 60, _hudSecs % 60);
+            _hudForm.Invalidate();
+        }
+    }
+
     void LogTick(object sender, EventArgs e)
     {
         if (!_autoRecon || _running) return;   // never fight an AUTO run in progress
@@ -4369,109 +4428,28 @@ class RobloxAuto : Form
                     if (_rfForm != null && _rfForm.UlwFailed && !_ulwLogged)
                     { _ulwLogged = true; Log("RF overlay: UpdateLayeredWindow failed - static will not show"); }
 
-                    // ---- FPV/UAV HUD: ease the horizon and refresh ~6x/s (throttled so the
-                    // full-screen layered repaint cannot itself become the lag) ----
-                    if (Environment.TickCount - lastHud >= 160)
+                    // ---- horizon measurement (~3x/s) + spawn lock. The smooth 50fps fusion runs
+                    // in HudTick on the UI thread so it can drive the layered repaint. ----
+                    if (shown && Environment.TickCount - lastDet >= 330)
                     {
-                        long nowT = Environment.TickCount;
-                        float dt = _hudPrevTick == 0 ? 0.16f : (nowT - _hudPrevTick) / 1000f;
-                        if (dt > 0.5f) dt = 0.5f;
-                        _hudPrevTick = nowT;
-                        lastHud = nowT;
-
-                        // refresh the horizon ~3x/s (not only on the 1.5s slow pass) so it tracks
-                        // the camera quickly
-                        if (shown && nowT - lastDet >= 350)
-                        {
-                            lastDet = nowT;
-                            DetectHorizon();
-                        }
-
-                        // Lock the horizon AT SPAWN: we start detecting the moment Deploy As Drone
-                        // is clicked, so the first confident line is the spawn horizon and our
-                        // lines begin aligned to it, then the controller rotates from there.
-                        if (!_hudLocked && (_hudNeedLock || shown) && Environment.TickCount >= lockArmedAt)
-                        {
-                            DetectHorizon();
-                            if (_hudDetValid)
-                            {
-                                _hudLocked = true;
-                                _hudNeedLock = false;
-                                _hudLockRoll = _hudDetRoll;
-                                _hudLockPitch = _hudDetPitch;
-                                _hudCtrlRoll = _hudCtrlPitch = 0f;
-                                _hudRoll = _hudRollTarget = _hudLockRoll;
-                                _hudPitch = _hudPitchTarget = _hudLockPitch;
-                                Log("   horizon locked at spawn: roll " + _hudLockRoll.ToString("0") +
-                                    " deg, pitch " + _hudLockPitch.ToString("0") + "px");
-                            }
-                        }
-
-                        // Sensor fusion for the horizon:
-                        //   base = what the camera sees (corrected whenever a horizon is detected)
-                        //   ctrl = stick rotation integrated on top (rate control)
-                        // display = base + ctrl.  So when the horizon is hidden behind terrain the
-                        // controller still drives it, and when the camera sees it again the base is
-                        // pulled back onto reality.
-                        float sx = Math.Abs(_padLx) >= Math.Abs(_padRx) ? _padLx : _padRx;
-                        float sy = Math.Abs(_padLy) >= Math.Abs(_padRy) ? _padLy : _padRy;
-                        _hudCtrlRoll += -sx * 110f * dt;
-                        _hudCtrlPitch += sy * 200f * dt;
-                        if (sx == 0f) _hudCtrlRoll += (0f - _hudCtrlRoll) * 0.02f;   // release -> recentre
-                        if (sy == 0f) _hudCtrlPitch += (0f - _hudCtrlPitch) * 0.02f;
-                        if (_hudCtrlRoll > 80f) _hudCtrlRoll = 80f;
-                        if (_hudCtrlRoll < -80f) _hudCtrlRoll = -80f;
-                        if (_hudCtrlPitch > 220f) _hudCtrlPitch = 220f;
-                        if (_hudCtrlPitch < -220f) _hudCtrlPitch = -220f;
-
-                        // Only re-correct the base when the sticks are CENTRED. Otherwise the
-                        // correction instantly absorbs whatever the player just input and the
-                        // horizon looks like it ignores the controller.
-                        if (_hudDetValid && sx == 0f && sy == 0f)
-                        {
-                            _hudLockRoll += (_hudDetRoll - (_hudLockRoll + _hudCtrlRoll)) * 0.28f;
-                            _hudLockPitch += (_hudDetPitch - (_hudLockPitch + _hudCtrlPitch)) * 0.28f;
-                        }
-                        _hudRollTarget = _hudLockRoll + _hudCtrlRoll;
-                        _hudPitchTarget = _hudLockPitch + _hudCtrlPitch;
-
-                        float rollBefore = _hudRoll;
-                        _hudRoll += (_hudRollTarget - _hudRoll) * 0.4f;
-                        _hudPitch += (_hudPitchTarget - _hudPitch) * 0.4f;
-                        if (Math.Abs(_hudRoll - rollBefore) > 7f)
-                            Log("   horizon roll " + _hudRoll.ToString("0") + "°  (stick x " + sx.ToString("0.00") + ")");
-                        bool wantHud = shown && _hudOn;
-                        string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
-                        OverlayHub.I.SetHud(wantHud, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudRoll, _hudPitch, _hudStyleUav);
-                        if (wantHud)
-                        {
-                            if (_hudForm == null)
-                            { try { BeginInvoke((MethodInvoker)delegate { EnsureHud(); }); } catch { } }
-                            else
-                            {
-                                string hh = _hudHome, hs = _hudSpd, ha = alt, hg = _hudHdg;
-                                float hr = _hudRoll, hp = _hudPitch;
-                                string ht = string.Format("{0:00}:{1:00}", secs / 60, secs % 60);
-                                bool hu = _hudStyleUav;
-                                try
-                                {
-                                    BeginInvoke((MethodInvoker)delegate
-                                    {
-                                        if (_hudForm != null)
-                                        {
-                                            _hudForm.Home = hh; _hudForm.Spd = hs; _hudForm.Agl = ha;
-                                            _hudForm.Hdg = hg; _hudForm.Roll = hr; _hudForm.PitchPx = hp;
-                                            _hudForm.Uav = hu; _hudForm.Timer = ht;
-                                            _hudForm.Invalidate();
-                                        }
-                                    });
-                                }
-                                catch { }
-                            }
-                        }
-                        else if (_hudForm != null)
-                        { try { BeginInvoke((MethodInvoker)delegate { StopHud(); }); } catch { } }
+                        lastDet = Environment.TickCount;
+                        DetectHorizon();
                     }
+                    if (!_hudLocked && (_hudNeedLock || shown) && Environment.TickCount >= lockArmedAt)
+                    {
+                        DetectHorizon();
+                        if (_hudDetValid)
+                        {
+                            _hudLocked = true;
+                            _hudNeedLock = false;
+                            _hudFRoll = _hudDetRoll;
+                            _hudFPitch = _hudDetPitch;
+                            Log("   horizon locked at spawn: roll " + _hudFRoll.ToString("0") +
+                                " deg, pitch " + _hudFPitch.ToString("0") + "px");
+                        }
+                    }
+                    _hudShown = shown;   // HudTick reads these
+                    _hudSecs = secs;
                     Thread.Sleep(120);
                 }
             });
@@ -4493,6 +4471,7 @@ class RobloxAuto : Form
         {
             if (InvokeRequired) { BeginInvoke((MethodInvoker)delegate { StopRfWatch(); }); return; }
             _rfRun = false;
+            _hudShown = false;
             OverlayHub.I.SetHome("");
             OverlayHub.I.SetFlight(false, 0f, 0);
             OverlayHub.I.SetHud(false, "", "", "", 0f, 0f, false);
