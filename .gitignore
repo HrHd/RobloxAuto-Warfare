@@ -10,3 +10,6 @@ _old/
 bin/
 obj/
 *.pdb
+
+# local joystick->xinput bridge (keep off GitHub)
+Joystick2XInput/
