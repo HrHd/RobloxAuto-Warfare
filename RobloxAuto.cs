@@ -4063,23 +4063,23 @@ class RobloxAuto : Form
         if (dt <= 0f) return;
         if (dt > 0.1f) dt = 0.1f;
 
-        // Roll = RIGHT stick X ONLY. The left stick X is YAW (turning), and the old "else _padLx"
-        // fallback meant turning the drone rolled the whole horizon ladder. Pitch = right stick Y
-        // (the left stick Y is throttle).
-        // Roll = RIGHT stick X only (the left stick X is YAW - adding it made turning roll the HUD).
-        // Pitch RATE = right stick Y only.
+        // BANK input. The RIGHT stick X is the roll axis, but the LEFT stick X is YAW and the drone
+        // BANKS INTO A TURN - which is exactly the tilt the user wants to see. So whichever stick is
+        // deflected more drives the ladder's roll. (The old code ignored the left stick entirely, so
+        // banking by turning never tilted the HUD - it stayed flat while the world rolled.)
         float sx = _padRx;
+        float yaw = _padLx;
         float sy = _padRy;
-        // kill stick rest/drift below 5% so "centred" actually happens - a stick sitting at 0.13
-        // used to leave sx non-zero and the camera correction never ran (lines never levelled)
         if (sx > -0.05f && sx < 0.05f) sx = 0f;
+        if (yaw > -0.05f && yaw < 0.05f) yaw = 0f;
         if (sy > -0.05f && sy < 0.05f) sy = 0f;
+        float bankIn = Math.Abs(sx) >= Math.Abs(yaw) ? sx : yaw;
 
         // ACCELERATION model. The stick no longer sets the horizon's SPEED directly - it sets a
         // TARGET speed, and the horizon's actual speed eases toward it. So a stick flick makes the
         // line accelerate into motion and ease to a stop instead of snapping to a new speed and
         // slamming to rest, which is what read as "jumpy". dt-correct so it is identical at any FPS.
-        float vTargetRoll = -sx * _hudRollRate;    // deg/s (roll)
+        float vTargetRoll = -bankIn * _hudRollRate;    // deg/s (roll)
         float vTargetPitch = -sy * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
         float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
         _hudRollVel += (vTargetRoll - _hudRollVel) * av;
@@ -4102,9 +4102,9 @@ class RobloxAuto : Form
             float a = 1f - (float)Math.Pow(0.5, dt / _hudFlyTau);
             _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
         }
-        if (sx == 0f)
+        if (bankIn == 0f)
         {
-            // hands off the roll stick: ease back to level (no camera roll reference)
+            // hands off the roll/yaw stick: ease back to level (no camera roll reference)
             _hudFRoll += (0f - _hudFRoll) * (1f - (float)Math.Pow(0.5, dt / 0.6));
             if (!det) _hudFPitch += (0f - _hudFPitch) * (1f - (float)Math.Pow(0.5, dt / 1.5));
         }
@@ -4278,6 +4278,7 @@ class RobloxAuto : Form
         {
             _padLx = NormStick(lx); _padLy = NormStick(ly);
             _padRx = NormStick(rx); _padRy = NormStick(ry);
+            try { OverlayHub.I.SetPad(_padLx, _padLy, _padRx, _padRy); } catch { }
         }
 
         if (!conn)
@@ -6420,6 +6421,7 @@ class RobloxAuto : Form
         float _roll = 0f, _pit = 0f;
         bool _uav = false;
         float _v1 = 0f, _v2 = 0f;
+        float _plx = 0f, _ply = 0f, _prx = 0f, _pry = 0f;   // live stick values (diagnostics)
         System.Net.HttpListener _lis;
         System.Windows.Forms.Timer _tick;
         string _dir = "";
@@ -6451,6 +6453,7 @@ class RobloxAuto : Form
         public void SetHome(string h) { lock (_lock) _home = h ?? ""; }
         public void SetMission(string team, string drone, string bomb) { lock (_lock) { _team = team ?? ""; _drone = drone ?? ""; _bomb = bomb ?? ""; } }
         public void SetFlight(bool f, float level, int secs) { lock (_lock) { _flight = f; _level = level; _secs = secs; } }
+        public void SetPad(float lx, float ly, float rx, float ry) { lock (_lock) { _plx = lx; _ply = ly; _prx = rx; _pry = ry; } }
         public void SetHud(bool on, string hdg, string spd, string agl, float roll, float pit, bool uav, float v1, float v2)
         { lock (_lock) { _hud = on; _hdg = hdg ?? ""; _spd = spd ?? ""; _agl = agl ?? ""; _roll = roll; _pit = pit; _uav = uav; _v1 = v1; _v2 = v2; } }
         void Step() { lock (_lock) { _progress += (_target - _progress) * 0.12f; if (Math.Abs(_target - _progress) < 0.002f) _progress = _target; } }
@@ -6487,6 +6490,10 @@ class RobloxAuto : Form
                     sb.Append(",\"roll\":").Append(_roll.ToString("0.#"));
                     sb.Append(",\"pit\":").Append(_pit.ToString("0.#"));
                     sb.Append(",\"uav\":").Append(_uav ? "true" : "false");
+                    sb.Append(",\"plx\":").Append(_plx.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"ply\":").Append(_ply.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"prx\":").Append(_prx.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"pry\":").Append(_pry.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"v1\":").Append(_v1.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"v2\":").Append(_v2.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"lines\":[");
