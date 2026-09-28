@@ -1936,17 +1936,40 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             {
                 try
                 {
-                    AddBlackProgress(0.12f, "quick reconnect");
-                    Thread.Sleep(350);
-                    AddBlackLine("  tearing down session", "");
-                    AddBlackProgress(0.35f, "dropping link");
-                    Thread.Sleep(450);
-                    AddBlackLine("  client relaunch (deep link)", "");
-                    AddBlackProgress(0.58f, "relaunching client");
-                    Thread.Sleep(400);
-                    AddBlackLine("  re-engaging uplink", "");
-                    AddBlackProgress(0.82f, "handshake");
-                    Thread.Sleep(450);
+                    // Same narration and PACING as the full LAND NOW boot - one step at a time, each
+                    // taking a beat, ~20s end to end. A quick reconnect should read like a real
+                    // link-up, not snap straight to 100%.
+                    AddBlackProgress(0.08f, "link down");
+                    AddBlackLine("> reconnect - re-engaging uplink", "");
+                    Thread.Sleep(900);
+                    AddBlackLine("  session torn down", "OK");
+                    AddBlackProgress(0.18f, "standby");
+                    Thread.Sleep(1300);
+
+                    string ip = RandIp();
+                    AddBlackLine("> connect " + ip + ":47320", "");
+                    Thread.Sleep(1500);
+                    AddBlackProgress(0.30f, "uplink");
+                    AddBlackLine("resolving ground station " + ip, "OK");
+                    Thread.Sleep(1400);
+                    AddBlackLine("calibrating inertial nav (imu)", "OK");
+                    Thread.Sleep(1400);
+                    AddBlackProgress(0.45f, "imu");
+                    AddBlackLine("spooling gyro stabiliser", "OK");
+                    Thread.Sleep(1400);
+                    AddBlackLine("negotiating encrypted uplink", "OK");
+                    Thread.Sleep(1500);
+                    AddBlackProgress(0.62f, "airframe");
+                    AddBlackLine("selecting airframe  [" + _drone + "]", "OK");
+                    Thread.Sleep(1400);
+                    AddBlackLine("checking warhead rack", "OK");
+                    Thread.Sleep(1500);
+                    AddBlackProgress(0.80f, "telemetry");
+                    AddBlackLine("syncing telemetry stream", "OK");
+                    Thread.Sleep(1400);
+                    AddBlackProgress(0.92f, "handshake");
+                    AddBlackLine("  handshake complete", "OK");
+                    Thread.Sleep(1300);
                     AddBlackProgress(1.0f, "uplink online");
                     AddBlackLine("  link live", "OK");
                 }
