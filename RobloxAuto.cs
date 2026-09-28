@@ -159,12 +159,14 @@ class RobloxAuto : Form
                                                     // backs the colour cue (dial "texture"); 0 = off
     float _hudAccPitch = 0.65f;                     // expo/acceleration on the right-stick Y (dial "pitch accel")
     float _hudAccRoll = 0f;                         // expo/acceleration on the right-stick X (dial "tilt accel")
+    float _hudFineP = 1f;                           // LOW-END boost (dial "fine gain"): small stick moves do more,
+                                                    // while a FULL push is unchanged
     float _hudLeftPx = 0f;                         // px - max horizon offset from the LEFT stick (dial "thr pitch"); 0 = off
     float _hudPitStick = 280f;                      // px - DIRECT horizon offset from the RIGHT stick Y (dial "stick pitch")
                                                     //      push forward = line UP, pull back = line DOWN (signed: set - to invert)
     float _hudPitStickSm = 0f;                      // smoothed stick-pitch offset (glides, never jumps)
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numBadLift, numTexW, numAccPitch, numAccRoll;
+    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
@@ -631,6 +633,10 @@ class RobloxAuto : Form
         numAccRoll = MkTune(x + 168, y, "tilt accel", (decimal)_hudAccRoll, 0m, 1m, 0.05m, 2);
         numAccPitch.ValueChanged += delegate { _hudAccPitch = (float)numAccPitch.Value; SaveCfg(); };
         numAccRoll.ValueChanged += delegate { _hudAccRoll = (float)numAccRoll.Value; SaveCfg(); };
+        y += 28;
+
+        numFineP = MkTune(x, y, "fine gain", (decimal)_hudFineP, 0m, 3m, 0.1m, 1);
+        numFineP.ValueChanged += delegate { _hudFineP = (float)numFineP.Value; SaveCfg(); };
         y += 28;
 
         numThr = MkTune(x, y, "throttle", (decimal)_hudLeftPx, 0m, 120m, 2m, 0);
@@ -2399,6 +2405,15 @@ class RobloxAuto : Form
     {
         if (a < 0f) a = 0f; if (a > 1f) a = 1f;
         return x * ((1f - a) + a * x * x);
+    }
+    // LOW-END boost: multiplies small stick inputs by (1+f) while leaving a FULL push unchanged
+    // (endpoints and sign preserved). This is what makes fine movements do more without touching the
+    // hard-push feel. Smooth, so no kink at the centre.
+    static float FineGain(float x, float f)
+    {
+        if (f <= 0f) return x;
+        float a = x < 0f ? -x : x;
+        return x * (1f + f) / (1f + f * a);
     }
     // smoothstep 0..1 between lo and hi - a soft S-curve so nothing snaps on/off
     static float Smooth01(float x, float lo, float hi)
@@ -4293,8 +4308,8 @@ class RobloxAuto : Form
         // GYRO = the controller: fast, integrates the stick rate, and because it is ACRO it HOLDS.
         // ACCELERATION (expo) - the harder you push, the faster it moves. Tuned separately for pitch
         // (right stick Y, up/down) and tilt (right stick X, bank) via their own dials.
-        float syS = Shape(sy, _hudAccPitch);
-        float sxS = Shape(sx, _hudAccRoll);
+        float syS = Shape(FineGain(sy, _hudFineP), _hudAccPitch);
+        float sxS = Shape(FineGain(sx, _hudFineP), _hudAccRoll);
         float vTargetRoll = -sxS * _hudRollRate;    // deg/s (bank RATE)
         float vTargetPitch = -syS * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
         float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
@@ -4948,6 +4963,7 @@ class RobloxAuto : Form
             else if (k == "hudTexW") _hudTexW = ParseF(v);
             else if (k == "hudAccPitch") _hudAccPitch = ParseF(v);
             else if (k == "hudAccRoll") _hudAccRoll = ParseF(v);
+            else if (k == "hudFineP") _hudFineP = ParseF(v);
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -5020,6 +5036,7 @@ class RobloxAuto : Form
             "hudTexW=" + _hudTexW.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAccPitch=" + _hudAccPitch.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAccRoll=" + _hudAccRoll.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudFineP=" + _hudFineP.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "uav=" + (_hudStyleUav ? "1" : "0"),
             "night=" + (_nightVision ? "1" : "0"),
             "nightKey=" + _hkNightKey,
