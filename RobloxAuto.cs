@@ -2847,6 +2847,96 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         catch { }
         return false;
     }
+    // Classify the BUTTON FILL around a text hit, by exact hex. Returns
+    //   3 = Deploy As Drone  #8D7136 gold   (r>=128, g>=98, b<=64, r-g>=18, g-b>=42)
+    //   2 = Return           #653C39 maroon
+    //   1 = Deploy           #4B7D33 green  (g-r>=30, g-b>=55, g>=100)
+    //   0 = no clear button fill (terrain / something else)
+    // A majority vote over a grid around the label, so a few text/edge pixels cannot flip it and
+    // the muddy map terrain (#645743..#74634A: b 65-75) fails the tight gold/green tests.
+    static int ButtonKindRgb(int r, int g, int b)
+    {
+        if (r >= 128 && g >= 98 && b <= 64 && r - g >= 18 && g - b >= 42) return 3;      // gold
+        if (r >= 90 && r <= 125 && g <= 80 && b <= 75 && r - g >= 28 && r - b >= 30) return 2; // maroon
+        if (g - r >= 30 && g - b >= 55 && g >= 100) return 1;                            // green
+        return 0;
+    }
+    int ButtonKindAt(int tx, int ty)
+    {
+        try
+        {
+            int W, H; int[] px = Grab(out W, out H);
+            if (px == null) return 0;
+            int k3 = 0, k2 = 0, k1 = 0, n = 0;
+            for (int dx = -80; dx <= 140; dx += 8)
+                for (int dy = -12; dy <= 22; dy += 4)
+                {
+                    int x = tx + dx, y = ty + dy;
+                    if (x < 0 || y < 0 || x >= W || y >= H) continue;
+                    int v = px[y * W + x];
+                    n++;
+                    int k = ButtonKindRgb((v >> 16) & 255, (v >> 8) & 255, v & 255);
+                    if (k == 3) k3++; else if (k == 2) k2++; else if (k == 1) k1++;
+                }
+            if (n < 40) return 0;
+            int best = k3; int res = 3;
+            if (k2 > best) { best = k2; res = 2; }
+            if (k1 > best) { best = k1; res = 1; }
+            if (best < n * 45 / 100) return 0;      // no dominant button colour here
+            return res;
+        }
+        catch { return 0; }
+    }
+    // Locate "Deploy As Drone" from the panel's TWO OPAQUE bars, not by OCR and not by scanning the
+    // whole frame for gold. The panel is translucent, so only the green "Deploy" (#4B7D33) and maroon
+    // "Return" (#653C39) fills are stable across maps and terrain; the third button's tint varies with
+    // whatever map is behind it. So: find the green bar and the maroon bar (exact hex, both must be
+    // wide runs), take the button PITCH from their spacing, step one pitch below Return, and VERIFY
+    // the gold fill (#8D7136..#93743A) of the target before returning it.
+    // Validated on a real frame: green y=539 (222px), maroon y=592 (212px), pitch 53 -> (747,645).
+    bool PanelDeployAsDrone(out int px2, out int py2)
+    {
+        px2 = -1; py2 = -1;
+        try
+        {
+            int W, H; int[] q = Grab(out W, out H);
+            if (q == null) return false;
+            int x0 = W * 12 / 100, x1 = W * 88 / 100;
+            int gY = -1, mY = -1, gC = -1, mC = -1, gN = 0, mN = 0;
+            for (int y = H * 24 / 100; y < H * 82 / 100; y++)
+            {
+                int gn = 0, mn = 0, gf = -1, gl = -1, mf = -1, ml = -1;
+                for (int x = x0; x < x1; x++)
+                {
+                    int v = q[y * W + x];
+                    int r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
+                    if (g - r >= 30 && g - b >= 55 && g >= 100) { gn++; if (gf < 0) gf = x; gl = x; }
+                    else if (r >= 90 && r <= 125 && g <= 80 && b <= 75 && r - g >= 28 && r - b >= 30) { mn++; if (mf < 0) mf = x; ml = x; }
+                }
+                if (gn > gN) { gN = gn; gY = y; gC = (gf + gl) / 2; }
+                if (mn > mN) { mN = mn; mY = y; mC = (mf + ml) / 2; }
+            }
+            if (gN < 90 || mN < 90 || mY <= gY) return false;
+            int pitch = mY - gY; if (pitch < 30 || pitch > 80) pitch = 52;
+            int tx = mC, ty = mY + pitch;
+            int go = 0, n = 0;
+            for (int dx = -60; dx <= 60; dx += 12)
+                for (int dy = -10; dy <= 10; dy += 5)
+                {
+                    int sx = tx + dx, sy = ty + dy;
+                    if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
+                    int v = q[sy * W + sx]; n++;
+                    int r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
+                    if (r >= 128 && g >= 98 && b <= 64 && r - g >= 18 && g - b >= 42) go++;
+                }
+            if (n == 0 || go * 100 < n * 35) { Log("   TEAM BASE bars found but the Deploy As Drone fill is not gold - not clicking"); return false; }
+            px2 = tx; py2 = ty;
+            Log("   TEAM BASE anchors: Deploy(green) y=" + gY + ", Return(maroon) y=" + mY + ", pitch " + pitch +
+                " -> Deploy As Drone at (" + tx + "," + ty + ")  gold " + (100 * go / n) + "%");
+            return true;
+        }
+        catch { return false; }
+    }
     static bool HudMaroon(int p) { int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255; return r > 88 && r < 160 && g > 38 && g < 88 && b > 38 && b < 90 && r > g + 28 && r > b + 26; }
     static bool HudGold(int p) { int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255; return r > 128 && g > 98 && g < 178 && b < 108 && r > g + 6 && g > b + 16; }
     static bool HudGreen(int p) { int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255; return g > r + 14 && g > b + 24 && g > 88; }
@@ -2952,30 +3042,73 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // found we click just BELOW Return (or two rows below Deploy) - a known position, not a guess.
     bool ClickDeployAsDrone(int g)
     {
-        if (ClickPhrasePersistent("Deploy As Drone", 3000, g)) return true;   // brief try, then position
         try
         {
-            // Only use the positional method when we have CONFIRMED the TEAM BASE panel: seeing
-            // TEAM BASE tells us exactly where we are, and Return's row tells us Deploy As Drone is
-            // the button directly below it. Never guess on some other screen.
+            // Only act on a CONFIRMED TEAM BASE panel - never guess on another screen.
             bool onBase = PhraseOnScreen("TEAM BASE") || PhraseOnScreenWhiten("TEAM BASE") || BasePanelVisual();
             if (!onBase) { Log("   Deploy As Drone: not on TEAM BASE - not clicking blindly"); return false; }
+
+            // PRIMARY: the panel's own two OPAQUE bars (green Deploy + maroon Return) give the button
+            // pitch; one pitch below Return is Deploy As Drone, verified by its gold fill. No OCR.
+            int pxx, pyy;
+            if (PanelDeployAsDrone(out pxx, out pyy))
+            {
+                ClickPrimaryLogged(pxx, pyy, "Deploy As Drone");
+                return true;
+            }
+
             List<string[]> ws = OcrWords();
             List<string[]> ww = OcrWordsWhiten();
-            List<Hit> hr = FindPhraseAll("Return", null, ws); if (hr.Count == 0) hr = FindPhraseAll("Return", null, ww);
             List<Hit> hd = FindPhraseAll("Deploy", null, ws); if (hd.Count == 0) hd = FindPhraseAll("Deploy", null, ww);
             List<Hit> hdr = FindPhraseAll("Drone", null, ws); if (hdr.Count == 0) hdr = FindPhraseAll("Drone", null, ww);
-            int x, y;
-            // The Deploy As Drone row is the "Deploy" token BELOW Return (the map's Deploy sits above it).
-            Hit below = default(Hit); bool hasBelow = false;
-            foreach (Hit h in hd) if (hr.Count == 0 || h.Y > hr[0].Y) { below = h; hasBelow = true; break; }
-            if (hasBelow)
+
+            // BEST - decide by the BUTTON FILL HEX, not the name. The TEAM BASE buttons have exact,
+            // saturated fills (measured off a real frame):
+            //   Deploy          #4B7D33  green   (g-r >= 30, g-b >= 55)
+            //   Return          #653C39  maroon
+            //   Deploy As Drone #8D7136  gold    (r >= 128, g >= 98, b <= 64)
+            // The map terrain around them is muddy tan (#645743..#74634A, b 65-75, r ~100), so the
+            // gold test separates the real button from grass/fields where colour-names alone could
+            // not. There are TWO "Deploy" labels on this panel - only one has a GOLD fill.
+            foreach (Hit d in hd)
             {
-                x = below.X + 40; y = below.Y + 8;             // centre of "Deploy [As] Drone"
-                foreach (Hit d in hdr) if (d.Y >= below.Y - 20 && d.Y <= below.Y + 30) { x = (below.X + d.X + 70) / 2; y = (below.Y + d.Y) / 2 + 6; break; }
+                if (ButtonKindAt(d.X, d.Y) == 3)
+                {
+                    int cx2 = d.X + 45, cy2 = d.Y + 10;
+                    Log("   Deploy As Drone (gold fill 8D7136) at (" + cx2 + "," + cy2 + ") - clicking");
+                    ClickPrimaryLogged(cx2, cy2, "Deploy As Drone");
+                    return true;
+                }
             }
-            else if (hr.Count > 0) { x = hr[0].X; y = hr[0].Y + 52; }
-            else return false;
+
+            // PRIMARY - the "Deploy + Drone" ROW PAIR. Real OCR returns the label as two tokens
+            // ("Deploy" ... "Drone") because the "As" is dropped, so a phrase search for "Deploy As
+            // Drone" never matches. A "Deploy" with a "Drone" to its RIGHT on the SAME row is
+            // unambiguous - the green "Deploy" button ABOVE has no "Drone" beside it - so click
+            // between them. (Verified on a real frame: Deploy(667,623) + Drone(759,631) -> (737,635).)
+            foreach (Hit d in hd)
+                foreach (Hit r in hdr)
+                {
+                    if (Math.Abs(r.Y - d.Y) > 30) continue;
+                    int dx = r.X - d.X;
+                    if (dx <= 0 || dx > 400) continue;
+                    int px2 = (d.X + r.X + 25) / 2;
+                    int py2 = (d.Y + r.Y) / 2 + 8;
+                    Log("   Deploy As Drone (Deploy+Drone row) at (" + px2 + "," + py2 + ") - clicking");
+                    ClickPrimaryLogged(px2, py2, "Deploy As Drone");
+                    return true;
+                }
+
+            if (ClickPhrasePersistent("Deploy As Drone", 2500, g)) return true;
+
+            // FALLBACK - the row below the maroon Return (only when Return was actually found; the
+            // first "Deploy" token alone is the GREEN button, which is what got clicked by mistake).
+            List<Hit> hr = FindPhraseAll("Return", null, ws); if (hr.Count == 0) hr = FindPhraseAll("Return", null, ww);
+            if (hr.Count == 0) { Log("   Deploy As Drone: no Deploy+Drone row and no Return - not clicking"); return false; }
+            Hit below = default(Hit); bool hasBelow = false;
+            foreach (Hit h in hd) if (h.Y > hr[0].Y) { below = h; hasBelow = true; break; }
+            int x = hasBelow ? below.X + 40 : hr[0].X;
+            int y = hasBelow ? below.Y + 8 : hr[0].Y + 52;
             Log("   Deploy As Drone not readable - clicking below the buttons at (" + x + "," + y + ")");
             ClickPrimaryLogged(x, y, "Deploy As Drone");
             return true;
@@ -7624,6 +7757,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 // even when the COLOURS are identical (fog/snow). Fused with the colour cue so a column
                 // only wins if it looks like sky/ground in BOTH colour and texture.
                 float[] imT = new float[gw * gh];
+                // BLUENESS map (B - R per block). MEASURED over 206 real FPV frames across every map
+                // family we have: the sky is bluer than the ground in 74% of frames, and crucially the
+                // relationship holds even where BRIGHTNESS INVERTS - the dark-green map has a sky
+                // (#15190B, lum 22) DARKER than its ground (#475525, lum 75), which is why a
+                // brightness-gradient horizon slips there. Brightness only managed 60%. So B-R is the
+                // dependable sky/ground axis and is used both in the per-column score and the onset.
+                float[] im_bR = new float[gw * gh];
+                float _blueW = 1.0f;
                 for (int gy = 0; gy < gh; gy++)
                     for (int gx = 0; gx < gw; gx++)
                     {
@@ -7645,6 +7786,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         imG[ii] = c > 0 ? sg2 / (float)c : 0f;
                         imB[ii] = c > 0 ? sb2 / (float)c : 0f;
                         imT[ii] = tc > 0 ? td / (float)tc : 0f;
+                        im_bR[ii] = c > 0 ? (sb2 - sr2) / (float)c : 0f;
                     }
                 int gx0 = gw * 20 / 100, gx1 = gw * 80 / 100, gy0 = gh * 8 / 100, gy1 = gh * 88 / 100;
                 // TOP-BAND SANITY. The "sky reference" is only sky if the top band is SMOOTH. Point
@@ -7708,7 +7850,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                             float above = (im[(gy - 1) * gw + gx] + im[(gy - 2) * gw + gx]) / 2f;
                             float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx]) / 2f;
                             float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f
-                                        + ((imT[(gy + 1) * gw + gx] + imT[(gy + 2) * gw + gx]) - (imT[(gy - 1) * gw + gx] + imT[(gy - 2) * gw + gx])) * 0.5f * _hudTexW;
+                                        + ((imT[(gy + 1) * gw + gx] + imT[(gy + 2) * gw + gx]) - (imT[(gy - 1) * gw + gx] + imT[(gy - 2) * gw + gx])) * 0.5f * _hudTexW
+                                        + ((im_bR[(gy - 1) * gw + gx] + im_bR[(gy - 2) * gw + gx]) - (im_bR[(gy + 1) * gw + gx] + im_bR[(gy + 2) * gw + gx])) * 0.5f * _blueW;
                             if (score > best) { best = score; by = gy; byGrad = g; }
                         }
                         if (by < 0 && trk)      // band empty -> fall back to the whole column
@@ -7719,7 +7862,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                                 float above = (im[(gy - 1) * gw + gx] + im[(gy - 2) * gw + gx]) / 2f;
                                 float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx]) / 2f;
                                 float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f
-                                        + ((imT[(gy + 1) * gw + gx] + imT[(gy + 2) * gw + gx]) - (imT[(gy - 1) * gw + gx] + imT[(gy - 2) * gw + gx])) * 0.5f * _hudTexW;
+                                        + ((imT[(gy + 1) * gw + gx] + imT[(gy + 2) * gw + gx]) - (imT[(gy - 1) * gw + gx] + imT[(gy - 2) * gw + gx])) * 0.5f * _hudTexW
+                                        + ((im_bR[(gy - 1) * gw + gx] + im_bR[(gy - 2) * gw + gx]) - (im_bR[(gy + 1) * gw + gx] + im_bR[(gy + 2) * gw + gx])) * 0.5f * _blueW;
                                 if (score > best) { best = score; by = gy; byGrad = g; }
                             }
                         }
@@ -7921,14 +8065,17 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // line's height to it whenever the block line is clearly sitting below.
             if (gOk)
             {
-                float skyL = 0.299f * sr + 0.587f * sg + 0.114f * sb;
+                // BLUENESS (B-R), not brightness: measured over 206 real frames, B-R separates sky from
+                // ground in 74% of them and - unlike brightness - it still points the right way on the
+                // dark-green map where the sky is DARKER than the ground.
+                float skyL = (float)sb - (float)sr;
                 double gl = 0; int glc = 0;
                 for (int y = H * 88 / 100; y < H * 95 / 100; y += 3)
                     for (int x = W / 10; x < W * 9 / 10; x += 8)
-                    { int c = px[y * W + x]; gl += 0.299 * ((c >> 16) & 0xFF) + 0.587 * ((c >> 8) & 0xFF) + 0.114 * (c & 0xFF); glc++; }
+                    { int c = px[y * W + x]; gl += (c & 0xFF) - ((c >> 16) & 0xFF); glc++; }
                 float gndL = glc > 0 ? (float)(gl / glc) : 0f;
                 float dl = Math.Abs(gndL - skyL);
-                if (dl > 10f)
+                if (dl > 8f)
                 {
                     int cap = (W * 8 / 10) / 12 + 8;
                     float[] oxs = new float[cap], oys = new float[cap], ows = new float[cap];
@@ -7938,11 +8085,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         for (int y = H / 12; y < H * 80 / 100 - 6; y += 2)
                         {
                             int c = px[y * W + x];
-                            float l = 0.299f * ((c >> 16) & 0xFF) + 0.587f * ((c >> 8) & 0xFF) + 0.114f * (c & 0xFF);
+                            float l = (c & 0xFF) - ((c >> 16) & 0xFF);          // B - R
                             if (Math.Abs(l - skyL) > 0.25f * dl)
                             {
                                 int q = px[(y + 4) * W + x];
-                                float l2 = 0.299f * ((q >> 16) & 0xFF) + 0.587f * ((q >> 8) & 0xFF) + 0.114f * (q & 0xFF);
+                                float l2 = (q & 0xFF) - ((q >> 16) & 0xFF);
                                 if (Math.Abs(l2 - skyL) > 0.22f * dl) { oxs[on] = x; oys[on] = y; ows[on] = 3f; on++; }
                                 break;
                             }
