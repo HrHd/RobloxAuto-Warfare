@@ -3506,13 +3506,13 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
         Thread.Sleep(250);   // let the TEAM BASE panel finish laying out before measuring the grid
 
-        // If the anchored grid is a few px off (different game height), the first click lands just
-        // outside the cell and nothing turns green. Retry while sliding the grid vertically, so
-        // the step self-calibrates instead of clicking the same wrong spot four times.
-        int[] nudges = new int[] { 0, -14, 14, -28 };
+        // NO GRID NUDGING ON RETRY. Sliding the whole grid up/down was aimed at a grid that was a
+        // few px off, but because the grid is re-MEASURED on every attempt the nudge only ever moved
+        // the target OFF the correct cell - it is exactly what made it "press the right bomb, then
+        // misclick" onto a neighbouring warhead. Retry the SAME measured cell instead.
         for (int t = 1; t <= 4 && Alive(g); t++)
         {
-            _whRowNudge = nudges[t - 1];
+            _whRowNudge = 0;
             // Hovering a cell animates/scales it, which nudges the whole grid, so measure with
             // the pointer OFF the panel. On the first try the previous step already left the
             // pointer off the grid, so only move on a retry (when it is sitting on the cell).
@@ -3622,11 +3622,23 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (cells.Count <= slot) { Log("   payload check: only " + cells.Count + " cells, need slot " + slot); return false; }
             int W, H; int[] px = Grab(out W, out H);
             int cur = GreenSlot(px, W, H, cells, count);
+            // A readable cell label that names a DIFFERENT warhead is a hard veto, whatever the
+            // colour says - this is the "misclicked the bomb but deployed anyway" guard.
+            string lab = WarheadCellLabel(cells[slot].X, cells[slot].Y);
+            if (lab != "" && SimPct(lab, _bomb) < 60)
+            {
+                bool namesOurs = false;
+                foreach (string b in BombsFor(_drone))
+                {
+                    if (b == "(none)" || b == _bomb) continue;
+                    if (SimPct(lab, b) >= 70) { namesOurs = false; Log("   payload check: our cell reads \"" + lab + "\" = " + b + ", not " + _bomb); return false; }
+                }
+                if (!namesOurs) { Log("   payload check: our cell reads \"" + lab + "\" which is not " + _bomb); return false; }
+            }
             if (cur == slot) return true;
             // green undetectable -> accept only a positive label match for OUR bomb in our slot
             if (cur < 0)
             {
-                string lab = WarheadCellLabel(cells[slot].X, cells[slot].Y);
                 if (lab != "" && SimPct(lab, _bomb) >= 60) return true;
             }
             Log("   payload check: green slot is " + (cur < 0 ? "not detected" : cur + " (" + BombsFor(_drone)[cur + 1] + ")") +
@@ -7738,6 +7750,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float frameSig = 3f; int frameN = 40;    // robust fit spread / inlier count (for the estimator)
             bool onsetAnchored = false;              // did the sky-onset anchor move the line this frame?
             bool refHit = false;                     // did a labelled reference supply the answer?
+            // Per-frame sky/ground DISCRIMINATING AXIS (chosen below from this frame's own bands).
+            bool axUseLum = true; float axSign = 1f; float axGnd = 0f;
 
             // --- PRIMARY: BLURRED sky/ground transition (the "blur then find the medium in the centre"
             // idea). Block-averaging the frame is a heavy blur that erases local detail - trees, roads,
@@ -7789,6 +7803,33 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         im_bR[ii] = c > 0 ? (sb2 - sr2) / (float)c : 0f;
                     }
                 int gx0 = gw * 20 / 100, gx1 = gw * 80 / 100, gy0 = gh * 8 / 100, gy1 = gh * 88 / 100;
+
+                // ---- CHOOSE THIS FRAME'S SKY/GROUND AXIS -------------------------------------------------
+                // Surveyed across every map we have: BRIGHTNESS separates sky from ground on the SNOW
+                // maps (sky #41494E lum 71 over snow #C6CFD7 lum 205 - the ground is the BRIGHTER one)
+                // but INVERTS on the dark-green map (#15190B sky lum 22 over #475525 ground lum 75);
+                // BLUENESS (B-R) does the opposite. Neither alone is universal, so measure BOTH
+                // separations from this frame's own sky and ground bands and use whichever is LARGER.
+                float skyL2 = 0f, gndL2 = 0f, skyB2 = 0f, gndB2 = 0f; int nA = 0, nB = 0;
+                {
+                    int tr2 = Math.Max(1, gh * 6 / 100);
+                    for (int gy = 0; gy < tr2; gy++) for (int gx = gx0; gx < gx1; gx++)
+                    { int i = gy * gw + gx; skyL2 += 0.299f * imR[i] + 0.587f * imG[i] + 0.114f * imB[i]; skyB2 += im_bR[i]; nA++; }
+                    for (int gy = gh * 84 / 100; gy < gh; gy++) for (int gx = gx0; gx < gx1; gx++)
+                    { int i = gy * gw + gx; gndL2 += 0.299f * imR[i] + 0.587f * imG[i] + 0.114f * imB[i]; gndB2 += im_bR[i]; nB++; }
+                    if (nA > 0) { skyL2 /= nA; skyB2 /= nA; }
+                    if (nB > 0) { gndL2 /= nB; gndB2 /= nB; }
+                }
+                axUseLum = Math.Abs(gndL2 - skyL2) >= Math.Abs(gndB2 - skyB2);
+                axSign = axUseLum ? (skyL2 >= gndL2 ? 1f : -1f) : (skyB2 >= gndB2 ? 1f : -1f);
+                axGnd = axUseLum ? gndL2 : gndB2;
+                float axSky = axUseLum ? skyL2 : skyB2;
+                float[] imAX = new float[gw * gh];
+                for (int i = 0; i < gw * gh; i++)
+                {
+                    float v = axUseLum ? (0.299f * imR[i] + 0.587f * imG[i] + 0.114f * imB[i]) : im_bR[i];
+                    imAX[i] = (v - axSky) * axSign;          // > 0 sky-like (above), < 0 ground-like (below)
+                }
                 // TOP-BAND SANITY. The "sky reference" is only sky if the top band is SMOOTH. Point
                 // the camera down and the top band is ground - busy - and the whole sky/ground logic
                 // can invert ("it thinks the ground is the sky"). Compare the top band's texture with
@@ -7851,7 +7892,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                             float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx]) / 2f;
                             float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f
                                         + ((imT[(gy + 1) * gw + gx] + imT[(gy + 2) * gw + gx]) - (imT[(gy - 1) * gw + gx] + imT[(gy - 2) * gw + gx])) * 0.5f * _hudTexW
-                                        + ((im_bR[(gy - 1) * gw + gx] + im_bR[(gy - 2) * gw + gx]) - (im_bR[(gy + 1) * gw + gx] + im_bR[(gy + 2) * gw + gx])) * 0.5f * _blueW;
+                                        + ((imAX[(gy - 1) * gw + gx] + imAX[(gy - 2) * gw + gx]) - (imAX[(gy + 1) * gw + gx] + imAX[(gy + 2) * gw + gx])) * 0.5f * _blueW;
                             if (score > best) { best = score; by = gy; byGrad = g; }
                         }
                         if (by < 0 && trk)      // band empty -> fall back to the whole column
@@ -7863,7 +7904,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                                 float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx]) / 2f;
                                 float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f
                                         + ((imT[(gy + 1) * gw + gx] + imT[(gy + 2) * gw + gx]) - (imT[(gy - 1) * gw + gx] + imT[(gy - 2) * gw + gx])) * 0.5f * _hudTexW
-                                        + ((im_bR[(gy - 1) * gw + gx] + im_bR[(gy - 2) * gw + gx]) - (im_bR[(gy + 1) * gw + gx] + im_bR[(gy + 2) * gw + gx])) * 0.5f * _blueW;
+                                        + ((imAX[(gy - 1) * gw + gx] + imAX[(gy - 2) * gw + gx]) - (imAX[(gy + 1) * gw + gx] + imAX[(gy + 2) * gw + gx])) * 0.5f * _blueW;
                                 if (score > best) { best = score; by = gy; byGrad = g; }
                             }
                         }
@@ -8068,11 +8109,17 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 // BLUENESS (B-R), not brightness: measured over 206 real frames, B-R separates sky from
                 // ground in 74% of them and - unlike brightness - it still points the right way on the
                 // dark-green map where the sky is DARKER than the ground.
-                float skyL = (float)sb - (float)sr;
+                float skyL = axUseLum ? (0.299f * sr + 0.587f * sg + 0.114f * sb) : ((float)sb - (float)sr);
                 double gl = 0; int glc = 0;
                 for (int y = H * 88 / 100; y < H * 95 / 100; y += 3)
                     for (int x = W / 10; x < W * 9 / 10; x += 8)
-                    { int c = px[y * W + x]; gl += (c & 0xFF) - ((c >> 16) & 0xFF); glc++; }
+                    {
+                        int c = px[y * W + x];
+                        gl += axUseLum
+                            ? 0.299 * ((c >> 16) & 0xFF) + 0.587 * ((c >> 8) & 0xFF) + 0.114 * (c & 0xFF)
+                            : (c & 0xFF) - ((c >> 16) & 0xFF);
+                        glc++;
+                    }
                 float gndL = glc > 0 ? (float)(gl / glc) : 0f;
                 float dl = Math.Abs(gndL - skyL);
                 if (dl > 8f)
@@ -8085,11 +8132,15 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         for (int y = H / 12; y < H * 80 / 100 - 6; y += 2)
                         {
                             int c = px[y * W + x];
-                            float l = (c & 0xFF) - ((c >> 16) & 0xFF);          // B - R
+                            float l = axUseLum
+                                ? 0.299f * ((c >> 16) & 0xFF) + 0.587f * ((c >> 8) & 0xFF) + 0.114f * (c & 0xFF)
+                                : (c & 0xFF) - ((c >> 16) & 0xFF);
                             if (Math.Abs(l - skyL) > 0.25f * dl)
                             {
                                 int q = px[(y + 4) * W + x];
-                                float l2 = (q & 0xFF) - ((q >> 16) & 0xFF);
+                                float l2 = axUseLum
+                                    ? 0.299f * ((q >> 16) & 0xFF) + 0.587f * ((q >> 8) & 0xFF) + 0.114f * (q & 0xFF)
+                                    : (q & 0xFF) - ((q >> 16) & 0xFF);
                                 if (Math.Abs(l2 - skyL) > 0.22f * dl) { oxs[on] = x; oys[on] = y; ows[on] = 3f; on++; }
                                 break;
                             }
