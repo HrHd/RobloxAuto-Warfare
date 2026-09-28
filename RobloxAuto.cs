@@ -195,11 +195,23 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _kfRollZ = 0f, _kfPitZ = 0f; long _kfRollZAt = 0, _kfPitZAt = 0;
     float _kfRollP = 25f, _kfPitP = 25f;  // state variance (deg^2) - drives the Kalman gains
     bool _kfSeeded = false;
+    // ---- REFERENCE FRAMES ("base photos") -----------------------------------------------------
+    // Labelled example frames in "<exe>\hudref\" are matched against the live frame by a coarse
+    // 6x6 colour signature. A name containing "bad" (or "no_"/"false") marks a BAD example - e.g.
+    // "this is ground, not sky" - and a near match to one kills the lock. Everything else is GOOD
+    // (a real sky/ground line) and a near match boosts the lock. This is how you TEACH it.
+    List<float[]> _refSigs = new List<float[]>();
+    List<bool> _refGoodL = new List<bool>();
+    bool _refLoaded = false;
+    float _refDist = 0.16f;               // dial "ref match": L2 threshold (0..1) for a match
+    float _refD = 9f;                     // last frame's nearest-reference distance
+    bool _refGood = true;                 // last frame's nearest-reference label
     // Raw robust measurement from the detector (BEFORE smoothing) - what the estimator consumes.
     float _hudMRoll = 0f, _hudMPitch = 0f;        // deg, px offset from centre
     float _hudMRollVar = 4f, _hudMPitchVar = 9f;  // measurement variance (deg^2, px^2)
     float _hudMConf = 0f;
-    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator;
+    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator, numRefDist;
+    Button btnReloadRefs;
     NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numStickThr;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
@@ -928,7 +940,17 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         y += 28;
 
         numManeuver = MkTune(x, y, "maneuver", (decimal)_hudManeuver, 1m, 400m, 1m, 0);
+        numRefDist = MkTune(x + 168, y, "ref match", (decimal)(_refDist * 100f), 2m, 60m, 1m, 0);
         numManeuver.ValueChanged += delegate { _hudManeuver = (float)numManeuver.Value; SaveCfg(); };
+        numRefDist.ValueChanged += delegate { _refDist = (float)numRefDist.Value / 100f; SaveCfg(); };
+        y += 28;
+
+        // reload the reference photos ("base photos") without restarting
+        btnReloadRefs = new Button();
+        btnReloadRefs.Text = "reload refs";
+        btnReloadRefs.SetBounds(x, y, 120, 24);
+        btnReloadRefs.Click += delegate { _refSigs.Clear(); _refGoodL.Clear(); _refLoaded = false; LoadHudRefs(); };
+        Controls.Add(btnReloadRefs);
         y += 32;
 
         var l1 = new Label();
@@ -2355,6 +2377,17 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         }
         if (TeamBaseUp(panelUp))
         {
+            // HARD PAYLOAD GATE: re-verify the warhead is REALLY the selected one before touching
+            // Deploy As Drone. If it is not, treat it exactly like a wrong loadout - back out and
+            // re-plan - instead of launching the wrong bomb.
+            if (!WantedWarheadGreen())
+            {
+                Log("7) " + _bomb + " is NOT the selected warhead - NOT deploying (re-planning the loadout)");
+                AddBlackError("0x13", "payload not verified - re-planning loadout");
+                BackOutToLoadout(g);
+                HideBlack();
+                return;
+            }
             AddBlackProgress(0.84f, "arm");
             if (_asDrone)
             {
@@ -3375,27 +3408,63 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             int cur2 = GreenSlot(apx, aW, aH, cells, count);   // did the green box move onto our slot?
             int[] after = CellSample(cells[slot].X, cells[slot].Y);
             int diff = Math.Abs(after[0] - before[0]) + Math.Abs(after[1] - before[1]) + Math.Abs(after[2] - before[2]);
-            bool green = cur2 == slot || (diff >= 40 && CellIsGreen(cells[slot].X, cells[slot].Y));
-            if (green)
+            // PROOF of the right selection = the green box is ON OUR SLOT. That is the definitive
+            // indicator. The old test OR-ed in "the cell changed colour and looks greenish", which
+            // fires over green terrain - and then accepted "label unread" as a PASS, so it reported
+            // success with the WRONG warhead equipped and deployed anyway. Never again: unread is
+            // NOT a pass, and a greenish cell is not proof.
+            bool green = (cur2 == slot);
+            if (!green && cur2 < 0)
             {
-                // Trust the grid + green box: we already know how many warheads the drone has and
-                // which name sits in which slot, so the colour change at the measured cell is the
-                // proof. The tiny label OCR is only an ENHANCED cross-check around the cell's own
-                // coordinates - and it never blocks when it cannot read anything.
-                string cellLabel = WarheadCellLabel(cells[slot].X, cells[slot].Y);
-                if (cellLabel == "" || cellLabel == _bomb)
+                // The green box could not be detected at all - fall back to the cell's own label,
+                // and only accept a MATCH. (Not a blank read.)
+                string lab = WarheadCellLabel(cells[slot].X, cells[slot].Y);
+                if (lab != "" && SimPct(lab, _bomb) >= 60)
                 {
-                    Log("   " + _bomb + " confirmed (green box" +
-                        (cellLabel == "" ? ", label unread" : " + cell reads " + cellLabel) + ")");
+                    Log("   " + _bomb + " confirmed by the cell label \"" + lab + "\" (green box not detected)");
                     return true;
                 }
-                Log("   " + _bomb + " is green but the cell reads \"" + cellLabel + "\" - retrying");
-                continue;
             }
-            Log("   " + _bomb + " not confirmed (green slot now=" + cur2 + " diff=" + diff + ") - retrying");
+            if (green)
+            {
+                Log("   " + _bomb + " confirmed (green box moved onto slot " + slot + ")");
+                return true;
+            }
+            Log("   " + _bomb + " not confirmed (green slot now=" + cur2 + " want " + slot + " diff=" + diff + ") - retrying");
         }
         Log("   " + _bomb + " is NOT green - leaving the flow here so we do not deploy the wrong loadout");
         return false;
+    }
+
+    // FINAL PAYLOAD CHECK, run immediately before deploying. Re-measures the panel and asks: is the
+    // warhead we asked for the GREEN (selected) one right now? If it is not, or the green box cannot
+    // be found, we must NOT deploy - a wrong payload used to be launched on a "label unread" pass.
+    bool WantedWarheadGreen()
+    {
+        try
+        {
+            if (_bomb == "(none)" || !_stepBomb) return true;      // nothing requested -> nothing to check
+            int idx = System.Array.IndexOf(BombsFor(_drone), _bomb);
+            if (idx <= 0) { Log("   payload check: " + _bomb + " is not a " + _drone + " warhead"); return false; }
+            int slot = idx - 1;
+            int count = BombsFor(_drone).Length - 1;
+            if (!BasePanelIsDrone(_drone)) { Log("   payload check: the panel is not the " + _drone + " loadout"); return false; }
+            List<Point> cells = FindWarheadCells(count);
+            if (cells.Count <= slot) { Log("   payload check: only " + cells.Count + " cells, need slot " + slot); return false; }
+            int W, H; int[] px = Grab(out W, out H);
+            int cur = GreenSlot(px, W, H, cells, count);
+            if (cur == slot) return true;
+            // green undetectable -> accept only a positive label match for OUR bomb in our slot
+            if (cur < 0)
+            {
+                string lab = WarheadCellLabel(cells[slot].X, cells[slot].Y);
+                if (lab != "" && SimPct(lab, _bomb) >= 60) return true;
+            }
+            Log("   payload check: green slot is " + (cur < 0 ? "not detected" : cur + " (" + BombsFor(_drone)[cur + 1] + ")") +
+                ", want " + slot + " (" + _bomb + ")");
+            return false;
+        }
+        catch { return false; }
     }
 
     // average colour of a small spread inside a warhead cell. Used to prove the cell actually
@@ -5486,6 +5555,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudEstimator") _hudEstimator = v != "0";
             else if (k == "hudFov") _hudFovY = ParseF(v);
             else if (k == "hudManeuver") _hudManeuver = ParseF(v);
+            else if (k == "hudRef") _refDist = ParseF(v) / 100f;
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -5567,6 +5637,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudEstimator=" + (_hudEstimator ? "1" : "0"),
             "hudFov=" + _hudFovY.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudManeuver=" + _hudManeuver.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudRef=" + (_refDist * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -7036,14 +7107,117 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         return true;
     }
 
+    // Coarse appearance signature of a 6x6 colour grid, built from the block images the detector
+    // already computed (so it costs almost nothing).
+    static float[] SigFromBlocks(float[] imR, float[] imG, float[] imB, int gw, int gh)
+    {
+        float[] s = new float[108];
+        for (int by = 0; by < 6; by++)
+            for (int bx = 0; bx < 6; bx++)
+            {
+                int x0 = bx * gw / 6, x1 = (bx + 1) * gw / 6; if (x1 <= x0) x1 = x0 + 1;
+                int y0 = by * gh / 6, y1 = (by + 1) * gh / 6; if (y1 <= y0) y1 = y0 + 1;
+                double r = 0, g = 0, b = 0; int c = 0;
+                for (int y = y0; y < y1 && y < gh; y++)
+                    for (int x = x0; x < x1 && x < gw; x++)
+                    { int ii = y * gw + x; r += imR[ii]; g += imG[ii]; b += imB[ii]; c++; }
+                int o = (by * 6 + bx) * 3;
+                s[o] = c > 0 ? (float)(r / c) / 255f : 0f;
+                s[o + 1] = c > 0 ? (float)(g / c) / 255f : 0f;
+                s[o + 2] = c > 0 ? (float)(b / c) / 255f : 0f;
+            }
+        return s;
+    }
+
+    // Same signature from a reference image on disk.
+    static float[] SigFromBitmap(Bitmap bmp)
+    {
+        float[] s = new float[108];
+        int W = bmp.Width, H = bmp.Height;
+        for (int by = 0; by < 6; by++)
+            for (int bx = 0; bx < 6; bx++)
+            {
+                int x0 = bx * W / 6, x1 = (bx + 1) * W / 6; if (x1 <= x0) x1 = x0 + 1;
+                int y0 = by * H / 6, y1 = (by + 1) * H / 6; if (y1 <= y0) y1 = y0 + 1;
+                int stp = Math.Max(1, Math.Min(x1 - x0, y1 - y0) / 12);
+                double r = 0, g = 0, b = 0; int c = 0;
+                for (int y = y0; y < y1; y += stp)
+                    for (int x = x0; x < x1; x += stp)
+                    { Color p = bmp.GetPixel(x, y); r += p.R; g += p.G; b += p.B; c++; }
+                int o = (by * 6 + bx) * 3;
+                s[o] = c > 0 ? (float)(r / c) / 255f : 0f;
+                s[o + 1] = c > 0 ? (float)(g / c) / 255f : 0f;
+                s[o + 2] = c > 0 ? (float)(b / c) / 255f : 0f;
+            }
+        return s;
+    }
+
+    // Load every image in "<exe>\hudref\" once. File name decides the label: contains "bad", "no_"
+    // or "false" -> BAD example; anything else -> GOOD example. e.g.  bad-ground.png, sky01.png
+    void LoadHudRefs()
+    {
+        _refLoaded = true;
+        try
+        {
+            string dir = Path.Combine(_appDir, "hudref");
+            if (!Directory.Exists(dir))
+            {
+                try { Directory.CreateDirectory(dir); } catch { }
+                Log("reference frames: none yet - drop labelled screenshots in " + dir +
+                    " (name them bad-*.png when the lock is WRONG, good otherwise)");
+                return;
+            }
+            string[] fs = Directory.GetFiles(dir);
+            int ng = 0, nb = 0;
+            for (int i = 0; i < fs.Length; i++)
+            {
+                string ext = Path.GetExtension(fs[i]).ToLowerInvariant();
+                if (ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".bmp") continue;
+                try
+                {
+                    using (Bitmap b = new Bitmap(fs[i]))
+                    {
+                        string nm = Path.GetFileName(fs[i]).ToLowerInvariant();
+                        bool good = nm.IndexOf("bad") < 0 && nm.IndexOf("no_") < 0 && nm.IndexOf("false") < 0;
+                        _refSigs.Add(SigFromBitmap(b));
+                        _refGoodL.Add(good);
+                        if (good) ng++; else nb++;
+                    }
+                }
+                catch { }
+            }
+            Log("reference frames: " + ng + " good / " + nb + " bad loaded from " + dir);
+        }
+        catch { }
+    }
+
+    // Nearest reference by signature distance (0 = identical). Returns the distance and the label.
+    float MatchRefs(float[] sig, out bool good)
+    {
+        good = true; float best = 9f;
+        for (int i = 0; i < _refSigs.Count; i++)
+        {
+            float[] r = _refSigs[i];
+            float d = 0f;
+            for (int k = 0; k < 108; k++) { float e = sig[k] - r[k]; d += e * e; }
+            d = (float)Math.Sqrt(d / 108.0);
+            if (d < best) { best = d; good = _refGoodL[i]; }
+        }
+        return best;
+    }
+
     // System ID. Compare the rate the IMAGE shows with the rate the stick COMMANDED, and nudge the
     // gain toward it. Guarded hard: only while the stick is clearly commanding, ratio sanity-gated,
     // and clamped - so a single bad frame can never wind the gain away.
     void LearnGain(ref float gain, ref float lastZ, ref long lastAt, float z,
-                   float cmdRate, float stick, long now, float minStick)
+                   float cmdRate, float stick, long now, float minStick, float trust)
     {
         try
         {
+            // Only learn from a frame we actually TRUST, and only while the stick is clearly
+            // commanding. A stubborn gain that winds up makes the model over-rotate and the vision
+            // fight it - that is the visible "jump". Clamped tight (0.5..1.8) and very slow.
+            if (trust < 0.50f) { lastZ = z; lastAt = now; return; }
             if (Math.Abs(stick) < minStick) { lastZ = z; lastAt = now; return; }
             if (lastAt != 0)
             {
@@ -7054,11 +7228,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     if (Math.Abs(cmdRate) > 4f)
                     {
                         float ratio = measRate / cmdRate;
-                        if (ratio > 0.25f && ratio < 4f)
+                        if (ratio > 0.4f && ratio < 2.5f)
                         {
-                            gain += 0.06f * (ratio - gain);
-                            if (gain < 0.4f) gain = 0.4f;
-                            if (gain > 2.5f) gain = 2.5f;
+                            gain += 0.030f * (ratio - gain);
+                            if (gain < 0.5f) gain = 0.5f;
+                            if (gain > 1.8f) gain = 1.8f;
                         }
                     }
                 }
@@ -7136,8 +7310,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // pixel measurement and a small dt the alpha-beta BETA term differentiates the noise and
             // drives the RATE state wild (+-100 deg/s spikes). So the RATE state is driven by the
             // stick model only (plus the slow system-ID learner below) - the vision corrects POSITION.
-            if (aR > 0.60f) aR = 0.60f;
-            if (aP > 0.60f) aP = 0.60f;
+            if (aR > 0.30f) aR = 0.30f;
+            if (aP > 0.30f) aP = 0.30f;
 
             // Mahalanobis-style gate: reject a frame that jumps further than a real horizon could in
             // one step. Grounded in the measurement noise so a clean lock gets a tighter gate.
@@ -7150,13 +7324,19 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (okR) { _kfRollX += aR * ir; _kfRollP = (1f - aR) * _kfRollP; }
             if (okP) { _kfPitX += aP * ip; _kfPitP = (1f - aP) * _kfPitP; }
 
-            // slow offset learning (the detector's constant bias; replaces the manual fudge)
-            if (okR) _kfRollOb += 0.02f * ir;
-            if (okP) _kfPitOb += 0.02f * ip;
+            // OFFSET LEARNING - this is what used to drag the horizon DOWN permanently ("it thinks
+            // the ground is the sky"). It must only ever absorb a SMALL, CONSTANT bias, so it learns
+            // only from a trusted frame whose residual is already small (a real bias shows up as a
+            // consistent little residual). A large residual is a WRONG LOCK - learning it in would
+            // bake the mistake in, so it is never learned. Clamped so it can never run away.
+            if (okR && trust > 0.45f && Math.Abs(ir) < 2.5f) { _kfRollOb += 0.010f * ir; }
+            if (okP && trust > 0.45f && Math.Abs(ip) < 2.0f) { _kfPitOb += 0.010f * ip; }
+            if (_kfRollOb > 6f) _kfRollOb = 6f; if (_kfRollOb < -6f) _kfRollOb = -6f;
+            if (_kfPitOb > 6f) _kfPitOb = 6f; if (_kfPitOb < -6f) _kfPitOb = -6f;
 
             // slow gain learning (system ID)
-            if (okR) LearnGain(ref _kfRollGain, ref _kfRollZ, ref _kfRollZAt, zr, -sxS * _hudRollRate, sxS, now, 0.30f);
-            if (okP) LearnGain(ref _kfPitGain, ref _kfPitZ, ref _kfPitZAt, zp, -syS * HudPitchRateDeg(), syS, now, 0.30f);
+            if (okR) LearnGain(ref _kfRollGain, ref _kfRollZ, ref _kfRollZAt, zr, -sxS * _hudRollRate, sxS, now, 0.30f, trust);
+            if (okP) LearnGain(ref _kfPitGain, ref _kfPitZ, ref _kfPitZAt, zp, -syS * HudPitchRateDeg(), syS, now, 0.30f, trust);
         }
 
         // ---- OUTPUT (roll deg, pitch px for the ladder) ----
@@ -7258,6 +7438,27 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         imT[ii] = tc > 0 ? td / (float)tc : 0f;
                     }
                 int gx0 = gw * 20 / 100, gx1 = gw * 80 / 100, gy0 = gh * 8 / 100, gy1 = gh * 88 / 100;
+                // TOP-BAND SANITY. The "sky reference" is only sky if the top band is SMOOTH. Point
+                // the camera down and the top band is ground - busy - and the whole sky/ground logic
+                // can invert ("it thinks the ground is the sky"). Compare the top band's texture with
+                // the scene's; when the top is clearly the busier part it is NOT sky.
+                float skyTex = 0f, allTex = 0f; int stc = 0, atc = 0;
+                {
+                    int trows2 = Math.Max(1, gh * 6 / 100);
+                    for (int gy = 0; gy < trows2; gy++) for (int gx = gx0; gx < gx1; gx++) { skyTex += imT[gy * gw + gx]; stc++; }
+                    if (stc > 0) skyTex /= stc;
+                    for (int gy = 0; gy < gh; gy += 2) for (int gx = gx0; gx < gx1; gx += 2) { allTex += imT[gy * gw + gx]; atc++; }
+                    if (atc > 0) allTex /= atc;
+                }
+                // REFERENCE MATCH: compare this frame's coarse colour layout with the labelled
+                // examples in hudref\ (cheap - reuses the block images).
+                if (!_refLoaded) LoadHudRefs();
+                float refD = 9f; bool refGood = true;
+                if (_refSigs.Count > 0)
+                {
+                    refD = MatchRefs(SigFromBlocks(imR, imG, imB, gw, gh), out refGood);
+                    _refD = refD; _refGood = refGood;
+                }
                 float[] bx2 = new float[gw], by2 = new float[gw], bg2 = new float[gw];
                 float[] chRoll = new float[3], chY = new float[3], chGrad = new float[3], chSig = new float[3];
                 int[] chN = new int[3];
@@ -7395,7 +7596,20 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     bool jump = _hudSmSeeded && Math.Abs(rollNow - _hudSmRoll) > 50f;
                     if (bestGrad > 1.5f && contrast > 2.5f && !jump)
                     {
-                        slope = fm; icept = fb; gOk = true; conf = Math.Min(1f, bestGrad / 12f);
+                        // Sky-quality factor (0 = the "sky" is not sky at all). Combines the top-band
+                        // texture test with the above/below test computed below, so a frame whose
+                        // "sky" is busy, or whose smoother region is BELOW, is heavily distrusted
+                        // instead of being taken as gospel.
+                        float skyClean = 1f;
+                        if (allTex > 0.5f) skyClean = Smooth01(allTex * 1.25f - skyTex, -1.5f, 1.5f);
+                        slope = fm; icept = fb; gOk = true; conf = Math.Min(1f, bestGrad / 12f) * (0.35f + 0.65f * skyClean);
+                        // A near match to a labelled BAD frame (bad-*.png) means "this is the kind of
+                        // view that fooled us before" - kill the lock. A match to a GOOD frame boosts it.
+                        if (_refSigs.Count > 0 && refD <= _refDist)
+                        {
+                            if (!refGood) { conf *= 0.15f; skyClean *= 0.25f; }
+                            else conf = Math.Min(1f, conf * 1.35f + 0.05f);
+                        }
                         _hudTrkM = fm; _hudTrkB = fb; _hudTrkAt = Environment.TickCount;   // remember for tracking
                         // TEXTURE-VERIFIED SKY FRACTION: the region ABOVE the line must be SMOOTHER than the
                         // region BELOW (real sky over ground). A lock on a terrain edge has busy ground on
@@ -7415,7 +7629,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         // it (0.6..1.0) - at full strength it was reading ~0% sky on real, valid locks,
                         // which silently disabled the image entirely (the "no influence" bug).
                         float texConf = Smooth01(bT - aT, 0f, 10f);
-                        detSky = hf * (0.6f + 0.4f * texConf);
+                        // INVERSION GUARD: below the horizon must be the BUSIER part (ground); above
+                        // it must be the smoother part (sky). If the region BELOW the line is clearly
+                        // smoother than the region above, the "sky" is under the ground - the lock is
+                        // inverted - so distrust it hard rather than letting the line walk down.
+                        if (bT - aT < -3f) { skyClean *= 0.25f; conf *= 0.5f; }
+                        detSky = hf * (0.6f + 0.4f * texConf) * (0.40f + 0.60f * skyClean);
                         // CLUTTER meter: mean local texture of the blocks around the line. Trees / structures
                         // make it high, and a clutter-heavy scene drags the lock UP onto the canopy - the
                         // caller drops the horizon in proportion (dial "tree drop").
@@ -7732,7 +7951,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (Environment.TickCount - _hudLogAt >= 2000)
             {
                 _hudLogAt = Environment.TickCount;
-                Log("horizon det: " + (gOk ? "global" : n + " pts") + ", roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px, sky " + (_hudDetSky * 100f).ToString("0") + "% trust " + (_hudDetConf * 100f).ToString("0") + "% clutter " + (_hudClutter * 100f).ToString("0") + "%");
+                Log("horizon det: " + (gOk ? "global" : n + " pts") + ", roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px, sky " + (_hudDetSky * 100f).ToString("0") + "% trust " + (_hudDetConf * 100f).ToString("0") + "% clutter " + (_hudClutter * 100f).ToString("0") + "%" + (_refSigs.Count > 0 ? " ref " + (_refD * 100f).ToString("0") + (_refGood ? " good" : " BAD") : ""));
             }
         }
         catch { }
