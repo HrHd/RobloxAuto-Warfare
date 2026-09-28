@@ -226,6 +226,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudMsTau = 0.08f;                       // dial "axis smooth": low-pass time constant (s) on the detector measurement
     string _hudScene = "?";                      // matched base scene (snow/fog/grey/normal)
     float _hudSceneD = 9f;                        // distance to that base scene
+    float _hudCoastMs = 0f;                       // how long the vision has been missing (ms)
     float _hudSceneTol = 0.10f;                   // max RMS distance to claim a scene match
     int _hudSceneTick = 0;
     float _hudSkyFlatMax = 0.70f;                 // dial "sky flat": max top-band texture as a FRACTION of the whole frame (real sky is far smoother)
@@ -7711,6 +7712,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _kfRollV = 0f; _kfPitV = 0f;
             _kfRollOb = 0f; _kfPitOb = 0f;
             _kfRollP = 25f; _kfPitP = 25f;
+            _hudCoastMs = 0f;
         }
 
         // ---- PREDICT (control model) ----
@@ -7719,6 +7721,20 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);    // the stick->rate lag
         _kfRollV += (rollCmd - _kfRollV) * av;
         _kfPitV += (pitCmd - _kfPitV) * av;
+        // ---- COAST LEASH -------------------------------------------------------------------------
+        // THE "good for a minute then delusional" BUG. The control model is a pure INTEGRATOR of the
+        // stick, but a real drone holds a steady ATTITUDE for a held stick - so while the vision is
+        // missing (a discarded frame, fog, looking down) a held forward stick integrates into an
+        // ever-growing pitch and the line walks away. Instead, with no fresh vision the velocity is
+        // allowed to BLEED OFF, so the estimate hovers where it was rather than running.
+        bool fresh = _hudDetValid && (now - _hudDetAt) < 700;
+        if (!fresh)
+        {
+            float cl = 1f - (float)Math.Pow(0.5, dt / 0.9);        // ~0.9s to lose half the coasting rate
+            _kfRollV -= _kfRollV * cl;
+            _kfPitV -= _kfPitV * cl;
+            _hudCoastMs += dt * 1000f;
+        }
         _kfRollX += _kfRollV * dt;
         _kfPitX += _kfPitV * dt;
         _kfRollP += _hudManeuver * dt;      // uncertainty grows; faster while coasting
@@ -7770,8 +7786,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // pixel measurement and a small dt the alpha-beta BETA term differentiates the noise and
             // drives the RATE state wild (+-100 deg/s spikes). So the RATE state is driven by the
             // stick model only (plus the slow system-ID learner below) - the vision corrects POSITION.
-            if (aR > 0.30f) aR = 0.30f;
-            if (aP > 0.30f) aP = 0.30f;
+            // RE-ACQUIRE: after a long coast the estimate may be well off, so let a returning
+            // measurement pull harder for this frame - otherwise the capped gain takes many seconds
+            // to walk the line back and it looks like it never recovers.
+            float coastBefore = _hudCoastMs; _hudCoastMs = 0f;
+            float gainCap = 0.30f;
+            if (coastBefore > 1500f) gainCap = 0.30f + 0.40f * Math.Min(1f, (coastBefore - 1500f) / 2500f);
+            if (aR > gainCap) aR = gainCap;
+            if (aP > gainCap) aP = gainCap;
 
             // ---- SOLID-LOCK COUNT + HUG ---------------------------------------------------------
             // A frame is SOLID when the detector is confident AND sky is genuinely in view. After
