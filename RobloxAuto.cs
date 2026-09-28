@@ -412,43 +412,43 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     static readonly Dictionary<string, Dictionary<string, string>> LANG =
         new Dictionary<string, Dictionary<string, string>>
     {
-        { "English",  new Dictionary<string, string>() },
-        { "EspaÃ±ol",  new Dictionary<string, string> {
+        { "English",  new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) },
+        { "EspaÃ±ol",  new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
             {"REJOIN NOW","RECONECTAR"},{"Refresh","Actualizar"},{"AUTO RUN","AUTO"},{"Open log","Abrir registro"},
             {"Keybind:","Tecla:"},{"Set key...","Fijar tecla..."},{"controller:","mando:"},{"land now:","aterrizar:"},
             {"reconnect:","reconectar:"},{"stuck","atascado"},{"sec -> reconnect","s -> reconectar"},
             {"Team:","Equipo:"},{"Drone:","Dron:"},{"Bomb:","Bomba:"},{"AUTO after rejoin","AUTO tras reconectar"},
             {"RF watch (HOME)","RF (CASA)"},{"Black screen while reconnecting","Pantalla negra al reconectar"},
             {"s delay","s retraso"},{"Show LAND NOW, hold","Mostrar LAND NOW, esperar"},{"s before reconnect","s antes de reconectar"} } },
-        { "Deutsch",  new Dictionary<string, string> {
+        { "Deutsch",  new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
             {"REJOIN NOW","NEU VERBINDEN"},{"Refresh","Aktualisieren"},{"AUTO RUN","AUTO"},{"Open log","Log Ã¶ffnen"},
             {"Keybind:","Taste:"},{"Set key...","Taste setzen..."},{"controller:","Controller:"},{"land now:","landen:"},
             {"reconnect:","verbinden:"},{"stuck","hÃ¤ngt"},{"sec -> reconnect","s -> neu verbinden"},
             {"Team:","Team:"},{"Drone:","Drohne:"},{"Bomb:","Bombe:"},{"AUTO after rejoin","AUTO nach Neuverb."},
             {"RF watch (HOME)","RF (BASIS)"},{"Black screen while reconnecting","Schwarzer Bildschirm"},
             {"s delay","s VerzÃ¶gerung"},{"Show LAND NOW, hold","LAND NOW zeigen, warten"},{"s before reconnect","s vor Neuverb."} } },
-        { "FranÃ§ais", new Dictionary<string, string> {
+        { "FranÃ§ais", new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
             {"REJOIN NOW","RECONNECTER"},{"Refresh","Actualiser"},{"AUTO RUN","AUTO"},{"Open log","Ouvrir log"},
             {"Keybind:","Touche:"},{"Set key...","DÃ©finir touche..."},{"controller:","manette:"},{"land now:","atterrir:"},
             {"reconnect:","reconnecter:"},{"stuck","bloquÃ©"},{"sec -> reconnect","s -> reconnecter"},
             {"Team:","Ã‰quipe:"},{"Drone:","Drone:"},{"Bomb:","Bombe:"},{"AUTO after rejoin","AUTO aprÃ¨s reconnexion"},
             {"RF watch (HOME)","RF (BASE)"},{"Black screen while reconnecting","Ã‰cran noir en reconnexion"},
             {"s delay","s dÃ©lai"},{"Show LAND NOW, hold","Afficher LAND NOW, attendre"},{"s before reconnect","s avant reconnexion"} } },
-        { "PortuguÃªs", new Dictionary<string, string> {
+        { "PortuguÃªs", new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
             {"REJOIN NOW","RECONECTAR"},{"Refresh","Atualizar"},{"AUTO RUN","AUTO"},{"Open log","Abrir log"},
             {"Keybind:","Tecla:"},{"Set key...","Definir tecla..."},{"controller:","controle:"},{"land now:","aterrissar:"},
             {"reconnect:","reconectar:"},{"stuck","travado"},{"sec -> reconnect","s -> reconectar"},
             {"Team:","Equipe:"},{"Drone:","Drone:"},{"Bomb:","Bomba:"},{"AUTO after rejoin","AUTO apÃ³s reconectar"},
             {"RF watch (HOME)","RF (BASE)"},{"Black screen while reconnecting","Tela preta ao reconectar"},
             {"s delay","s atraso"},{"Show LAND NOW, hold","Mostrar LAND NOW, esperar"},{"s before reconnect","s antes de reconectar"} } },
-        { "Ð ÑƒÑÑÐºÐ¸Ð¹",  new Dictionary<string, string> {
+        { "Ð ÑƒÑÑÐºÐ¸Ð¹",  new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
             {"REJOIN NOW","ÐŸÐ•Ð Ð•ÐŸÐžÐ”ÐšÐ›Ð®Ð§Ð˜Ð¢Ð¬Ð¡Ð¯"},{"Refresh","ÐžÐ±Ð½Ð¾Ð²Ð¸Ñ‚ÑŒ"},{"AUTO RUN","ÐÐ’Ð¢Ðž"},{"Open log","ÐžÑ‚ÐºÑ€Ñ‹Ñ‚ÑŒ Ð»Ð¾Ð³"},
             {"Keybind:","ÐšÐ»Ð°Ð²Ð¸ÑˆÐ°:"},{"Set key...","Ð—Ð°Ð´Ð°Ñ‚ÑŒ ÐºÐ»Ð°Ð²Ð¸ÑˆÑƒ..."},{"controller:","Ð³ÐµÐ¹Ð¼Ð¿Ð°Ð´:"},{"land now:","Ð¿Ð¾ÑÐ°Ð´ÐºÐ°:"},
             {"reconnect:","Ð¿ÐµÑ€ÐµÐ¿Ð¾Ð´ÐºÐ»ÑŽÑ‡Ð¸Ñ‚ÑŒ:"},{"stuck","Ð·Ð°Ð²Ð¸Ñ"},{"sec -> reconnect","Ñ -> Ð¿ÐµÑ€ÐµÐ¿Ð¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ðµ"},
             {"Team:","ÐšÐ¾Ð¼Ð°Ð½Ð´Ð°:"},{"Drone:","Ð”Ñ€Ð¾Ð½:"},{"Bomb:","Ð‘Ð¾Ð¼Ð±Ð°:"},{"AUTO after rejoin","ÐÐ’Ð¢Ðž Ð¿Ð¾ÑÐ»Ðµ Ð¿ÐµÑ€ÐµÐ¿Ð¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ñ"},
             {"RF watch (HOME)","RF (Ð‘ÐÐ—Ð)"},{"Black screen while reconnecting","Ð§Ñ‘Ñ€Ð½Ñ‹Ð¹ ÑÐºÑ€Ð°Ð½ Ð¿Ñ€Ð¸ Ð¿ÐµÑ€ÐµÐ¿Ð¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ð¸"},
             {"s delay","Ñ Ð·Ð°Ð´ÐµÑ€Ð¶ÐºÐ°"},{"Show LAND NOW, hold","ÐŸÐ¾ÐºÐ°Ð·Ð°Ñ‚ÑŒ LAND NOW, Ð¿Ð°ÑƒÐ·Ð°"},{"s before reconnect","Ñ Ð´Ð¾ Ð¿ÐµÑ€ÐµÐ¿Ð¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ñ"} } },
-        { "Italiano", new Dictionary<string, string> {
+        { "Italiano", new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
             {"REJOIN NOW","RICONNETTI"},{"Refresh","Aggiorna"},{"AUTO RUN","AUTO"},{"Open log","Apri log"},
             {"Keybind:","Tasto:"},{"Set key...","Imposta tasto..."},{"controller:","controller:"},{"land now:","atterra:"},
             {"reconnect:","riconnetti:"},{"stuck","bloccato"},{"sec -> reconnect","s -> riconnetti"},
@@ -488,7 +488,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             {
                 Dictionary<string, object> inner = kv.Value as Dictionary<string, object>;
                 if (inner == null) continue;
-                if (!LANG.ContainsKey(kv.Key)) LANG[kv.Key] = new Dictionary<string, string>();
+                if (!LANG.ContainsKey(kv.Key)) LANG[kv.Key] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (KeyValuePair<string, object> e in inner)
                 {
                     string v = e.Value as string;
@@ -505,8 +505,21 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     {
         try
         {
-            SortedSet<string> eng = new SortedSet<string>();
+            SortedSet<string> eng = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);   // dedupe case-insensitively
             foreach (KeyValuePair<Control, string> kv in _enText) if (!string.IsNullOrEmpty(kv.Value)) eng.Add(kv.Value);
+            // strings that are NOT controls: the CLI/terminal lines, the OBS overlay text, the LAND NOW banner
+            string[] extra = new string[] {
+                "LAND NOW", "BF-DRONE LINK", "// SECURE RF UPLINK", "TEAM", "AIRFRAME", "PAYLOAD",
+                "UAV LINK ACTIVE", "FPV LINK ACTIVE", "UPLINK SYNC", "STANDBY", "bf-drone link: standby",
+                "authenticating operator key", "session established - console ready", "standby - awaiting command",
+                "!! FAULT 0x7F: telemetry link degraded", "   recovery protocol engaged",
+                "calibrating inertial nav (imu)", "spooling gyro stabiliser", "awaiting drone telemetry...",
+                "entering combat zone", "drone online", "connecting to drone", "  uplink established",
+                "!! LINK PAUSED - operator halt", "   awaiting re-establishment...", "> quick reconnect",
+                "returning to command line - menu detected", "re-sync", "standby",
+                "paused - awaiting re-establishment", "connect", "paused", "RECONNECTING", "SYNC"
+            };
+            foreach (string e in extra) eng.Add(e);
             List<string> langs = new List<string>(LANG.Keys);
             StringBuilder sb = new StringBuilder();
             sb.Append("{\n");
@@ -611,6 +624,16 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     }
 
     // language picker, pinned to the top-right of the panel
+    // translate an English UI/CLI string for the current language (missing entry -> English)
+    string T(string en)
+    {
+        if (string.IsNullOrEmpty(en) || _lang == "English") return en ?? "";
+        Dictionary<string, string> d;
+        if (!LANG.TryGetValue(_lang, out d) || d == null) return en;
+        string tr;
+        return d.TryGetValue(en, out tr) && !string.IsNullOrEmpty(tr) ? tr : en;
+    }
+
     void AddLangCombo()
     {
         cmbLang = new ComboBox();
@@ -656,6 +679,26 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (d != null && d.TryGetValue(t, out tr)) t = tr;
             try { kv.Key.Text = t; } catch { }
         }
+        // push the translated strings the OBS overlay draws itself
+        PushOverlayUi();
+    }
+
+    void PushOverlayUi()
+    {
+        try
+        {
+            OverlayHub.I.SetUi("title", T("BF-DRONE LINK"));
+            OverlayHub.I.SetUi("sub",   T("// SECURE RF UPLINK"));
+            OverlayHub.I.SetUi("team",  T("TEAM"));
+            OverlayHub.I.SetUi("air",   T("AIRFRAME"));
+            OverlayHub.I.SetUi("pay",   T("PAYLOAD"));
+            OverlayHub.I.SetUi("uav",   T("UAV LINK ACTIVE"));
+            OverlayHub.I.SetUi("fpv",   T("FPV LINK ACTIVE"));
+            OverlayHub.I.SetUi("sync",  T("UPLINK SYNC"));
+            OverlayHub.I.SetUi("stby",  T("STANDBY"));
+            OverlayHub.I.SetUi("cli",   T("bf-drone link: standby"));
+        }
+        catch { }
     }
 
     // ================= ctor =================
@@ -1944,7 +1987,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // OBS CLI: hold the bar and show a milsim "paused" state until the operator re-establishes
         AddBlackLine("!! LINK PAUSED - operator halt", "BAD");
         AddBlackLine("   awaiting re-establishment...", "");
-        OverlayHub.I.SetProgress(_flowPct, "paused - awaiting re-establishment");
+        OverlayHub.I.SetProgress(_flowPct, T("paused - awaiting re-establishment"));
         // STOP = "I'll take it from here". Turn the drone screen-detect ON, so if we are sitting
         // in a drone the user picked by hand the HUD/RF feed comes straight back up on its own.
         _hudAutoDetect = true;
@@ -7500,6 +7543,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         readonly List<string[]> _lines = new List<string[]>();
         float _progress = 0f, _target = 0f;
         string _label = "", _home = "";
+        readonly Dictionary<string, string> _ui = new Dictionary<string, string>();
+        public void SetUi(string k, string v) { lock (_lock) { _ui[k] = v ?? ""; } }
         string _team = "", _drone = "", _bomb = "";
         bool _active = false;
         bool _flight = false;            // drone deployed - show RF static in the stream overlay
@@ -7613,6 +7658,16 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     string oVer = "0";
                     try { string of = Path.Combine(_dir, "overlay.html"); if (File.Exists(of)) oVer = File.GetLastWriteTimeUtc(of).Ticks.ToString(); } catch { }
                     sb.Append(",\"ver\":\"").Append(oVer).Append("\"");
+                    // translated static strings for the OBS overlay (title / mission header / statuses)
+                    sb.Append(",\"ui\":{");
+                    bool uf = true;
+                    foreach (KeyValuePair<string, string> kv in _ui)
+                    {
+                        if (!uf) sb.Append(',');
+                        uf = false;
+                        sb.Append('"').Append(Esc(kv.Key)).Append("\":\"").Append(Esc(kv.Value)).Append('"');
+                    }
+                    sb.Append("}");
                     sb.Append(",\"lines\":[");
                     for (int i = 0; i < _lines.Count; i++)
                     {
@@ -7786,7 +7841,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             f.SetBounds((pb.Width - w) / 2, (int)(pb.Height * 0.15), w, h);
 
             Label lbl = new Label();
-            lbl.Text = "LAND NOW";
+            lbl.Text = T("LAND NOW");   // translated
             lbl.Font = new Font("Segoe UI", 64F, FontStyle.Bold);
             lbl.ForeColor = Color.White;
             lbl.BackColor = Color.Black;         // same as the key, so it stays see-through
@@ -7861,7 +7916,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // the progress bar where it was and let the boot narrate the recovery. A fresh start
             // (progress ~0 or already finished) clears the terminal and begins at 0%.
             bool resuming = _flowPct > 0.05f && _flowPct < 0.99f;
-            if (resuming) OverlayHub.I.SetProgress(_flowPct, "re-sync");
+            if (resuming) OverlayHub.I.SetProgress(_flowPct, T("re-sync"));
             else { _flowPct = 0f; OverlayHub.I.Active(true); }
 
             _blackWatch = true;
@@ -7875,7 +7930,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 Thread.Sleep(340);
                 AddBlackLine("session established - console ready", "OK");
                 AddBlackLine("standby - awaiting command", "");
-                OverlayHub.I.SetProgress(_flowPct, "standby");
+                OverlayHub.I.SetProgress(_flowPct, T("standby"));
 
                 // Stay at the login/standby prompt until the operator has locked a team (the flow
                 // reaches "team locked"), THEN type the connect command - so "connecting" only
@@ -7945,9 +8000,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     {
         try
         {
-            OverlayHub.I.AddLine(text, status);
-            if (InvokeRequired) { BeginInvoke((MethodInvoker)delegate { AddConsoleLine(text, status); }); return; }
-            AddConsoleLine(text, status);
+            string tx = T(text);   // CLI/terminal line - translated for BOTH the monitor and OBS
+            OverlayHub.I.AddLine(tx, status);
+            if (InvokeRequired) { BeginInvoke((MethodInvoker)delegate { AddConsoleLine(tx, status); }); return; }
+            AddConsoleLine(tx, status);
         }
         catch { }
     }
@@ -7998,7 +8054,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         int w = 0;
         while (_blackWatch && _running && _flowPct < waitPct && w < maxMs) { Thread.Sleep(100); w += 100; }
         AddBlackLine(text, status);
-        if (label != null) OverlayHub.I.SetProgress(_flowPct, label);
+        if (label != null) OverlayHub.I.SetProgress(_flowPct, T(label));
     }
 
     readonly Random _rand = new Random();

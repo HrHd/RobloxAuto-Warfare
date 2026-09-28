@@ -36,7 +36,7 @@
   <canvas id="hud"></canvas>
   <div id="bg"></div>
   <div id="wrap">
-    <div id="title">BF-DRONE LINK <span class="dim">// SECURE RF UPLINK</span></div>
+    <div id="title"></div>
     <div id="mission"></div>
     <div id="log"></div>
     <div id="bar"><div id="fill"></div></div>
@@ -331,14 +331,16 @@ function tick() {
     bg.style.display   = cli ? 'block' : 'none';
 
     // live mission header: what the tool is actually deploying right now (fed from settings)
+    var U = s.ui || {};   // translated labels from the tool (falls back to English)
     var seg = [];
-    if (s.team && s.team !== '(none)') seg.push('TEAM ' + String(s.team).toUpperCase());
-    if (s.drone && s.drone !== '(none)') seg.push('AIRFRAME ' + String(s.drone).toUpperCase());
-    if (s.bomb && s.bomb !== '(none)') seg.push('PAYLOAD ' + String(s.bomb).toUpperCase());
-    var mode = s.hud ? (s.uav ? 'UAV LINK ACTIVE' : 'FPV LINK ACTIVE')
-                     : (s.active ? 'UPLINK SYNC' : 'STANDBY');
+    if (s.team && s.team !== '(none)') seg.push((U.team||'TEAM') + ' ' + String(s.team).toUpperCase());
+    if (s.drone && s.drone !== '(none)') seg.push((U.air||'AIRFRAME') + ' ' + String(s.drone).toUpperCase());
+    if (s.bomb && s.bomb !== '(none)') seg.push((U.pay||'PAYLOAD') + ' ' + String(s.bomb).toUpperCase());
+    var mode = s.hud ? (s.uav ? (U.uav||'UAV LINK ACTIVE') : (U.fpv||'FPV LINK ACTIVE'))
+                     : (s.active ? (U.sync||'UPLINK SYNC') : (U.stby||'STANDBY'));
     seg.push(mode);
     document.getElementById('mission').innerHTML = seg.join(' <span class="sep">|</span> ');
+    document.getElementById('title').innerHTML = (U.title||'BF-DRONE LINK') + ' <span class="dim">' + (U.sub||'// SECURE RF UPLINK') + '</span>';
 
     var lines = s.lines || [];
     // type out a line that starts with "> " (a console command) the moment it appears
@@ -360,7 +362,7 @@ function tick() {
       var cur = (i === lines.length - 1 && typing) ? cursor : '';
       h += '<div>' + t + ' <span class="' + cls + '">' + (l[1] ? '[' + l[1] + ']' : '') + '</span>' + cur + '</div>';
     }
-    if (cli && h === '') h = '<div>bf-drone link: standby <span class="ok">[OK]</span></div>';
+    if (cli && h === '') h = '<div>' + ((s.ui&&s.ui.cli)||'bf-drone link: standby') + ' <span class="ok">[OK]</span></div>';
     if (!typing) h += '<div>' + cursor + '</div>';   // idle prompt cursor
     document.getElementById('log').innerHTML = h;
     var pctv = Math.round(s.progress * 100);
