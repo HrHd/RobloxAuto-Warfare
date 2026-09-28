@@ -634,9 +634,10 @@ class RobloxAuto : Form
         numSpread = MkTune(x + 168, y, "spread", (decimal)_hudSpreadAmt, 0m, 5m, 0.2m, 1);
         numDownLim.ValueChanged += delegate { _hudDownLim = (float)numDownLim.Value; SaveCfg(); };
         numSpread.ValueChanged += delegate { _hudSpreadAmt = (float)numSpread.Value; SaveCfg(); };
+        y += 28;
+
         numSpreadAccel = MkTune(x, y, "spread accel", (decimal)_hudSpreadAccel, 0m, 1m, 0.05m, 2);
         numSpreadAccel.ValueChanged += delegate { _hudSpreadAccel = (float)numSpreadAccel.Value; SaveCfg(); };
-        y += 28;
         y += 28;
 
         numImg = MkTune(x, y, "camera trust", (decimal)_hudImgGain, 0m, 4m, 0.1m, 1);
