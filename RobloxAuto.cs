@@ -2517,7 +2517,21 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 Log("7) clicking Deploy As Drone...");
                 AddBlackLine("connecting to drone", "");
                 AddBlackProgress(0.90f, "connecting to drone");
-                bool ok = ClickDeployAsDrone(g);
+                bool ok = false;
+                // CLICK UNTIL THE PANEL ACTUALLY CLOSES. The click was being sent (accepted=2/2) but
+                // the game sometimes ignored it, leaving the TEAM BASE panel up - from the outside
+                // that looks exactly like "it hovers over Deploy As Drone but never clicks". Verify
+                // the panel is really gone and click again if it is not.
+                for (int depTry = 1; depTry <= 4 && Alive(g); depTry++)
+                {
+                    if (ClickDeployAsDrone(g)) ok = true;
+                    Thread.Sleep(900);
+                    InvalidateOcr();
+                    bool still = PhraseOnScreen("TEAM BASE") || PhraseOnScreenWhiten("TEAM BASE");
+                    if (!still) { ok = true; break; }        // the panel closed - we are away
+                    ok = false;
+                    if (depTry < 4) Log("   Deploy As Drone: TEAM BASE panel still open (try " + (depTry + 1) + "/4) - clicking again");
+                }
                 if (!ok) Log("   Deploy As Drone did not react");
                 AddBlackLine("  uplink established", ok ? "OK" : "BAD");
                 _autoDeployed = ok;      // only a real click counts - otherwise the flow re-plans
@@ -6815,7 +6829,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "TEAM BASE", "BASE", "DEPLOY AS DRONE", "WARHEAD",
             // team select / respawn / loading / crash (these screens have NO nav bar, which is why
             // the HUD used to linger on them)
-            "PLAYERS", "JOINING", "JOIN", "SERVER", "CONNECTING", "RESPAWN", "SPECTAT", "DEPLOYING"
+            // NOTE: bare "JOIN" is deliberately NOT here - the TEAM BASE map prints a SQUAD box
+            // reading "JOIN OR CREATE", and a substring match on "JOIN" then reported a menu the
+            // instant after Deploy As Drone (it suppressed the HUD and re-ran the whole flow). The
+            // loading screen is covered by "JOINING", and JOIN OR CREATE is a weak tell below.
+            "PLAYERS", "JOINING", "SERVER", "CONNECTING", "RESPAWN", "SPECTAT", "DEPLOYING"
         };
         // WEAK tells - the objective panel / SQUAD box words. They appear in-flight too (a button
         // press flashes the map or scoreboard), so they only count after several consecutive reads.
