@@ -1794,6 +1794,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             case "fine gain": return "Boosts SMALL right-stick inputs so fine movements move the line more (full push unchanged).";
             case "stick pitch": return "Direct horizon lift from the right stick Y (px). Negative inverts.";
             case "stick tilt": return "Direct bank from the right stick X (deg). Negative inverts.";
+            case "tree drop": return "Push the horizon DOWN (deg) when the detector sees lots of clutter (trees/structures), which pull a lock UP onto the canopy.";
+            case "min colour": return "Reject frames whose overall colour spread is below this - a flat, one-tone frame has no horizon in it.";
+            case "override %": return "Right-stick travel (%) at which the STICK takes over from the image. Below it the image is in full control.";
+            case "estimator": return "1 = use the new angle-space alpha-beta/Kalman estimator with the stick as a control input. 0 = the old filter.";
+            case "fov": return "The game's vertical field of view (deg). Sets the focal length used to turn pixels into real angles, and back.";
+            case "maneuver": return "How fast the estimator believes the attitude may swing (deg^2/s). Bigger = it reacts faster but trusts the model less.";
+            case "ref match": return "How close a frame must be to a saved hudref\\\\ photo to count as a match (%) - lower = stricter.";
+            case "axis weight": return "INFLUENCE of the new sky/ground colour axis (per-frame brightness-vs-blueness cue). 0 = off, 1 = default, higher pulls harder toward sky-above/ground-below.";
             default: return null;
         }
     }
