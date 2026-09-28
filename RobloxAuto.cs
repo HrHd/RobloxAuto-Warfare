@@ -5464,9 +5464,20 @@ class RobloxAuto : Form
             g.DrawString("ISO 100", _fs, white, W * 60 / 100, H - 120);
             g.DrawString("EV+0.3", _fs, white, W * 68 / 100, H - 120);
 
-            // record button
-            g.FillEllipse(recB, W - 126, H / 2 - 34, 62, 62);
-            g.DrawEllipse(recP, W - 114, H / 2 - 22, 38, 38);
+            // record button - iOS-style recording: a ring FILLS around while the red dot TIGHTENS in,
+            // looping about every 2.6s, like the iPad/iPhone screen-recording indicator.
+            float rcx = W - 96, rcy = H / 2 - 3;
+            float ph = (Environment.TickCount % 2600) / 2600f;         // 0..1 over ~2.6s
+            float ease = ph * ph * (3f - 2f * ph);                     // smooth the sweep
+            using (Pen recTrack = new Pen(Color.FromArgb(80, 226, 32, 32), 3))
+            using (Pen recArc = new Pen(Color.FromArgb(245, 226, 32, 32), 4))
+            {
+                recArc.StartCap = recArc.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+                g.DrawEllipse(recTrack, rcx - 30, rcy - 30, 60, 60);                       // track
+                g.DrawArc(recArc, rcx - 30, rcy - 30, 60, 60, -90f, ease * 360f);          // fill
+            }
+            float dotR = 18f - 8f * ease;                              // the dot TIGHTENS in
+            g.FillEllipse(recB, rcx - dotR, rcy - dotR, dotR * 2, dotR * 2);
             g.DrawString("REC", _fs, white, W - 128, H / 2 - 58);
         }
 

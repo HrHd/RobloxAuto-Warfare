@@ -148,11 +148,17 @@ function drawMavic(s, W, H) {
   hctx.fillText('ISO 100', W * 60 / 100, H - 120);
   hctx.fillText('EV+0.3', W * 68 / 100, H - 120);
 
-  // record button
+  // record button - iOS-style recording: a ring FILLS around while the red dot TIGHTENS in, looping
+  var rcx = W - 96, rcy = H / 2 - 3;
+  var ph = (Date.now() % 2600) / 2600;               // 0..1 over ~2.6s
+  var ease = ph * ph * (3 - 2 * ph);                 // smooth the sweep
+  hctx.strokeStyle = 'rgba(226,32,32,0.31)'; hctx.lineWidth = 3;
+  hctx.beginPath(); hctx.arc(rcx, rcy, 30, 0, Math.PI * 2); hctx.stroke();                 // track
+  hctx.strokeStyle = 'rgba(226,32,32,0.96)'; hctx.lineWidth = 4; hctx.lineCap = 'round';
+  hctx.beginPath(); hctx.arc(rcx, rcy, 30, -Math.PI / 2, -Math.PI / 2 + ease * Math.PI * 2); hctx.stroke();
+  var dotR = 18 - 8 * ease;                          // the dot TIGHTENS in
   hctx.fillStyle = 'rgba(226,32,32,0.92)';
-  hctx.beginPath(); hctx.arc(W - 96, H / 2 - 3, 31, 0, Math.PI * 2); hctx.fill();
-  hctx.strokeStyle = 'rgba(226,32,32,0.92)'; hctx.lineWidth = 2;
-  hctx.beginPath(); hctx.arc(W - 96, H / 2 - 3, 19, 0, Math.PI * 2); hctx.stroke();
+  hctx.beginPath(); hctx.arc(rcx, rcy, dotR, 0, Math.PI * 2); hctx.fill();
   hctx.fillStyle = col; hctx.font = '17px "Segoe UI", Arial, sans-serif';
   hctx.fillText('REC', W - 128, H / 2 - 46);
 }
