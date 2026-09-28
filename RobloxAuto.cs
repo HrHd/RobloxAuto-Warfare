@@ -42,7 +42,7 @@ class RobloxAuto : Form
 
     string _padRejoin = "BACK";
     string _padAuto = "LB";
-    string _padStop = "Y";
+    string _padStop = "off";   // NOT Y: many joystick triggers map to Y, so Y caused a STOP on every bomb drop
     string _padLand = "B";              // flashes the LAND NOW alert
     string _padReconnect = "START";     // straight reconnect, no overlay at all
     bool _padRejoinOn = true, _padAutoOn = true, _padStopOn = true, _padLandOn = true, _padReconnectOn = true;
