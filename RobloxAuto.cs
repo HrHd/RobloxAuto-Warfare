@@ -1562,7 +1562,18 @@ class RobloxAuto : Form
         string uri = "roblox://placeId=" + _placeId + "&gameInstanceId=" + _serverId;
 
         // silent reconnect: relaunch immediately, no LAND NOW and no black cover
-        if (!overlay) { Log("   straight reconnect (no overlay)"); LaunchRejoin(uri, why); return; }
+        if (!overlay)
+        {
+            Log("   straight reconnect (no overlay)");
+            // RESTART the OBS CLI: clear the accumulated log and print a fresh uplink line, so the
+            // stream shows the reconnect from a clean slate instead of the old run's tail.
+            OverlayHub.I.Active(true);
+            AddBlackLine("> quick reconnect", "");
+            AddBlackLine("re-engaging uplink with " +
+                (_serverId.Length > 8 ? _serverId.Substring(0, 8) : _serverId), "OK");
+            LaunchRejoin(uri, why);
+            return;
+        }
 
         // Show the LAND NOW alert up front, then (optionally) hold before the relaunch so the
         // alert is visible/recordable before the reconnect actually starts.
