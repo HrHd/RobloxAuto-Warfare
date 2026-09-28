@@ -6554,10 +6554,13 @@ class RobloxAuto : Form
                             for (int k = 1; k <= 3; k++) { aT += imT[(yb - k) * gw + gx]; ac++; bT += imT[(yb + k) * gw + gx]; bc++; }
                         }
                         aT = ac > 0 ? aT / ac : 0f; bT = bc > 0 ? bT / bc : 0f;
-                        float texConf = Smooth01(bT - aT, 2f, 16f);   // below busier than above => real sky/ground
                         float hf = (fm * (W / 2f) + fb) / H;
                         if (hf < 0f) hf = 0f; if (hf > 1f) hf = 1f;
-                        detSky = hf * texConf;
+                        // The horizon's HEIGHT is the reliable sky measure. The texture check only nudges
+                        // it (0.6..1.0) - at full strength it was reading ~0% sky on real, valid locks,
+                        // which silently disabled the image entirely (the "no influence" bug).
+                        float texConf = Smooth01(bT - aT, 0f, 10f);
+                        detSky = hf * (0.6f + 0.4f * texConf);
                     }
                 }
             }
