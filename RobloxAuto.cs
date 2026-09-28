@@ -150,7 +150,7 @@ class RobloxAuto : Form
     float _hudShear = 0.9f;                         // 0 = lines never slide, 1 = exact geometric shear
     float _hudLen = 1f;
     float _hudMaxTilt = 30f;                       // DEG - hard cap on how far the rungs may tilt (dial "max tilt")
-    float _hudRungTilt = 1f;                       // 0 = rungs stay FLAT/horizontal, 1 = rungs parallel to the horizon                             // rung length scale
+    float _hudRungTilt = 0f;                       // 0 = rungs stay FLAT/horizontal, 1 = rungs parallel to the horizon                             // rung length scale
     float _hudImgGain = 1f;                         // how hard the image horizon corrects the gyro (complementary)
     float _hudRollOff = 0f;                         // manual roll offset, degrees (dial "roll off")
     float _hudPitOff = 0f;                          // manual pitch offset, px (dial "pitch off")
@@ -5239,7 +5239,7 @@ class RobloxAuto : Form
         public float V1 = 0f, V2 = 0f;      // simulated pack voltages for the battery row
         public int Secs = 0;   // flight seconds - drives the draining battery readout
         public float Roll = 0f, PitchPx = 0f;
-        public float Dpp = 8f, Shear = 0.9f, Len = 1f, RungTilt = 1f, MaxTilt = 30f;   // ladder geometry dials
+        public float Dpp = 8f, Shear = 0.9f, Len = 1f, RungTilt = 0f, MaxTilt = 30f;   // ladder geometry dials
         public bool Uav = false;
         readonly Font _f = new Font("Consolas", 12F, FontStyle.Bold);
         readonly Font _fb = new Font("Consolas", 15F, FontStyle.Bold);
@@ -6975,7 +6975,7 @@ class RobloxAuto : Form
         float _roll = 0f, _pit = 0f;
         bool _uav = false;
         float _v1 = 0f, _v2 = 0f;
-        float _dpp = 8f, _shear = 0.9f, _len = 1f, _rungTilt = 1f, _maxTilt = 30f;   // ladder geometry dials (from settings)
+        float _dpp = 8f, _shear = 0.9f, _len = 1f, _rungTilt = 0f, _maxTilt = 30f;   // ladder geometry dials (from settings)
         float _plx = 0f, _ply = 0f, _prx = 0f, _pry = 0f;   // live stick values (diagnostics)
         float _alx = 0f, _aly = 0f, _arx = 0f, _ary = 0f;   // stick values fed by the joystick app
         long _aPadAt = 0;
