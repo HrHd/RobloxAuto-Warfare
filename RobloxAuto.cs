@@ -2358,12 +2358,33 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 InvalidateOcr();
             }
 
-            // Zoom out FIRST - the Base is usually just off the edge of the initial view, and the
-            // wheel reveals it without moving the pointer around. Do NOT bail early on "no change":
-            // the wheel redraw is often too subtle for Signature/WaitChange to see, so an old
-            // max-zoom guess fired while the map still had plenty of zoom to give. Over-scrolling
-            // is harmless - the map just clamps at its own max zoom.
+            // Zoom IN FIRST - found to beat zooming out: the Base label separates from the other
+            // map icons instead of piling up with them, so it reads far more reliably. Do NOT bail
+            // early on "no change": the wheel redraw is often too subtle for Signature/WaitChange to
+            // see. Over-scrolling is harmless - the map just clamps at its own max zoom.
             for (int z = 1; z <= 10 && !sawBase && Alive(g); z++)
+            {
+                List<Hit> bh = FindPhraseAll("Base", null, OcrWordsWhiten());
+                if (bh.Count == 0) bh = FindPhraseAll("Base", null, OcrWords());
+                if (bh.Count > 0)
+                {
+                    sawBase = true;
+                    baseX = bh[0].X; baseY = bh[0].Y;
+                    Log("   Base label is visible at (" + baseX + "," + baseY + ") (after " + (z - 1) + " zoom-ins)");
+                    break;
+                }
+                Log("   Base not visible - zooming in (" + z + "/10)");
+                // the wheel goes to the window under the cursor, and the game must be
+                // in front or the wheel is swallowed - so focus, drift, then scroll
+                FocusRoblox();
+                MoveOverGameSoft(z);
+                ScrollIn(2);
+                Thread.Sleep(140);
+            }
+
+            // If zooming IN did not reveal it, try zooming back OUT (the Base can be inside a clump
+            // that only separates when pulled out). Fewer steps - this is the fallback now.
+            for (int z = 1; z <= 6 && !sawBase && Alive(g); z++)
             {
                 List<Hit> bh = FindPhraseAll("Base", null, OcrWordsWhiten());
                 if (bh.Count == 0) bh = FindPhraseAll("Base", null, OcrWords());
@@ -2374,12 +2395,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     Log("   Base label is visible at (" + baseX + "," + baseY + ") (after " + (z - 1) + " zoom-outs)");
                     break;
                 }
-                Log("   Base not visible - zooming out (" + z + "/10)");
-                // the wheel goes to the window under the cursor, and the game must be
-                // in front or the wheel is swallowed - so focus, drift, then scroll
+                Log("   Base still not visible - zooming out (" + z + "/6)");
                 FocusRoblox();
-                MoveOverGameSoft(z);
-                ScrollOut(2);
+                MoveOverGameSoft(z + 10);
+                ScrollOut(3);
                 Thread.Sleep(140);
             }
 
@@ -4877,6 +4896,17 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         INPUT[] inp = new INPUT[1];
         inp[0].type = IN_MOUSE;
         inp[0].U.mi.data = (uint)(-120 * notches);
+        inp[0].U.mi.flags = MV_WHEEL;
+        SendInput(1, inp, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    // Positive wheel = zoom IN. The Base is easier to find zoomed IN than zoomed out (the label
+    // separates from the other map icons instead of piling up with them).
+    static void ScrollIn(int notches)
+    {
+        INPUT[] inp = new INPUT[1];
+        inp[0].type = IN_MOUSE;
+        inp[0].U.mi.data = (uint)(120 * notches);
         inp[0].U.mi.flags = MV_WHEEL;
         SendInput(1, inp, Marshal.SizeOf(typeof(INPUT)));
     }
