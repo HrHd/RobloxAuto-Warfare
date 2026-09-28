@@ -224,6 +224,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudMRoll = 0f, _hudMPitch = 0f;        // deg, px offset from centre
     float _hudAxisW = 1f;                          // dial "axis weight": influence of the sky/ground colour axis cue
     float _hudMsTau = 0.08f;                       // dial "axis smooth": low-pass time constant (s) on the detector measurement
+    float _hudSkyMin = 0.10f;                      // dial "sky min": discard a frame with less verified sky than this
+    int _hudNoSkyFrames = 0;                       // frames discarded for having no usable sky
     float _kfSmRoll = 0f, _kfSmPit = 0f;           // smoothed measurement fed to the estimator
     bool _kfSmSeeded = false;
     float _hudMRollVar = 4f, _hudMPitchVar = 9f;  // measurement variance (deg^2, px^2)
@@ -234,7 +236,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hugSm = 0f;
     int _hugDisR = 0, _hugDisP = 0, _hugSignR = 0, _hugSignP = 0;
     bool _hugLogged = false;
-    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator, numRefDist, numAxisW, numMsTau;
+    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator, numRefDist, numAxisW, numMsTau, numSkyMin;
     Button btnReloadRefs, btnCapRef;
     NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numStickThr;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
@@ -976,6 +978,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         numAxisW.ValueChanged += delegate { _hudAxisW = (float)numAxisW.Value; SaveCfg(); };
         numMsTau = MkTune(x + 168, y, "axis smooth", (decimal)_hudMsTau, 0m, 1m, 0.02m, 2);
         numMsTau.ValueChanged += delegate { _hudMsTau = (float)numMsTau.Value; SaveCfg(); };
+        y += 28;
+        numSkyMin = MkTune(x, y, "sky min", (decimal)(_hudSkyMin * 100f), 0m, 80m, 1m, 0);
+        numSkyMin.ValueChanged += delegate { _hudSkyMin = (float)numSkyMin.Value / 100f; SaveCfg(); };
         y += 28;
 
         // reload the reference photos ("base photos") without restarting
@@ -1806,6 +1811,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             case "fov": return "The game's vertical field of view (deg). Sets the focal length used to turn pixels into real angles, and back.";
             case "maneuver": return "How fast the estimator believes the attitude may swing (deg^2/s). Bigger = it reacts faster but trusts the model less.";
             case "ref match": return "How close a frame must be to a saved hudref\\\\ photo to count as a match (%) - lower = stricter.";
+            case "sky min": return "THROW THE FRAME AWAY if it has less verified sky than this (%). Banked hard looking down at ground/clutter there is no horizon to measure - discarding it stops a terrain edge becoming a false low line, and the estimator just coasts on the stick. 0 = never discard.";
             case "axis smooth": return "Low-pass time (s) on the detector measurement before the estimator uses it. Higher = steadier but laggier; 0 = raw.";
             case "axis weight": return "INFLUENCE of the new sky/ground colour axis (per-frame brightness-vs-blueness cue). 0 = off, 1 = default, higher pulls harder toward sky-above/ground-below.";
             default: return null;
@@ -5828,6 +5834,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudRef") _refDist = ParseF(v) / 100f;
             else if (k == "hudAxisW") _hudAxisW = ParseF(v);
             else if (k == "hudMsTau") _hudMsTau = ParseF(v);
+            else if (k == "hudSkyMin") _hudSkyMin = ParseF(v) / 100f;
             else if (k == "hudSettleMs") { _hudSettleMs = (int)ParseF(v); if (_hudSettleMs < 0) _hudSettleMs = 0; if (_hudSettleMs > 60000) _hudSettleMs = 60000; }
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
@@ -5913,6 +5920,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudRef=" + (_refDist * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAxisW=" + _hudAxisW.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudMsTau=" + _hudMsTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudSkyMin=" + (_hudSkyMin * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSettleMs=" + _hudSettleMs,
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -8524,6 +8532,23 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float skyFrac = detSky >= 0f ? detSky : (slope * (W / 2f) + icept) / H;
             if (skyFrac < 0f) skyFrac = 0f; if (skyFrac > 1f) skyFrac = 1f;
             _hudDetSky = skyFrac;
+            // NO-USEFUL-IMAGE GATE (dial "sky min"): if the frame shows essentially NO verified sky
+            // (all ground / clutter - e.g. banked hard looking down at a ruin field), then there is no
+            // horizon in it to measure. THROW THE FRAME AWAY rather than let a terrain edge become a
+            // false low "horizon"; the estimator then coasts on the stick model until a real frame
+            // comes back. 0 disables the gate (always accept).
+            if (skyFrac < _hudSkyMin)
+            {
+                _hudDetValid = false;
+                _hudDetAt = Environment.TickCount;
+                _hudNoSkyFrames++;
+                if (Environment.TickCount - _hudLogAt >= 2000)
+                {
+                    _hudLogAt = Environment.TickCount;
+                    Log("horizon det: frame DISCARDED - only " + (skyFrac * 100f).ToString("0") + "% verified sky (min " + (_hudSkyMin * 100f).ToString("0") + "%), coasting on stick model");
+                }
+                return;
+            }
             _hudTrkM = slope; _hudTrkB = icept; _hudTrkAt = Environment.TickCount;   // guide the next frame
             _hudDetValid = true;
             _hudDetAt = Environment.TickCount;
