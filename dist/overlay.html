@@ -204,8 +204,8 @@ function drawHud(s, glitching) {
   var dpp = (typeof s.dpp === 'number' && s.dpp > 0) ? s.dpp : 8;
   var shear = (typeof s.shear === 'number') ? s.shear : 1;
   var lscale = (typeof s.len === 'number' && s.len > 0) ? s.len : 1;
-  var tilt = Math.min(1, Math.abs(s.pit || 0) / 900 + Math.abs(s.roll || 0) / 180);
-  var spread = 1 + 1.1 * tilt;
+  var tilt = Math.min(1, Math.abs(s.pit || 0) / 900 + Math.abs(s.roll || 0) / 250);
+  var spread = 1 + 0.7 * tilt;
   var dxr = Math.cos(rad), dyr = Math.sin(rad);      // rung direction: PARALLEL to the real horizon
   for (var d = -90; d <= 90; d += 10) {
     var yy = pit + d * dpp * sc * spread;

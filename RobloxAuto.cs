@@ -169,6 +169,7 @@ class RobloxAuto : Form
     float _hudRollStickSm = 0f;                     // smoothed stick-tilt offset
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
     NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP;
+    bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
@@ -4313,7 +4314,9 @@ class RobloxAuto : Form
         // ACCELERATION (expo) - the harder you push, the faster it moves. Tuned separately for pitch
         // (right stick Y, up/down) and tilt (right stick X, bank) via their own dials.
         float syS = Shape(FineGain(sy, _hudFineP), _hudAccPitch);
-        float sxS = Shape(FineGain(sx, _hudFineP), _hudAccRoll);
+        // Tilt: NO fine-gain boost (it made the bank accelerate in as you pushed) - just the expo dial,
+        // so the roll stays a steady acro rate and HOLDS the bank when you centre.
+        float sxS = Shape(sx, _hudAccRoll);
         float vTargetRoll = -sxS * _hudRollRate;    // deg/s (bank RATE)
         float vTargetPitch = -syS * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
         float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
@@ -4983,6 +4986,7 @@ class RobloxAuto : Form
             else if (k == "hudAccRoll") _hudAccRoll = ParseF(v);
             else if (k == "hudFineP") _hudFineP = ParseF(v);
             else if (k == "hudRollStick") _hudRollStick = ParseF(v);
+            else if (k == "hudCap") _hudCapturable = v == "1";
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -5362,8 +5366,8 @@ class RobloxAuto : Form
             // artificial horizon + pitch ladder. Each rung is ROTATED by the roll so it stays PARALLEL
             // TO THE REAL HORIZON (tilted like the ground line), like a gyro/instrument horizon. Pitch
             // slides the whole ladder up/down.
-            float tilt = Math.Min(1f, Math.Abs(PitchPx) / 900f + Math.Abs(Roll) / 180f);
-            float spread = 1f + 1.1f * tilt;
+            float tilt = Math.Min(1f, Math.Abs(PitchPx) / 900f + Math.Abs(Roll) / 250f);   // tilt fans the ladder less so it stays put
+            float spread = 1f + 0.7f * tilt;
             float dxr = (float)Math.Cos(rad), dyr = (float)Math.Sin(rad);   // rung dir = parallel to horizon
             for (int d = -90; d <= 90; d += 10)
             {
@@ -5469,7 +5473,9 @@ class RobloxAuto : Form
             _hudForm.SetBounds(0, 0, Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
             _hudForm.Uav = _hudStyleUav;
             _hudForm.Show();
-            ExcludeFromCapture(_hudForm.Handle);   // keep the HUD out of the OCR's screen grabs
+            // Normally hidden from capture so the OCR's screen grabs do not see the HUD. Set
+            // "hudCap=1" in settings.ini to make it capturable (for comparing against the OBS overlay).
+            if (!_hudCapturable) ExcludeFromCapture(_hudForm.Handle);
         }
         catch { }
     }
@@ -6744,7 +6750,7 @@ class RobloxAuto : Form
             if (conf < 0.05f) conf = 0.05f; if (conf > 1f) conf = 1f;
 
             float roll = (float)(Math.Atan(slope) * 180.0 / Math.PI);
-            if (roll > 80f) roll = 80f; if (roll < -80f) roll = -80f;   // was +-45, which capped steep banks
+            if (roll > 45f) roll = 45f; if (roll < -45f) roll = -45f;   // cap the image-driven tilt so the ladder cannot swing way out
             float pitch = (slope * (W / 2f) + icept) - H / 2f;
             pitch += _hudBias;   // tunable downward bias (dial "bias px")
             // Allow nearly the whole frame - a +-H/4 clamp meant the IMAGE TARGET could never sit more
