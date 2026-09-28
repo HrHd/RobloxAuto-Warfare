@@ -618,21 +618,27 @@ class RobloxAuto : Form
         y += 28;
 
         numLen = MkTune(x, y, "line length", (decimal)_hudLen, 0.3m, 2.5m, 0.1m, 2);
-        numLen.ValueChanged += delegate { _hudLen = (float)numLen.Value; SaveCfg(); };
         numRungTilt = MkTune(x + 168, y, "rung tilt", (decimal)_hudRungTilt, 0m, 1m, 0.1m, 1);
+        numLen.ValueChanged += delegate { _hudLen = (float)numLen.Value; SaveCfg(); };
         numRungTilt.ValueChanged += delegate { _hudRungTilt = (float)numRungTilt.Value; SaveCfg(); };
-        numMaxTilt = MkTune(x, y, "max tilt (deg)", (decimal)_hudMaxTilt, 0m, 90m, 5m, 0);
-        numMaxTilt.ValueChanged += delegate { _hudMaxTilt = (float)numMaxTilt.Value; SaveCfg(); };
+        y += 28;
+
+        numMaxTilt = MkTune(x, y, "max tilt", (decimal)_hudMaxTilt, 0m, 90m, 5m, 0);
         numImgRate = MkTune(x + 168, y, "image limit", (decimal)_hudImgRate, 0m, 600m, 10m, 0);
+        numMaxTilt.ValueChanged += delegate { _hudMaxTilt = (float)numMaxTilt.Value; SaveCfg(); };
         numImgRate.ValueChanged += delegate { _hudImgRate = (float)numImgRate.Value; SaveCfg(); };
+        y += 28;
+
         numDownLim = MkTune(x, y, "down limit", (decimal)_hudDownLim, 0m, 800m, 20m, 0);
-        numDownLim.ValueChanged += delegate { _hudDownLim = (float)numDownLim.Value; SaveCfg(); };
         numSpread = MkTune(x + 168, y, "spread", (decimal)_hudSpreadAmt, 0m, 5m, 0.2m, 1);
+        numDownLim.ValueChanged += delegate { _hudDownLim = (float)numDownLim.Value; SaveCfg(); };
         numSpread.ValueChanged += delegate { _hudSpreadAmt = (float)numSpread.Value; SaveCfg(); };
         y += 28;
 
         numImg = MkTune(x, y, "camera trust", (decimal)_hudImgGain, 0m, 4m, 0.1m, 1);
+        numThr = MkTune(x + 168, y, "throttle", (decimal)_hudLeftPx, 0m, 120m, 2m, 0);
         numImg.ValueChanged += delegate { _hudImgGain = (float)numImg.Value; SaveCfg(); };
+        numThr.ValueChanged += delegate { _hudLeftPx = (float)numThr.Value; SaveCfg(); };
         y += 28;
 
         numRollOff = MkTune(x, y, "roll shift", (decimal)_hudRollOff, -180m, 180m, 1m, 0);
@@ -641,9 +647,9 @@ class RobloxAuto : Form
         numPitOff.ValueChanged += delegate { _hudPitOff = (float)numPitOff.Value; SaveCfg(); };
         y += 28;
 
-        numBadLift = MkTune(x, y, "bad lift (deg)", (decimal)_hudBadLift, -30m, 30m, 1m, 0);
-        numBadLift.ValueChanged += delegate { _hudBadLift = (float)numBadLift.Value; SaveCfg(); };
+        numBadLift = MkTune(x, y, "bad lift", (decimal)_hudBadLift, -30m, 30m, 1m, 0);
         numTexW = MkTune(x + 168, y, "texture", (decimal)_hudTexW, 0m, 3m, 0.1m, 1);
+        numBadLift.ValueChanged += delegate { _hudBadLift = (float)numBadLift.Value; SaveCfg(); };
         numTexW.ValueChanged += delegate { _hudTexW = (float)numTexW.Value; SaveCfg(); };
         y += 28;
 
@@ -654,13 +660,11 @@ class RobloxAuto : Form
         y += 28;
 
         numFineP = MkTune(x, y, "fine gain", (decimal)_hudFineP, 0m, 3m, 0.1m, 1);
+        numPitStick = MkTune(x + 168, y, "stick pitch", (decimal)_hudPitStick, -350m, 350m, 10m, 0);
         numFineP.ValueChanged += delegate { _hudFineP = (float)numFineP.Value; SaveCfg(); };
+        numPitStick.ValueChanged += delegate { _hudPitStick = (float)numPitStick.Value; SaveCfg(); };
         y += 28;
 
-        numThr = MkTune(x, y, "throttle", (decimal)_hudLeftPx, 0m, 120m, 2m, 0);
-        numThr.ValueChanged += delegate { _hudLeftPx = (float)numThr.Value; SaveCfg(); };
-        numPitStick = MkTune(x + 168, y, "stick pitch", (decimal)_hudPitStick, -350m, 350m, 10m, 0);
-        numPitStick.ValueChanged += delegate { _hudPitStick = (float)numPitStick.Value; SaveCfg(); };
         numRollStick = MkTune(x, y, "stick tilt", (decimal)_hudRollStick, -80m, 80m, 5m, 0);
         numRollStick.ValueChanged += delegate { _hudRollStick = (float)numRollStick.Value; SaveCfg(); };
         y += 32;
@@ -1390,7 +1394,45 @@ class RobloxAuto : Form
         nud.ForeColor = Color.Gainsboro;
         nud.SetBounds(cx + 92, cy - 2, 70, 24);
         Controls.Add(nud);
+        // hover a dial (or its name) to see what it does
+        if (_tips == null) { _tips = new ToolTip(); _tips.InitialDelay = 250; _tips.ReshowDelay = 80; _tips.AutoPopDelay = 25000; }
+        string tip = TuneTip(caption);
+        if (tip != null) { _tips.SetToolTip(lbl, tip); _tips.SetToolTip(nud, tip); }
         return nud;
+    }
+
+    ToolTip _tips;
+    static string TuneTip(string c)
+    {
+        switch (c)
+        {
+            case "pitch speed": return "How fast the horizon travels up/down when you push the right stick forward/back (px/s).";
+            case "roll speed": return "How fast the horizon banks when you move the right stick left/right (deg/s).";
+            case "lock speed": return "How quickly the IMAGE horizon pulls the line back to the real horizon.";
+            case "drift speed": return "How slowly the line drifts when there is no image lock / no stick input.";
+            case "height adj": return "Nudges the whole horizon line up/down (px).";
+            case "smoothing": return "Gyro smoothing time (s). Higher = smoother but laggier.";
+            case "line gap": return "Vertical spacing between ladder rungs (px per degree).";
+            case "staircase": return "How far the rungs slide SIDEWAYS when you bank. 0 = no slide.";
+            case "line length": return "How long each ladder rung is.";
+            case "rung tilt": return "0 = rungs stay FLAT; 1 = rungs tilt to stay parallel with the real horizon.";
+            case "max tilt": return "Hard cap (deg) on how far the rungs may tilt when banking - stops them swinging out.";
+            case "image limit": return "Max rate the IMAGE may correct the horizon (deg/s). Stops a false lock yanking the line.";
+            case "down limit": return "The image is not allowed to push the horizon DOWN past this many px (soft limit).";
+            case "spread": return "How fast the rungs fan apart with tilt (right stick left/right + pitch).";
+            case "camera trust": return "How hard the image horizon pulls the lines overall.";
+            case "throttle": return "Left-stick throttle nudges the horizon up/down (px).";
+            case "roll shift": return "Manual roll offset (deg) if the horizon sits tilted at rest.";
+            case "height shift": return "Manual pitch offset (px) if the horizon sits high/low at rest.";
+            case "bad lift": return "Lift the horizon (deg) when the detector quality/confidence is poor.";
+            case "texture": return "How much the texture cue backs the colour cue in the detector (0 = colour only).";
+            case "pitch accel": return "Expo on the right-stick pitch. Higher = a light push does less, a hard push does more.";
+            case "tilt accel": return "Expo on the right-stick bank. Higher = a light bank does less.";
+            case "fine gain": return "Boosts SMALL right-stick inputs so fine movements move the line more (full push unchanged).";
+            case "stick pitch": return "Direct horizon lift from the right stick Y (px). Negative inverts.";
+            case "stick tilt": return "Direct bank from the right stick X (deg). Negative inverts.";
+            default: return null;
+        }
     }
 
     CheckBox MkChk(Control parent, string text, int cx, int cy, bool val)
