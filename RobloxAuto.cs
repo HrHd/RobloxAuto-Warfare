@@ -6833,6 +6833,35 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // Words that ONLY ever appear on the nav bar, the lobby, the loadout, the map or the panels -
     // NEVER on the drone OSD. Seeing any one of them is proof we are not flying, so the HUD comes
     // down immediately; the 30s timeout only covers the case where the OSD simply reads blank.
+    // The team score bar runs across the very top: a saturated BLUE block on the left and a
+    // saturated RED block on the right of the timer. It is on the soldier view and every menu,
+    // but NOT on the drone OSD - so its presence means we are on foot and the HUD must not show.
+    // Pure pixels, no OCR: fast and reliable even when nothing else is readable.
+    bool ScoreBarOnScreen()
+    {
+        try
+        {
+            int W, H; int[] q = Grab(out W, out H);
+            if (q == null) return false;
+            int y1 = H * 5 / 100;
+            for (int y = 0; y < y1; y++)
+            {
+                int blue = 0, red = 0; int blueX = -1, redX = -1;
+                for (int x = W * 20 / 100; x < W * 80 / 100; x++)
+                {
+                    int v = q[y * W + x];
+                    int r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
+                    if (b >= 110 && b - r >= 40 && b - g >= 25) { blue++; if (blueX < 0) blueX = x; }
+                    else if (r >= 110 && r - b >= 40 && r - g >= 35) { red++; if (redX < 0) redX = x; }
+                }
+                // both bars on the SAME row, blue to the LEFT of red
+                if (blue >= 50 && red >= 50 && blueX >= 0 && redX > blueX) return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
     bool MenuOnScreen() { string why; bool w; return MenuOnScreen(out why, out w); }
 
     bool MenuOnScreen(out string why) { bool w; return MenuOnScreen(out why, out w); }
@@ -6843,6 +6872,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // on screen during flight (a button press pops the map/score board for a moment). A weak-only
         // match must NOT drop the HUD on one read - the caller debounces it.
         weak = false;
+        // The team score bar (blue left | timer | red right) is printed across the top of the
+        // SOLDIER / menu views and never on the drone OSD, so seeing it is decisive proof we are
+        // not flying. This is the "deployed normally and the FPV HUD false-flagged" case - the
+        // saturated blue+red pair is unmistakable and needs no OCR.
+        if (ScoreBarOnScreen()) { why = "saw the team score bar"; weak = false; return true; }
         // Chosen from real OCR of every non-drone screen. DELIBERATELY EXCLUDED because they appear
         // on BOTH a menu and the drone OSD: POINT (map labels vs MAVIC "supply point"), RETURN
         // (TEAM BASE vs MAVIC "Return to a supply point"), BASE (map "Base" vs "TEAM BASE"), and the
