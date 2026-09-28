@@ -4334,7 +4334,7 @@ class RobloxAuto : Form
             // the image's trust SLIDES continuously between 0 (pure stick) and full as the situation
             // changes: sky appears/disappears, the stick moves, the detector gets confident. Nothing
             // pops. The gyro still integrates the stick; this only sets how fast the image pulls it.
-            _hudSkySm += (_hudDetSky - _hudSkySm) * (1f - (float)Math.Pow(0.5, dt / 0.18f)); // ~0.18s ease (snappy)
+            _hudSkySm += (_hudDetSky - _hudSkySm) * (1f - (float)Math.Pow(0.5, dt / 0.12f)); // ~0.12s ease (snappy)
             // Measured on real flights: you see ~20-25% sky most of the time, so full image trust now
             // arrives at ~20% sky (was 40%, which left the image under-powered where you actually fly).
             // Below ~4% sky it hands fully to the stick.
@@ -4343,12 +4343,12 @@ class RobloxAuto : Form
             float gain = _hudImgGain; if (gain < 0f) gain = 0f; if (gain > 4f) gain = 4f;
             // The more SKY is in view the more the image is allowed to pull (up to ~1.45x at full sky) -
             // a clear sky/ground line is trustworthy, so it should win harder there.
-            float imgW = (0.50f + 0.50f * conf) * skyT * (1f - 0.70f * actT) * gain * (0.55f + 0.90f * skyT);
-            float tau = (0.10f + 1.1f * (1f - conf)) / Math.Max(0.02f, imgW);
+            float imgW = (0.50f + 0.50f * conf) * skyT * (1f - 0.60f * actT) * gain * (0.55f + 0.90f * skyT);
+            float tau = (0.08f + 0.9f * (1f - conf)) / Math.Max(0.02f, imgW);
             if (tau > 60f) tau = 60f;                          // no sky -> the image is effectively silent
             // SKY RECAPTURE: the moment the sky is clearly showing again, pull the line back to the true
-            // horizon quickly (smooth but decisive) instead of easing in slowly from the last gyro value.
-            if (skyT > 0.40f && tau > 0.35f) tau = 0.35f;
+            // horizon FAST (smooth but decisive) instead of easing in slowly from the last gyro value.
+            if (skyT > 0.40f && tau > 0.12f) tau = 0.12f;
             float a = 1f - (float)Math.Pow(0.5f, dt / tau);
             _hudFRoll += (_hudDetRoll - _hudFRoll) * a;
             _hudFPitch += (_hudDetPitch - _hudFPitch) * a;
