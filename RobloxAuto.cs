@@ -5794,7 +5794,7 @@ class RobloxAuto : Form
                             // A WEAK-only menu (objective panel / SQUAD box / map) flashes on screen
                             // mid-flight when you press a button, so require several consecutive reads
                             // before dropping the HUD - a transient panel must not kill the overlay.
-                            if (menuEv && menuWeak) needOut = Math.Max(needOut, 4);
+                            if (menuEv && menuWeak) needOut = Math.Max(needOut, 10);   // a map flash must not drop it
                             if (shown && outHits >= needOut)
                             {
                                 shown = false;
@@ -6051,7 +6051,10 @@ class RobloxAuto : Form
                     why = "saw \"" + p + "\""; weak = !strongP; return true;
                 }
         }
-        if (weakWhy != "") { why = weakWhy; weak = true; return true; }   // weak-only match
+        // WEAK-only matches do NOT drop the HUD. They flash in flight (a button press pops the map /
+        // scoreboard / SQUAD box, printing ELIMINATE / DEPLOY / SQUAD) and the overlay must stay up.
+        // A real menu always carries a STRONG tell (CASH / your name / LOADOUT / TEAM BASE / PLAYERS..).
+        if (weakWhy != "") { why = weakWhy; weak = true; }
         return false;
     }
 
