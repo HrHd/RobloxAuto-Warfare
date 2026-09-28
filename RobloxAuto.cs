@@ -165,8 +165,10 @@ class RobloxAuto : Form
     float _hudPitStick = 280f;                      // px - DIRECT horizon offset from the RIGHT stick Y (dial "stick pitch")
                                                     //      push forward = line UP, pull back = line DOWN (signed: set - to invert)
     float _hudPitStickSm = 0f;                      // smoothed stick-pitch offset (glides, never jumps)
+    float _hudRollStick = 25f;                      // DEG - direct bank from the right stick X (dial "stick tilt")
+    float _hudRollStickSm = 0f;                     // smoothed stick-tilt offset
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP;
+    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP;
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
     DateTime _flightStart = DateTime.MinValue;   // when Deploy As Drone happened
@@ -643,6 +645,8 @@ class RobloxAuto : Form
         numThr.ValueChanged += delegate { _hudLeftPx = (float)numThr.Value; SaveCfg(); };
         numPitStick = MkTune(x + 168, y, "stick pitch", (decimal)_hudPitStick, -350m, 350m, 10m, 0);
         numPitStick.ValueChanged += delegate { _hudPitStick = (float)numPitStick.Value; SaveCfg(); };
+        numRollStick = MkTune(x, y, "stick tilt", (decimal)_hudRollStick, -80m, 80m, 5m, 0);
+        numRollStick.ValueChanged += delegate { _hudRollStick = (float)numRollStick.Value; SaveCfg(); };
         y += 32;
 
         var l1 = new Label();
@@ -4331,10 +4335,15 @@ class RobloxAuto : Form
             // changes: sky appears/disappears, the stick moves, the detector gets confident. Nothing
             // pops. The gyro still integrates the stick; this only sets how fast the image pulls it.
             _hudSkySm += (_hudDetSky - _hudSkySm) * (1f - (float)Math.Pow(0.5, dt / 0.35f)); // ~0.35s ease
-            float skyT = Smooth01(_hudSkySm, 0.08f, 0.40f);   // 0 = all ground, 1 = plenty of sky
+            // Measured on real flights: you see ~20-25% sky most of the time, so full image trust now
+            // arrives at ~20% sky (was 40%, which left the image under-powered where you actually fly).
+            // Below ~4% sky it hands fully to the stick.
+            float skyT = Smooth01(_hudSkySm, 0.04f, 0.20f);   // 0 = all ground, 1 = plenty of sky
             float actT = Smooth01(Math.Max(Math.Abs(sx), Math.Abs(sy)), 0.05f, 0.60f); // stick activity
             float gain = _hudImgGain; if (gain < 0f) gain = 0f; if (gain > 4f) gain = 4f;
-            float imgW = (0.50f + 0.50f * conf) * skyT * (1f - 0.70f * actT) * gain;   // a bit more image power
+            // The more SKY is in view the more the image is allowed to pull (up to ~1.45x at full sky) -
+            // a clear sky/ground line is trustworthy, so it should win harder there.
+            float imgW = (0.50f + 0.50f * conf) * skyT * (1f - 0.70f * actT) * gain * (0.55f + 0.90f * skyT);
             float tau = (0.12f + 1.8f * (1f - conf)) / Math.Max(0.02f, imgW);
             if (tau > 60f) tau = 60f;                          // no sky -> the image is effectively silent
             float a = 1f - (float)Math.Pow(0.5f, dt / tau);
@@ -4361,13 +4370,19 @@ class RobloxAuto : Form
         float pv = 1f - (float)Math.Pow(0.5, dt / 0.22f);      // ~0.22s glide
         _hudPitStickSm += (stickPitchTarget - _hudPitStickSm) * pv;
         float stickPitch = _hudPitStickSm;
+        // RIGHT stick X as a DIRECT bank, the same way the pitch gets a direct lift - without it the
+        // roll only had the slow gyro rate, so fine tilt input lagged (why pitch felt right and tilt
+        // did not). Bounded + glided, so holding the stick holds the bank and releasing returns it.
+        float stickRollTarget = -sxS * _hudRollStick;
+        _hudRollStickSm += (stickRollTarget - _hudRollStickSm) * pv;
+        float stickRoll = _hudRollStickSm;
 
         if (_hudFRoll > 180f) _hudFRoll = 180f;
         if (_hudFRoll < -180f) _hudFRoll = -180f;
         if (_hudFPitch > 1600f) _hudFPitch = 1600f;  // lots of travel so the horizon can leave the frame
         if (_hudFPitch < -1600f) _hudFPitch = -1600f; // (pointed at the ground -> it runs off the top)
 
-        _hudRoll = _hudFRoll + _hudRollOff;                 // + manual roll offset (dial)
+        _hudRoll = _hudFRoll + _hudRollOff + stickRoll;     // + manual roll offset + direct stick bank
         _hudPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff;   // + left-stick + right-stick pitch + manual offset
 
         // Simulated FPV pack voltage. It starts at half, rises with throttle (left stick Y up), and
@@ -4964,6 +4979,7 @@ class RobloxAuto : Form
             else if (k == "hudAccPitch") _hudAccPitch = ParseF(v);
             else if (k == "hudAccRoll") _hudAccRoll = ParseF(v);
             else if (k == "hudFineP") _hudFineP = ParseF(v);
+            else if (k == "hudRollStick") _hudRollStick = ParseF(v);
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -5037,6 +5053,7 @@ class RobloxAuto : Form
             "hudAccPitch=" + _hudAccPitch.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAccRoll=" + _hudAccRoll.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudFineP=" + _hudFineP.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudRollStick=" + _hudRollStick.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "uav=" + (_hudStyleUav ? "1" : "0"),
             "night=" + (_nightVision ? "1" : "0"),
             "nightKey=" + _hkNightKey,
@@ -5483,7 +5500,7 @@ class RobloxAuto : Form
             _rfHomeText = "----";
             _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
             _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
-            _hudPitchVel = 0f; _hudRollVel = 0f; _hudPitStickSm = 0f; _hudSkySm = 1f;   // start each flight clean
+            _hudPitchVel = 0f; _hudRollVel = 0f; _hudPitStickSm = 0f; _hudRollStickSm = 0f; _hudSkySm = 1f;   // start each flight clean
             OverlayHub.I.SetFlight(true, 0.18f, 0);
 
             Thread t = new Thread(delegate ()
