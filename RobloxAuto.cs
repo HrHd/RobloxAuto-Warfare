@@ -210,6 +210,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudMRoll = 0f, _hudMPitch = 0f;        // deg, px offset from centre
     float _hudMRollVar = 4f, _hudMPitchVar = 9f;  // measurement variance (deg^2, px^2)
     float _hudMConf = 0f;
+    // Solid-lock memory / HUG: after enough confident locks the horizon is treated as ESTABLISHED
+    // and the line hugs the controller model, resisting noisy frames until a sustained change.
+    int _hudSolid = 0;
+    float _hugSm = 0f;
+    int _hugDisR = 0, _hugDisP = 0, _hugSignR = 0, _hugSignP = 0;
+    bool _hugLogged = false;
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator, numRefDist;
     Button btnReloadRefs;
     NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numStickThr;
@@ -6156,6 +6162,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f;           // reset the weighted average
             _kfSeeded = false; _kfRollV = 0f; _kfPitV = 0f; _kfRollOb = 0f; _kfPitOb = 0f;                 // reset the estimator
             _kfRollGain = 1f; _kfPitGain = 1f; _kfRollP = 25f; _kfPitP = 25f; _kfRollZAt = 0; _kfPitZAt = 0;
+            _hudSolid = 0; _hugSm = 0f; _hugDisR = 0; _hugDisP = 0; _hugSignR = 0; _hugSignP = 0; _hugLogged = false;
             OverlayHub.I.SetFlight(true, 0.18f, 0);
 
             Thread t = new Thread(delegate ()
@@ -7324,6 +7331,44 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (aR > 0.30f) aR = 0.30f;
             if (aP > 0.30f) aP = 0.30f;
 
+            // ---- SOLID-LOCK COUNT + HUG ---------------------------------------------------------
+            // A frame is SOLID when the detector is confident AND sky is genuinely in view. After
+            // ~10 solid frames the horizon counts as ESTABLISHED, and we HUG it: the line then tracks
+            // the CONTROLLER (the integrated stick model) and lets the vision pull only a small
+            // fraction as fast, so it stops chasing every noisy frame. A SUSTAINED disagreement in
+            // one direction is a real move, so that releases the hug and lets it re-lock.
+            bool solidFrame = (_hudMConf >= 0.70f && _hudDetSky >= 0.18f);
+            if (solidFrame) { if (_hudSolid < 40) _hudSolid++; }
+            else if (_hudSolid > 0) _hudSolid -= 4;
+            if (_hudSolid < 0) _hudSolid = 0;
+            float hugT = _hudSolid >= 10 ? 1f : 0f;
+            _hugSm += (hugT - _hugSm) * (1f - (float)Math.Pow(0.5f, dt / 0.4f));
+
+            // The thresholds are DELIBERATELY large: a hug means the estimate lags on purpose (the
+            // pull is 4x slower), so a couple of degrees of innovation is normal and must NOT
+            // release it. Only a big, one-directional divergence - the model genuinely wrong - does.
+            if (_hugSm > 0.30f && Math.Abs(ir) > 10f)
+            {
+                int sgn = ir > 0f ? 1 : -1;
+                if (sgn == _hugSignR) _hugDisR++; else { _hugDisR = 1; _hugSignR = sgn; }
+                if (_hugDisR >= 10) { _hudSolid = 0; _hugSm = 0f; _hugDisR = 0; Log("   horizon: sustained ROLL divergence - releasing the hug"); }
+            }
+            else _hugDisR = 0;
+            if (_hugSm > 0.30f && Math.Abs(HudDegToPx(ip)) > 60f)
+            {
+                int sgn = ip > 0f ? 1 : -1;
+                if (sgn == _hugSignP) _hugDisP++; else { _hugDisP = 1; _hugSignP = sgn; }
+                if (_hugDisP >= 10) { _hudSolid = 0; _hugSm = 0f; _hugDisP = 0; Log("   horizon: sustained PITCH divergence - releasing the hug"); }
+            }
+            else _hugDisP = 0;
+
+            if (_hugSm > 0.5f && !_hugLogged) { _hugLogged = true; Log("   horizon: LOCKED (" + _hudSolid + " solid fixes) - hugging the location"); }
+            if (_hugSm < 0.2f) _hugLogged = false;
+
+            // hug = trust the model; only ~25% of the vision gain gets through
+            float hg = 1f - 0.75f * _hugSm;
+            aR *= hg; aP *= hg;
+
             // Mahalanobis-style gate: reject a frame that jumps further than a real horizon could in
             // one step. Grounded in the measurement noise so a clean lock gets a tighter gate.
             // ... opening up while the state is uncertain (a long coast) so re-locking still works.
@@ -7340,14 +7385,15 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // only from a trusted frame whose residual is already small (a real bias shows up as a
             // consistent little residual). A large residual is a WRONG LOCK - learning it in would
             // bake the mistake in, so it is never learned. Clamped so it can never run away.
-            if (okR && trust > 0.45f && Math.Abs(ir) < 2.5f) { _kfRollOb += 0.010f * ir; }
-            if (okP && trust > 0.45f && Math.Abs(ip) < 2.0f) { _kfPitOb += 0.010f * ip; }
+            float learnK = 1f - 0.85f * _hugSm;    // a locked horizon barely re-learns its offset
+            if (okR && trust > 0.45f && Math.Abs(ir) < 2.5f) { _kfRollOb += 0.010f * ir * learnK; }
+            if (okP && trust > 0.45f && Math.Abs(ip) < 2.0f) { _kfPitOb += 0.010f * ip * learnK; }
             if (_kfRollOb > 6f) _kfRollOb = 6f; if (_kfRollOb < -6f) _kfRollOb = -6f;
             if (_kfPitOb > 6f) _kfPitOb = 6f; if (_kfPitOb < -6f) _kfPitOb = -6f;
 
             // slow gain learning (system ID)
-            if (okR) LearnGain(ref _kfRollGain, ref _kfRollZ, ref _kfRollZAt, zr, -sxS * _hudRollRate, sxS, now, 0.30f, trust);
-            if (okP) LearnGain(ref _kfPitGain, ref _kfPitZ, ref _kfPitZAt, zp, -syS * HudPitchRateDeg(), syS, now, 0.30f, trust);
+            if (okR && _hugSm < 0.6f) LearnGain(ref _kfRollGain, ref _kfRollZ, ref _kfRollZAt, zr, -sxS * _hudRollRate, sxS, now, 0.30f, trust);
+            if (okP && _hugSm < 0.6f) LearnGain(ref _kfPitGain, ref _kfPitZ, ref _kfPitZAt, zp, -syS * HudPitchRateDeg(), syS, now, 0.30f, trust);
         }
 
         // ---- OUTPUT (roll deg, pitch px for the ladder) ----
