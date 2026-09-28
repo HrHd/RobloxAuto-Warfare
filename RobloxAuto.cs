@@ -5373,6 +5373,8 @@ class RobloxAuto : Form
         readonly SolidBrush _mrec = new SolidBrush(Color.FromArgb(230, 226, 32, 32));
         readonly Pen _mgrid = new Pen(Color.FromArgb(58, 255, 255, 255), 1);
         readonly Pen _mthin = new Pen(Color.FromArgb(150, 255, 255, 255), 1);
+        readonly Pen _mrecTrack = new Pen(Color.FromArgb(80, 226, 32, 32), 3);
+        readonly Pen _mrecArc = new Pen(Color.FromArgb(245, 226, 32, 32), 4);
         // The form is recreated on every HUD on/off cycle, so its GDI objects MUST be disposed or
         // they leak (~13 per cycle) - which also ends in OutOfMemory / the red-X screen.
         protected override void Dispose(bool disposing)
@@ -5381,7 +5383,7 @@ class RobloxAuto : Form
             {
                 try { _f.Dispose(); _fb.Dispose(); _fm.Dispose(); _fs.Dispose(); } catch { }
                 try { _g.Dispose(); _gb.Dispose(); _mw.Dispose(); _mdim.Dispose(); _mrec.Dispose(); } catch { }
-                try { _p.Dispose(); _pt.Dispose(); _mgrid.Dispose(); _mthin.Dispose(); } catch { }
+                try { _p.Dispose(); _pt.Dispose(); _mgrid.Dispose(); _mthin.Dispose(); _mrecTrack.Dispose(); _mrecArc.Dispose(); } catch { }
             }
             base.Dispose(disposing);
         }
@@ -5440,6 +5442,8 @@ class RobloxAuto : Form
         // telemetry + exposure along the bottom, and a record button. Clean phone-recording look.
         void DrawMavic(Graphics g, int W, int H)
         {
+          try
+          {
             // These are readonly FIELDS, never per-frame allocations. Creating 6 pens/brushes every
             // paint (50fps) exhausted the GDI handle table within a couple of minutes; WinForms then
             // threw OutOfMemory and painted the red-X-on-white screen. NEVER allocate GDI in OnPaint.
@@ -5497,24 +5501,27 @@ class RobloxAuto : Form
             float rcx = W - 96, rcy = H / 2 - 3;
             float ph = (Environment.TickCount % 2600) / 2600f;         // 0..1 over ~2.6s
             float ease = ph * ph * (3f - 2f * ph);                     // smooth the sweep
-            using (Pen recTrack = new Pen(Color.FromArgb(80, 226, 32, 32), 3))
-            using (Pen recArc = new Pen(Color.FromArgb(245, 226, 32, 32), 4))
-            {
-                recArc.StartCap = recArc.EndCap = System.Drawing.Drawing2D.LineCap.Round;
-                g.DrawEllipse(recTrack, rcx - 30, rcy - 30, 60, 60);                       // track
-                g.DrawArc(recArc, rcx - 30, rcy - 30, 60, 60, -90f, ease * 360f);          // fill
-            }
+            _mrecTrack.StartCap = _mrecTrack.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+            _mrecArc.StartCap = _mrecArc.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+            g.DrawEllipse(_mrecTrack, rcx - 30, rcy - 30, 60, 60);                     // track
+            float sweep = ease * 359.5f;   // NOT 360: DrawArc with a full-circle sweep throws in GDI+
+            if (sweep > 0.5f) g.DrawArc(_mrecArc, rcx - 30, rcy - 30, 60, 60, -90f, sweep);   // fill
             float dotR = 18f - 8f * ease;                              // the dot TIGHTENS in
             g.FillEllipse(recB, rcx - dotR, rcy - dotR, dotR * 2, dotR * 2);
             g.DrawString("REC", _fs, white, W - 128, H / 2 - 58);
+          }
+          catch { }   // a draw error must never bubble up - WinForms turns that into the red-X screen
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
+          try
+          {
             Graphics g = e.Graphics;
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             int W = Width, H = Height, cx = W / 2, cy = H / 2;
             float rad = Roll * (float)Math.PI / 180f;
+            if (float.IsNaN(rad) || float.IsInfinity(rad)) rad = 0f;   // never draw with NaN (GDI+ throws)
 
             if (Uav) { DrawMavic(g, W, H); base.OnPaint(e); return; }   // DJI-Fly style
 
@@ -5581,6 +5588,8 @@ class RobloxAuto : Form
             DrawLadder(g, W, cy, true, Spd);                       // speed on the left
             DrawLadder(g, W, cy, false, Alt != "" ? Alt : Agl);    // ALT on the right
             // no centre HOME, no fly timer / style text - the game already prints those
+          }
+          catch { }   // a paint error must never bubble up - WinForms turns that into the red-X screen
             base.OnPaint(e);
         }
 
