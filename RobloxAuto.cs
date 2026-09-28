@@ -2024,11 +2024,12 @@ class RobloxAuto : Form
         if (!GoOn(g)) return;
         if (!warheadOk)
         {
-            // Wrong bombs / wrong loadout - do NOT deploy. Back out to the LOADOUT screen so the
-            // drone + warhead can be re-selected, then stop this run.
-            Log("7) wrong loadout (" + _bomb + " not equipped) - returning to LOADOUT, not deploying");
-            AddBlackError("0x13", "payload mismatch - aborting to loadout");
-            ClickPhraseVerified("LOADOUT", g);
+            // Wrong bombs / loadout: press the red Return to close the panel, WAIT for the LOADOUT
+            // screen to come back, then open LOADOUT so the drone + payload can be re-picked. The AUTO
+            // loop then re-runs the (resume-aware) flow and continues from the loadout screen.
+            Log("7) wrong loadout (" + _bomb + " not equipped) - backing out with Return, then LOADOUT");
+            AddBlackError("0x13", "payload mismatch - re-planning loadout");
+            BackOutToLoadout(g);
             HideBlack();
             return;
         }
@@ -2543,6 +2544,26 @@ class RobloxAuto : Form
 
     // The TEAM BASE / map panels have a red "Return" button. When the flow cannot find what it
     // expects, pressing it backs out of the panel instead of leaving the run stuck.
+    // Wrong loadout: return out of the panel, wait for the LOADOUT screen, open it so the drone +
+    // payload can be re-picked. A second is NOT enough for the loadout screen to actually load, so we
+    // wait for the LOADOUT tab to appear and then give it another moment before clicking it.
+    void BackOutToLoadout(int g)
+    {
+        try
+        {
+            Log("   backing out with Return, then opening LOADOUT to fix the loadout");
+            ClickRedReturn();
+            Thread.Sleep(400);
+            int spent = 0;
+            while (Alive(g) && spent < 5000 && !PhraseOnScreen("LOADOUT"))
+            { InvalidateOcr(); Thread.Sleep(200); spent += 200; }
+            Thread.Sleep(1000);                 // let the loadout screen finish loading
+            ClickPhraseVerified("LOADOUT", g);
+            Thread.Sleep(600);
+        }
+        catch { }
+    }
+
     bool ClickRedReturn()
     {
         try
@@ -4323,6 +4344,11 @@ class RobloxAuto : Form
         //  * the game's own FLIGHT mm:ss clock (top-left) - only exists in the drone view
         //  * the top-right RC LIVE / LINK LIVE badge
         // Any one of them means we are in a drone. The loadout / menus have neither.
+        // A MENU is never a drone view. Our own name (printed on every menu) and PLAYERS are menu-only
+        // tells, so if either is on screen refuse immediately - even if some OSD-ish word also matched.
+        // That stops the HUD false-flagging on the profile strip / team-select / map panels.
+        string menuWhy;
+        if (MenuOnScreen(out menuWhy)) { _detDbg = "menu on screen: " + menuWhy; return false; }
         bool flight = ReadFlightSecs() >= 0;
         bool linked = !flight && CornerLinked();
         // White OSD text over a bright/hazy sky is low-contrast and the OCR often drops the FLY
