@@ -222,6 +222,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     bool _refGood = true;                 // last frame's nearest-reference label
     // Raw robust measurement from the detector (BEFORE smoothing) - what the estimator consumes.
     float _hudMRoll = 0f, _hudMPitch = 0f;        // deg, px offset from centre
+    float _hudAxisW = 1f;                          // dial "axis weight": influence of the sky/ground colour axis cue
     float _hudMRollVar = 4f, _hudMPitchVar = 9f;  // measurement variance (deg^2, px^2)
     float _hudMConf = 0f;
     // Solid-lock memory / HUG: after enough confident locks the horizon is treated as ESTABLISHED
@@ -230,7 +231,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hugSm = 0f;
     int _hugDisR = 0, _hugDisP = 0, _hugSignR = 0, _hugSignP = 0;
     bool _hugLogged = false;
-    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator, numRefDist;
+    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator, numRefDist, numAxisW;
     Button btnReloadRefs, btnCapRef;
     NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numStickThr;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
@@ -963,6 +964,13 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         numRefDist = MkTune(x + 168, y, "ref match", (decimal)(_refDist * 100f), 2m, 60m, 1m, 0);
         numManeuver.ValueChanged += delegate { _hudManeuver = (float)numManeuver.Value; SaveCfg(); };
         numRefDist.ValueChanged += delegate { _refDist = (float)numRefDist.Value / 100f; SaveCfg(); };
+        y += 28;
+
+        // INFLUENCE of the new sky/ground COLOUR-AXIS math (per-frame luminance-vs-blueness cue).
+        // 0 = ignore the axis entirely (old behaviour: gradient + texture only), 1 = the tuned
+        // default, higher = it pulls the lock harder toward "sky above / ground below".
+        numAxisW = MkTune(x, y, "axis weight", (decimal)_hudAxisW, 0m, 3m, 0.1m, 1);
+        numAxisW.ValueChanged += delegate { _hudAxisW = (float)numAxisW.Value; SaveCfg(); };
         y += 28;
 
         // reload the reference photos ("base photos") without restarting
@@ -5804,6 +5812,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudFov") _hudFovY = ParseF(v);
             else if (k == "hudManeuver") _hudManeuver = ParseF(v);
             else if (k == "hudRef") _refDist = ParseF(v) / 100f;
+            else if (k == "hudAxisW") _hudAxisW = ParseF(v);
             else if (k == "hudSettleMs") { _hudSettleMs = (int)ParseF(v); if (_hudSettleMs < 0) _hudSettleMs = 0; if (_hudSettleMs > 60000) _hudSettleMs = 60000; }
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
@@ -5887,6 +5896,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudFov=" + _hudFovY.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudManeuver=" + _hudManeuver.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRef=" + (_refDist * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudAxisW=" + _hudAxisW.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSettleMs=" + _hudSettleMs,
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -7842,7 +7852,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 // brightness-gradient horizon slips there. Brightness only managed 60%. So B-R is the
                 // dependable sky/ground axis and is used both in the per-column score and the onset.
                 float[] im_bR = new float[gw * gh];
-                float _blueW = 1.0f;
+                float _blueW = _hudAxisW;   // dial "axis weight" - how hard the sky/ground colour axis pulls the score
                 for (int gy = 0; gy < gh; gy++)
                     for (int gx = 0; gx < gw; gx++)
                     {
