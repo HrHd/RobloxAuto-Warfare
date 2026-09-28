@@ -1874,6 +1874,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _lastRejoin = DateTime.Now;
         }
 
+        // RECONNECT COOLDOWN - for the next 20s do NOT look for a drone view. The reconnect relaunches
+        // the game, and the leftover menus / loading text / tail of the old drone view were being
+        // read as a drone, popping the HUD up in the middle of a reconnect where it makes no sense.
+        // The HUD can still be started by the flow (Deploy As Drone) - this only silences the SCAN.
+        _hudCooldownUntil = unchecked(Environment.TickCount + 20000);
+        StopRfWatch();
+        Log("   reconnect: HUD detect paused for 20s");
+
         FindServer();   // always re-read, so we rejoin the server we are on right now
         if (_placeId == "" || _serverId == "") { Log("rejoin: no server found yet"); return; }
 
@@ -4744,6 +4752,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // drone view when the user opts in, i.e. they picked a drone by hand. Otherwise the
             // scan false-flagged on random UI text and popped the HUD up out of nowhere.
             if (!_hudAutoDetect) return;
+            // RECONNECT COOLDOWN: just relaunched, nothing here is a drone yet. Wrap-safe compare.
+            if (unchecked(Environment.TickCount - _hudCooldownUntil) < 0) return;
             if (!RobloxFocused()) return;    // tabbed away - do not read another app's screen
             bool dv = DroneViewOnScreen();
             if (dv)
@@ -4767,6 +4777,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
     volatile bool _lastDroneDet = false;
     long _lastDetLog = 0;
+    int _hudCooldownUntil = 0;   // no drone-view scan until this TickCount (set on reconnect)
     string _detDbg = "";
     bool DroneViewOnScreen()
     {
