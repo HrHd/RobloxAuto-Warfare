@@ -1,4 +1,4 @@
-// RobloxAuto.cs - one window for the Warfare loop.
+﻿// RobloxAuto.cs - one window for the Warfare loop.
 //
 //   REJOIN      rejoin the last server (deep link), auto-reconnect, OCR loading watch
 //   AUTO RUN    wait for load -> team -> drone -> DEPLOY -> Base -> Deploy As Drone
@@ -15,6 +15,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
@@ -456,6 +457,159 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             {"s delay","s ritardo"},{"Show LAND NOW, hold","Mostra LAND NOW, attendi"},{"s before reconnect","s prima di riconnettere"} } }
     };
 
+    // ---- EXTERNAL TRANSLATIONS: lang.json (UTF-8) next to the exe ----
+    // Easy translation: edit "lang.json", press the reload button - no recompile, no encoding pain.
+    // Shape: { "Espanol": { "HUD TUNING": "AJUSTE DEL HUD", "pitch speed": "vel. cabeceo", ... } }
+    // Any key the file does not cover falls back to English, so a language can be filled gradually.
+    static string LangFile() { return Path.Combine(Application.StartupPath, "lang.json"); }
+
+    static string EscJson(string s)
+    {
+        StringBuilder b = new StringBuilder();
+        foreach (char c in s)
+        {
+            if (c == '"' || c == '\\') { b.Append('\\').Append(c); }
+            else if (c == '\n') b.Append("\\n");
+            else if (c == '\r') b.Append("\\r");
+            else if (c == '\t') b.Append("\\t");
+            else b.Append(c);
+        }
+        return b.ToString();
+    }
+
+    static void LoadLangFile()
+    {
+        try
+        {
+            string f = LangFile();
+            if (!File.Exists(f)) { WriteLangTemplate(); return; }
+            Dictionary<string, object> root = JsonObj.Parse(File.ReadAllText(f, System.Text.Encoding.UTF8));
+            foreach (KeyValuePair<string, object> kv in root)
+            {
+                Dictionary<string, object> inner = kv.Value as Dictionary<string, object>;
+                if (inner == null) continue;
+                if (!LANG.ContainsKey(kv.Key)) LANG[kv.Key] = new Dictionary<string, string>();
+                foreach (KeyValuePair<string, object> e in inner)
+                {
+                    string v = e.Value as string;
+                    if (v != null && v.Length > 0) LANG[kv.Key][e.Key] = v;
+                }
+            }
+        }
+        catch { }
+    }
+
+    // First run: write a template with EVERY UI string as the key and the built-in translation (if any)
+    // as the value, for every language, so translating is just filling in blanks.
+    static void WriteLangTemplate()
+    {
+        try
+        {
+            SortedSet<string> eng = new SortedSet<string>();
+            foreach (KeyValuePair<Control, string> kv in _enText) if (!string.IsNullOrEmpty(kv.Value)) eng.Add(kv.Value);
+            List<string> langs = new List<string>(LANG.Keys);
+            StringBuilder sb = new StringBuilder();
+            sb.Append("{\n");
+            for (int li = 0; li < langs.Count; li++)
+            {
+                string lang = langs[li];
+                Dictionary<string, string> d = LANG[lang];
+                sb.Append("  \"").Append(EscJson(lang)).Append("\": {\n");
+                List<string> allKeys = new List<string>(eng);
+                foreach (string k in d.Keys) if (!eng.Contains(k)) allKeys.Add(k);
+                allKeys.Sort(StringComparer.Ordinal);
+                for (int i = 0; i < allKeys.Count; i++)
+                {
+                    string k = allKeys[i], v;
+                    if (!d.TryGetValue(k, out v)) v = "";
+                    sb.Append("    \"").Append(EscJson(k)).Append("\": \"").Append(EscJson(v)).Append("\"");
+                    sb.Append(i + 1 < allKeys.Count ? ",\n" : "\n");
+                }
+                sb.Append("  }").Append(li + 1 < langs.Count ? ",\n" : "\n");
+            }
+            sb.Append("}\n");
+            File.WriteAllText(LangFile(), sb.ToString(), new System.Text.UTF8Encoding(true));
+        }
+        catch { }
+    }
+
+    void ReloadLangs()
+    {
+        try
+        {
+            LoadLangFile();
+            if (cmbLang != null)
+            {
+                string sel = cmbLang.SelectedItem == null ? _lang : cmbLang.SelectedItem.ToString();
+                cmbLang.Items.Clear();
+                foreach (string k in LANG.Keys) cmbLang.Items.Add(k);
+                cmbLang.SelectedItem = LANG.ContainsKey(sel) ? sel : "English";
+            }
+            ApplyLanguage();
+        }
+        catch { }
+    }
+
+    // Tiny JSON reader (object of objects of strings) - enough for lang.json, no external deps.
+    static class JsonObj
+    {
+        public static Dictionary<string, object> Parse(string s)
+        {
+            int i = 0;
+            object o = Val(s, ref i);
+            Dictionary<string, object> d = o as Dictionary<string, object>;
+            return d ?? new Dictionary<string, object>();
+        }
+        static object Val(string s, ref int i)
+        {
+            Skip(s, ref i);
+            if (i >= s.Length) return null;
+            if (s[i] == '{') return Obj(s, ref i);
+            if (s[i] == '"') return Str(s, ref i);
+            return null;
+        }
+        static Dictionary<string, object> Obj(string s, ref int i)
+        {
+            Dictionary<string, object> d = new Dictionary<string, object>();
+            i++;                                             // {
+            while (i < s.Length)
+            {
+                Skip(s, ref i);
+                if (i >= s.Length) break;
+                if (s[i] == '}') { i++; break; }
+                if (s[i] == ',') { i++; continue; }
+                if (s[i] != '"') { i++; continue; }
+                string k = Str(s, ref i);
+                Skip(s, ref i);
+                if (i < s.Length && s[i] == ':') i++;
+                d[k] = Val(s, ref i);
+            }
+            return d;
+        }
+        static string Str(string s, ref int i)
+        {
+            StringBuilder b = new StringBuilder();
+            i++;                                             // opening quote
+            while (i < s.Length && s[i] != '"')
+            {
+                char c = s[i++];
+                if (c == '\\' && i < s.Length)
+                {
+                    char e = s[i++];
+                    if (e == 'n') b.Append('\n');
+                    else if (e == 't') b.Append('\t');
+                    else if (e == 'r') b.Append('\r');
+                    else if (e == 'u' && i + 4 <= s.Length) { b.Append((char)Convert.ToInt32(s.Substring(i, 4), 16)); i += 4; }
+                    else b.Append(e);
+                }
+                else b.Append(c);
+            }
+            if (i < s.Length && s[i] == '"') i++;
+            return b.ToString();
+        }
+        static void Skip(string s, ref int i) { while (i < s.Length && char.IsWhiteSpace(s[i])) i++; }
+    }
+
     // language picker, pinned to the top-right of the panel
     void AddLangCombo()
     {
@@ -470,11 +624,25 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         };
         Controls.Add(cmbLang);
         cmbLang.BringToFront();
+
+        // reload lang.json without restarting (edit the file, click this)
+        Button btnLang = new Button();
+        btnLang.Text = "reload";
+        btnLang.Font = new Font("Segoe UI", 7F, FontStyle.Regular);
+        btnLang.FlatStyle = FlatStyle.Flat;
+        btnLang.ForeColor = Color.Gainsboro;
+        btnLang.BackColor = Color.FromArgb(40, 44, 52);
+        btnLang.SetBounds(ClientSize.Width - 50, 8, 44, 24);
+        btnLang.Click += delegate { ReloadLangs(); };
+        Controls.Add(btnLang);
+        btnLang.BringToFront();
     }
 
     void CaptureEnglish(Control c)
     {
-        if (!string.IsNullOrEmpty(c.Text)) _enText[c] = c.Text;
+        // only TEXT-BEARING controls - a NumericUpDown/TextBox/ComboBox "text" is a VALUE, not a caption
+        if (!(c is NumericUpDown) && !(c is TextBox) && !(c is ComboBox) && !string.IsNullOrEmpty(c.Text))
+            _enText[c] = c.Text;
         foreach (Control ch in c.Controls) CaptureEnglish(ch);
     }
 
@@ -508,8 +676,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
         LoadCfg();
         BuildUi();
+        CaptureEnglish(this);      // record the English caption of every control
+        LoadLangFile();            // then overlay lang.json (or write a template if it is missing)
         AddLangCombo();
-        CaptureEnglish(this);
         ApplyLanguage();
         FindServer();
         TopMost = _topMost;
