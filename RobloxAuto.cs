@@ -8614,6 +8614,66 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float skyFrac = detSky >= 0f ? detSky : (slope * (W / 2f) + icept) / H;
             if (skyFrac < 0f) skyFrac = 0f; if (skyFrac > 1f) skyFrac = 1f;
             _hudDetSky = skyFrac;
+            // ---- TOPMOST-SKY CONSTRAINT (runs for BOTH paths) ---------------------------------------
+            // THE "it sat on the road / green line" BUG. The line must sit at the FIRST place the view
+            // leaves the sky, not at some strong edge further down (a road, a field boundary, a wall).
+            // Walking down from the top, find where each column first stops matching the frame's own
+            // sky reference; the MEDIAN of those rows is the real horizon height. If the fit is sitting
+            // well below it, pull the line up to it (keeping the slope). The existing anchor only ran
+            // on the global path - this frame went down the fallback, which had no such check.
+            if (gOk)
+            {
+                float sLy = axUseLum ? (0.299f * sr + 0.587f * sg + 0.114f * sb) : ((float)sb - (float)sr);
+                double gs = 0; int gc = 0;
+                for (int y = H * 86 / 100; y < H * 95 / 100; y += 4)
+                    for (int x = W / 10; x < W * 9 / 10; x += 10)
+                    {
+                        int c = px[y * W + x];
+                        gs += axUseLum
+                            ? 0.299 * ((c >> 16) & 0xFF) + 0.587 * ((c >> 8) & 0xFF) + 0.114 * (c & 0xFF)
+                            : (c & 0xFF) - ((c >> 16) & 0xFF);
+                        gc++;
+                    }
+                float gLy = gc > 0 ? (float)(gs / gc) : 0f;
+                float dly = Math.Abs(gLy - sLy);
+                if (dly > 10f)
+                {
+                    int onN = 0; float[] onY = new float[W / 12 + 4];
+                    for (int x = W / 10; x < W * 9 / 10; x += 12)
+                    {
+                        for (int y = H / 14; y < H * 82 / 100 - 6; y += 2)
+                        {
+                            int c = px[y * W + x];
+                            float l = axUseLum
+                                ? 0.299f * ((c >> 16) & 0xFF) + 0.587f * ((c >> 8) & 0xFF) + 0.114f * (c & 0xFF)
+                                : (c & 0xFF) - ((c >> 16) & 0xFF);
+                            if (Math.Abs(l - sLy) > 0.30f * dly)
+                            {
+                                int q = px[(y + 4) * W + x];
+                                float l2 = axUseLum
+                                    ? 0.299f * ((q >> 16) & 0xFF) + 0.587f * ((q >> 8) & 0xFF) + 0.114f * (q & 0xFF)
+                                    : (q & 0xFF) - ((q >> 16) & 0xFF);
+                                if (Math.Abs(l2 - sLy) > 0.27f * dly) { if (onN < onY.Length) onY[onN++] = y; }
+                                break;
+                            }
+                        }
+                    }
+                    if (onN >= 25)
+                    {
+                        Array.Sort(onY, 0, onN);
+                        float med = onY[onN / 2];
+                        float cy = slope * (W / 2f) + icept;
+                        if (cy > med + 30f)          // the fit is BELOW the sky onset -> pull it up
+                        {
+                            icept = med - slope * (W / 2f);
+                            float hf4 = (slope * (W / 2f) + icept) / H;
+                            if (hf4 < 0f) hf4 = 0f; if (hf4 > 1f) hf4 = 1f;
+                            detSky = hf4;
+                            onsetAnchored = true;
+                        }
+                    }
+                }
+            }
             // GROUND-AS-HORIZON GATE (dial "sky flat"): the band above the line was busy, so what
             // looked like a horizon is really a boundary inside the ground. Throw the frame away.
             if (noSky)
