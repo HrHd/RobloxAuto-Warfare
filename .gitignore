@@ -13,3 +13,7 @@ obj/
 
 # local joystick->xinput bridge (keep off GitHub)
 Joystick2XInput/
+
+error.log
+auto.log
+*.log
