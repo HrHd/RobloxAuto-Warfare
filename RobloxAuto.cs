@@ -5376,8 +5376,8 @@ class RobloxAuto : Form
             // artificial horizon + pitch ladder. Each rung is ROTATED by the roll so it stays PARALLEL
             // TO THE REAL HORIZON (tilted like the ground line), like a gyro/instrument horizon. Pitch
             // slides the whole ladder up/down.
-            float tilt = Math.Min(1f, Math.Abs(PitchPx) / 900f + Math.Abs(Roll) / 250f);   // tilt fans the ladder less so it stays put
-            float spread = 1f + 0.7f * tilt;
+            float tilt = Math.Min(1f, Math.Abs(PitchPx) / 900f + Math.Abs(Roll) / 180f);
+            float spread = 1f + 1.1f * tilt;
             // Rungs follow the bank ("rung tilt"), but the angle is CAPPED at "max tilt" so they can
             // never swing way out. The SAME capped angle drives the staircase, so the rungs stay level
             // with the slide instead of fighting it.
@@ -5397,7 +5397,7 @@ class RobloxAuto : Form
                     ? new Pen(Color.FromArgb(aMain, 255, 255, 255), 2)
                     : new Pen(Color.FromArgb(aThin, 230, 230, 230), 1);
                 float ay = cy + yy;
-                float cxx = cx - (float)Math.Tan(rt) * yy * Shear;   // rail offset = the STAIRCASE (same capped angle)
+                float cxx = cx - (float)Math.Tan(rad) * yy * Shear;   // rail offset = the STAIRCASE (full bank)
                 PointF a = new PointF(cxx - half * dxr, ay - half * dyr);
                 PointF b = new PointF(cxx + half * dxr, ay + half * dyr);
                 g.DrawLine(pen, a, b);

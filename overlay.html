@@ -204,8 +204,8 @@ function drawHud(s, glitching) {
   var dpp = (typeof s.dpp === 'number' && s.dpp > 0) ? s.dpp : 8;
   var shear = (typeof s.shear === 'number') ? s.shear : 1;
   var lscale = (typeof s.len === 'number' && s.len > 0) ? s.len : 1;
-  var tilt = Math.min(1, Math.abs(s.pit || 0) / 900 + Math.abs(s.roll || 0) / 250);
-  var spread = 1 + 0.7 * tilt;
+  var tilt = Math.min(1, Math.abs(s.pit || 0) / 900 + Math.abs(s.roll || 0) / 180);
+  var spread = 1 + 1.1 * tilt;
   var rt = rad * (typeof s.rungTilt === 'number' ? s.rungTilt : 1);
   var maxR = (typeof s.maxTilt === 'number' ? s.maxTilt : 30) * Math.PI / 180;   // cap the tilt
   if (rt > maxR) rt = maxR; if (rt < -maxR) rt = -maxR;
@@ -217,7 +217,7 @@ function drawHud(s, glitching) {
     if (af <= 0.02) continue;
     var half = (d === 0 ? 150 : 70) * sc * lscale * (1 + 0.4 * tilt);
     var ay = cy + yy;
-    var cxx = cx - Math.tan(rt) * yy * shear;      // rail offset: the STAIRCASE (same capped angle)
+    var cxx = cx - Math.tan(rad) * yy * shear;     // rail offset: the STAIRCASE (full bank)
     hctx.globalAlpha = af;
     hctx.strokeStyle = d === 0 ? col : thin;
     hctx.lineWidth = (d === 0 ? 2 : 1) * sc;
