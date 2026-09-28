@@ -111,7 +111,8 @@ class RobloxAuto : Form
     float _hudRoll = 0f, _hudRollTarget = 0f;     // horizon bank, degrees (eased)
     float _hudPitch = 0f, _hudPitchTarget = 0f;   // horizon vertical offset, px (eased)
     float _hudDetRoll = 0f, _hudDetPitch = 0f;    // what DetectHorizon last measured (image-based)
-    float _hudSmRoll = 0f, _hudSmPitch = 0f;      // smoothed across measurements
+    float _hudSmRoll = 0f, _hudSmPitch = 0f;      // smoothed across measurements (confidence-weighted)
+    float _hudW = 0f, _hudSRoll = 0f, _hudSPitch = 0f;   // weighted-average accumulators (weight = confidence)
     bool _hudSmSeeded = false;
     float _padLx = 0f, _padLy = 0f, _padRx = 0f, _padRy = 0f;   // sticks, -1..1, dead-zoned
     float _hudLockRoll = 0f, _hudLockPitch = 0f;  // base horizon (image-derived, corrected over time)
@@ -158,6 +159,8 @@ class RobloxAuto : Form
                                                     // poor (dial "bad lift") - a weak lock lands low, so
                                                     // we raise it back toward where it belongs
     float _hudSpreadAccel = 0f;                     // expo on how the ladder fan builds up (dial "spread accel")
+    float _hudClutter = 0f;                          // 0..1 detected clutter (trees/structures) around the horizon
+    float _hudTreeDrop = 3f;                         // DEG to push the horizon DOWN when clutter is high (dial "tree drop")
     float _hudSpreadAmt = 2.2f;                      // how fast the ladder FANS OUT with tilt (dial "spread")
     float _hudDownLim = 60f;                         // px - soft limit: image cannot push the line DOWN past this (dial "down limit")
     float _hudImgRate = 150f;                        // deg/s - max rate the IMAGE may correct (dial "image limit")
@@ -174,7 +177,7 @@ class RobloxAuto : Form
     float _hudRollStick = 25f;                      // DEG - direct bank from the right stick X (dial "stick tilt")
     float _hudRollStickSm = 0f;                     // smoothed stick-tilt offset
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel;
+    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
@@ -638,6 +641,8 @@ class RobloxAuto : Form
 
         numSpreadAccel = MkTune(x, y, "spread accel", (decimal)_hudSpreadAccel, 0m, 1m, 0.05m, 2);
         numSpreadAccel.ValueChanged += delegate { _hudSpreadAccel = (float)numSpreadAccel.Value; SaveCfg(); };
+        numTreeDrop = MkTune(x + 168, y, "tree drop", (decimal)_hudTreeDrop, -20m, 20m, 1m, 0);
+        numTreeDrop.ValueChanged += delegate { _hudTreeDrop = (float)numTreeDrop.Value; SaveCfg(); };
         y += 28;
 
         numImg = MkTune(x, y, "camera trust", (decimal)_hudImgGain, 0m, 4m, 0.1m, 1);
@@ -4519,7 +4524,9 @@ class RobloxAuto : Form
         if (_hudFPitch < -1600f) _hudFPitch = -1600f; // (pointed at the ground -> it runs off the top)
 
         _hudRoll = _hudFRoll + _hudRollOff + stickRoll;     // + manual roll offset + direct stick bank
-        _hudPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff;   // + left-stick + right-stick pitch + manual offset
+        // low-quality LIFT (up) and clutter DROP (down) - both in px, off the dials
+        float treeDrop = _hudClutter * _hudTreeDrop * _hudDpp;   // trees/structures -> push the line DOWN
+        _hudPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff - badLift + treeDrop;
 
         // Simulated FPV pack voltage. It starts at half, rises with throttle (left stick Y up), and
         // a spring + ripple gives the sag/bounce of a real pack under load. 4S range 13.2V..16.8V.
@@ -5111,6 +5118,7 @@ class RobloxAuto : Form
             else if (k == "hudDownLim") _hudDownLim = ParseF(v);
             else if (k == "hudSpread") _hudSpreadAmt = ParseF(v);
             else if (k == "hudSpreadAccel") _hudSpreadAccel = ParseF(v);
+            else if (k == "hudTreeDrop") _hudTreeDrop = ParseF(v);
             else if (k == "hudImg") _hudImgGain = ParseF(v);
             else if (k == "hudRollOff") _hudRollOff = ParseF(v);
             else if (k == "hudPitOff") _hudPitOff = ParseF(v);
@@ -5192,6 +5200,7 @@ class RobloxAuto : Form
             "hudDownLim=" + _hudDownLim.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSpread=" + _hudSpreadAmt.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSpreadAccel=" + _hudSpreadAccel.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudTreeDrop=" + _hudTreeDrop.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -5696,6 +5705,7 @@ class RobloxAuto : Form
             _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
             _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
             _hudPitchVel = 0f; _hudRollVel = 0f; _hudPitStickSm = 0f; _hudRollStickSm = 0f; _hudSkySm = 1f;   // start each flight clean
+            _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f;            // reset the weighted average
             OverlayHub.I.SetFlight(true, 0.18f, 0);
 
             Thread t = new Thread(delegate ()
@@ -6766,6 +6776,17 @@ class RobloxAuto : Form
                         // which silently disabled the image entirely (the "no influence" bug).
                         float texConf = Smooth01(bT - aT, 0f, 10f);
                         detSky = hf * (0.6f + 0.4f * texConf);
+                        // CLUTTER meter: mean local texture of the blocks around the line. Trees / structures
+                        // make it high, and a clutter-heavy scene drags the lock UP onto the canopy - the
+                        // caller drops the horizon in proportion (dial "tree drop").
+                        float clSum = 0f; int clN = 0;
+                        for (int gx = gx0; gx < gx1; gx++)
+                        {
+                            int yb = (int)((fm * (gx * B + B / 2f) + fb) / B);
+                            if (yb - 2 < 0 || yb + 2 >= gh) continue;
+                            for (int k = -2; k <= 2; k++) { clSum += imT[(yb + k) * gw + gx]; clN++; }
+                        }
+                        _hudClutter = clN > 0 ? Smooth01(clSum / clN, 3f, 22f) : 0f;
                     }
                 }
             }
@@ -7024,11 +7045,25 @@ class RobloxAuto : Form
             if (pitch > plim) pitch = plim; if (pitch < -plim) pitch = -plim;
             // smooth across measurements - now that we measure ~10x/s the smoothing can track fast
             // (it used to be 0.55/0.45 at ~3/s, which felt laggy); seeded on the first good fix
-            if (!_hudSmSeeded) { _hudSmRoll = roll; _hudSmPitch = pitch; _hudSmSeeded = true; }
+            // CONFIDENCE-WEIGHTED AVERAGE (the "probability pushes into the queue" idea). Each
+            // measurement is pushed into a decaying weighted mean, weighted by how confident the
+            // detector was. A high-probability frame - a clean sky/ground line - pulls the estimate
+            // hard; a low-probability frame (trees, clutter, haze) barely moves it. So the guess is
+            // dominated by the GOOD frames instead of every frame counting the same.
+            float mw = conf;                                    // 0.05..1 weight of this frame
+            if (!_hudSmSeeded)
+            {
+                _hudSmSeeded = true;
+                _hudSmRoll = roll; _hudSmPitch = pitch;
+                _hudW = mw; _hudSRoll = mw * roll; _hudSPitch = mw * pitch;
+            }
             else
             {
-                _hudSmRoll = _hudSmRoll * 0.30f + roll * 0.70f;
-                _hudSmPitch = _hudSmPitch * 0.30f + pitch * 0.70f;
+                float decay = 0.75f;                            // ~4-frame memory
+                _hudW = _hudW * decay + mw;
+                _hudSRoll = _hudSRoll * decay + mw * roll;
+                _hudSPitch = _hudSPitch * decay + mw * pitch;
+                if (_hudW > 1e-4f) { _hudSmRoll = _hudSRoll / _hudW; _hudSmPitch = _hudSPitch / _hudW; }
             }
             _hudDetRoll = _hudSmRoll;
             _hudDetPitch = _hudSmPitch;
@@ -7045,7 +7080,7 @@ class RobloxAuto : Form
             if (Environment.TickCount - _hudLogAt >= 2000)
             {
                 _hudLogAt = Environment.TickCount;
-                Log("horizon det: " + (gOk ? "global" : n + " pts") + ", roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px, sky " + (_hudDetSky * 100f).ToString("0") + "% trust " + (_hudDetConf * 100f).ToString("0") + "%");
+                Log("horizon det: " + (gOk ? "global" : n + " pts") + ", roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px, sky " + (_hudDetSky * 100f).ToString("0") + "% trust " + (_hudDetConf * 100f).ToString("0") + "% clutter " + (_hudClutter * 100f).ToString("0") + "%");
             }
         }
         catch { }
