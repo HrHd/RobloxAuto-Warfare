@@ -19,7 +19,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 
-class RobloxAuto : Form
+class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 {
     // ================= config =================
     string _appDir, _cfgPath;
@@ -649,7 +649,7 @@ class RobloxAuto : Form
 
         numMinSpread = MkTune(x, y, "min colour", (decimal)_hudMinSpread, 0m, 40m, 1m, 0);
         numMinSpread.ValueChanged += delegate { _hudMinSpread = (float)numMinSpread.Value; SaveCfg(); };
-        numStickThr = MkTune(x + 168, y, "stick override", (decimal)_hudStickThr, 5m, 100m, 5m, 0);
+        numStickThr = MkTune(x + 168, y, "override %", (decimal)_hudStickThr, 5m, 100m, 5m, 0);
         numStickThr.ValueChanged += delegate { _hudStickThr = (float)numStickThr.Value; SaveCfg(); };
         y += 28;
 
@@ -1394,6 +1394,44 @@ class RobloxAuto : Form
         float.TryParse(s, System.Globalization.NumberStyles.Float,
             System.Globalization.CultureInfo.InvariantCulture, out f);
         return f;
+    }
+
+    // A tuning spinner that NEVER changes on a plain wheel scroll (that was the accidental-change
+    // bug) and only steps by a FINE amount when CTRL+wheel is used.
+    class TuneNum : NumericUpDown
+    {
+        public decimal Fine = 1m;
+        protected override void OnMouseWheel(MouseEventArgs e) { /* never change on a bare wheel */ }
+        public void WheelStep(int delta)
+        {
+            decimal v = Value + (delta > 0 ? Fine : -Fine);
+            if (v < Minimum) v = Minimum; if (v > Maximum) v = Maximum;
+            Value = v;
+        }
+    }
+
+    // Route the wheel ourselves so CTRL+wheel works while HOVERING a dial (WinForms only sends the
+    // wheel to the focused control). Plain wheel over a dial is swallowed - no more accidental edits.
+    public bool PreFilterMessage(ref Message m)
+    {
+        const int WM_MOUSEWHEEL = 0x020A;
+        if (m.Msg != WM_MOUSEWHEEL) return false;
+        Point sp = Cursor.Position;
+        foreach (Control c in Controls)
+        {
+            TuneNum tn = c as TuneNum;
+            if (tn == null) continue;
+            if (!tn.RectangleToScreen(tn.ClientRectangle).Contains(sp)) continue;
+            if ((ModifierKeys & Keys.Control) != 0)
+                tn.WheelStep((short)((long)m.WParam >> 16));
+            return true;   // swallow either way - a bare wheel over a dial must do nothing
+        }
+        return false;
+    }
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        try { Application.AddMessageFilter(this); } catch { }
     }
 
     // caption + numeric spinner for a HUD tuning dial
