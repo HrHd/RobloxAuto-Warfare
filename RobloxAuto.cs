@@ -179,7 +179,27 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudPitStickSm = 0f;                      // smoothed stick-pitch offset (glides, never jumps)
     float _hudRollStick = 25f;                      // DEG - direct bank from the right stick X (dial "stick tilt")
     float _hudRollStickSm = 0f;                     // smoothed stick-tilt offset
-    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
+    // ---- HORIZON ESTIMATOR ------------------------------------------------------------------
+    // The old fusion smoothed the horizon in PIXELS with a fixed decay average. Pixels are not
+    // linear in angle (px = f*tan(theta)), so that average is biased once the line leaves centre,
+    // and a decay average cannot coast. This runs a small per-axis ALPHA-BETA filter on the
+    // ANGLE, with the stick as a control input, plus (a) a Mahalanobis outlier gate, (b) a learned
+    // constant offset, and (c) a learned stick->rate gain (system ID against the image). With no
+    // usable frame it COASTS on the last rate - exactly "hold where the horizon would be".
+    bool _hudEstimator = true;            // dial "estimator": 1 = alpha-beta estimator, 0 = legacy
+    float _hudFovY = 70f;                 // vertical FOV, degrees (dial "fov") - the camera model
+    float _hudManeuver = 40f;             // deg^2/s the attitude uncertainty grows (dial "maneuver")
+    int _hudFrameH = 1080;                // frame height the detector saw (camera model)
+    float _kfRollX = 0f, _kfRollV = 0f, _kfRollOb = 0f, _kfRollGain = 1f;
+    float _kfPitX = 0f, _kfPitV = 0f, _kfPitOb = 0f, _kfPitGain = 1f;
+    float _kfRollZ = 0f, _kfPitZ = 0f; long _kfRollZAt = 0, _kfPitZAt = 0;
+    float _kfRollP = 25f, _kfPitP = 25f;  // state variance (deg^2) - drives the Kalman gains
+    bool _kfSeeded = false;
+    // Raw robust measurement from the detector (BEFORE smoothing) - what the estimator consumes.
+    float _hudMRoll = 0f, _hudMPitch = 0f;        // deg, px offset from centre
+    float _hudMRollVar = 4f, _hudMPitchVar = 9f;  // measurement variance (deg^2, px^2)
+    float _hudMConf = 0f;
+    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator;
     NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numStickThr;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
@@ -897,6 +917,18 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
         numRollStick = MkTune(x, y, "stick tilt", (decimal)_hudRollStick, -80m, 80m, 5m, 0);
         numRollStick.ValueChanged += delegate { _hudRollStick = (float)numRollStick.Value; SaveCfg(); };
+        y += 28;
+
+        // estimator: 1 = the alpha-beta/Kalman fusion in ANGLE space, 0 = the legacy px filter.
+        // fov = the game's vertical FOV (the camera model); maneuver = how fast the horizon may swing.
+        numEstimator = MkTune(x, y, "estimator", (decimal)(_hudEstimator ? 1 : 0), 0m, 1m, 1m, 0);
+        numFov = MkTune(x + 168, y, "fov", (decimal)_hudFovY, 40m, 120m, 1m, 0);
+        numEstimator.ValueChanged += delegate { _hudEstimator = numEstimator.Value >= 0.5m; _kfSeeded = false; SaveCfg(); };
+        numFov.ValueChanged += delegate { _hudFovY = (float)numFov.Value; SaveCfg(); };
+        y += 28;
+
+        numManeuver = MkTune(x, y, "maneuver", (decimal)_hudManeuver, 1m, 400m, 1m, 0);
+        numManeuver.ValueChanged += delegate { _hudManeuver = (float)numManeuver.Value; SaveCfg(); };
         y += 32;
 
         var l1 = new Label();
@@ -4735,6 +4767,20 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // Tilt: NO fine-gain boost (it made the bank accelerate in as you pushed) - just the expo dial,
         // so the roll stays a steady acro rate and HOLDS the bank when you centre.
         float sxS = Shape(sx, _hudAccRoll);
+        bool det = _hudDetValid && (now - _hudDetAt) < 2000;
+        float badLift = 0f;
+
+        // Smoothed sky coverage - drives the image trust in BOTH fusions (never pops).
+        if (det) _hudSkySm += (_hudDetSky - _hudSkySm) * (1f - (float)Math.Pow(0.5, dt / 0.12f)); // ~0.12s ease
+
+        if (_hudEstimator)
+        {
+            // ---- PROPER FUSION: scalar Kalman/alpha-beta per axis, in ANGLE space (see HudFuse) ----
+            // Stick = control input, vision = measurement, coast when the vision drops out.
+            HudFuse(dt, sxS, syS, now);
+        }
+        else
+        {
         float vTargetRoll = -sxS * _hudRollRate;    // deg/s (bank RATE)
         float vTargetPitch = -syS * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
         float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
@@ -4746,8 +4792,6 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // ACCEL = the image horizon: slow, but ABSOLUTE. Cross-reference the gyro against it, pulling
         // harder the more confident the detector is. Stops drift and settles the lines flat when the
         // camera is genuinely level - without self-levelling a real bank (the image sees the bank too).
-        bool det = _hudDetValid && (now - _hudDetAt) < 2000;
-        float badLift = 0f;
         if (det)
         {
             float conf = _hudDetConf; if (conf < 0.05f) conf = 0.05f; if (conf > 1f) conf = 1f;
@@ -4755,7 +4799,6 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // the image's trust SLIDES continuously between 0 (pure stick) and full as the situation
             // changes: sky appears/disappears, the stick moves, the detector gets confident. Nothing
             // pops. The gyro still integrates the stick; this only sets how fast the image pulls it.
-            _hudSkySm += (_hudDetSky - _hudSkySm) * (1f - (float)Math.Pow(0.5, dt / 0.12f)); // ~0.12s ease (snappy)
             // Measured on real flights: you see ~20-25% sky most of the time, so full image trust now
             // arrives at ~20% sky (was 40%, which left the image under-powered where you actually fly).
             // Below ~4% sky it hands fully to the stick.
@@ -4798,6 +4841,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // as the ladder), scaled by how bad the confidence is, so poor-quality frames sit where they
             // should instead of dragging low.
             badLift = (1f - conf) * _hudBadLift * _hudDpp;
+        }
         }
 
         // The LEFT stick (throttle) is a small, BOUNDED proportional nudge, NOT integrated. Adding
@@ -5439,6 +5483,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudFineP") _hudFineP = ParseF(v);
             else if (k == "hudRollStick") _hudRollStick = ParseF(v);
             else if (k == "hudCap") _hudCapturable = v == "1";
+            else if (k == "hudEstimator") _hudEstimator = v != "0";
+            else if (k == "hudFov") _hudFovY = ParseF(v);
+            else if (k == "hudManeuver") _hudManeuver = ParseF(v);
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -5517,6 +5564,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudTreeDrop=" + _hudTreeDrop.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudMinSpread=" + _hudMinSpread.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudStickThr=" + _hudStickThr.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudEstimator=" + (_hudEstimator ? "1" : "0"),
+            "hudFov=" + _hudFovY.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudManeuver=" + _hudManeuver.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -6021,7 +6071,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
             _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
             _hudPitchVel = 0f; _hudRollVel = 0f; _hudPitStickSm = 0f; _hudRollStickSm = 0f; _hudSkySm = 1f;   // start each flight clean
-            _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f;            // reset the weighted average
+            _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f;           // reset the weighted average
+            _kfSeeded = false; _kfRollV = 0f; _kfPitV = 0f; _kfRollOb = 0f; _kfPitOb = 0f;                 // reset the estimator
+            _kfRollGain = 1f; _kfPitGain = 1f; _kfRollP = 25f; _kfPitP = 25f; _kfRollZAt = 0; _kfPitZAt = 0;
             OverlayHub.I.SetFlight(true, 0.18f, 0);
 
             Thread t = new Thread(delegate ()
@@ -6887,11 +6939,239 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // boundary) in the upper frame, then fit a line with RANSAC instead of plain least squares -
     // trees, buildings and the HUD markers are outliers, and least squares let them drag the line
     // off. RANSAC finds the line the majority of columns agree on, which is the actual horizon.
+    // ============= HORIZON MATH: camera model, robust fit, alpha-beta estimator =============
+
+    // Pinhole camera model. The focal length in pixels follows from the vertical FOV, and that is
+    // what makes the pitch PHYSICAL: a horizon `px` from the optical axis sits at a real angle
+    // atan(px/f), not at a linearly-scaled px. Everything the estimator does lives in this space.
+    float HudFocalPx()
+    {
+        float h = _hudFrameH > 0 ? _hudFrameH : 1080f;
+        double t = Math.Tan(_hudFovY * Math.PI / 360.0);   // tan(FOV/2)
+        if (t < 0.05) t = 0.05;
+        return (float)(h / 2.0 / t);
+    }
+    float HudPxToDeg(float px) { float f = HudFocalPx(); return (float)(Math.Atan(px / f) * 180.0 / Math.PI); }
+    float HudDegToPx(float deg) { float f = HudFocalPx(); return (float)(f * Math.Tan(deg * Math.PI / 180.0)); }
+    // The "stick pitch" dial is px/s at the CENTRE; as an angular rate (what the game actually
+    // commands) that is this many deg/s.
+    float HudPitchRateDeg() { float f = HudFocalPx(); return _hudPitchRate / f * 57.29578f; }
+
+    // Robust horizon-line fit. RANSAC consensus first (so a tree line, a road or a smoke plume
+    // cannot drag the fit), then TOTAL LEAST SQUARES (PCA principal axis) on the inliers refined
+    // with a Huber IRLS. TLS - not y-on-x least squares - because the transition points carry x
+    // error too, and y-on-x is badly biased once the line tilts. Returns the residual spread so
+    // the estimator can weight the frame.
+    bool FitLineRobust(float[] xs, float[] ys, float[] ws, int n,
+                       out float slope, out float icept, out float sigma, out int inl)
+    {
+        slope = 0f; icept = 0f; sigma = 6f; inl = 0;
+        if (n < 6) return false;
+
+        // --- RANSAC -------------------------------------------------------------
+        float bm = 0f, bb = 0f; int best = -1;
+        int iters = n * 6; if (iters > 360) iters = 360; if (iters < 60) iters = 60;
+        Random rng = new Random(unchecked(n * 397 ^ Environment.TickCount));
+        for (int it = 0; it < iters; it++)
+        {
+            int i1 = rng.Next(n), i2 = rng.Next(n);
+            if (i1 == i2) continue;
+            float dx = xs[i2] - xs[i1];
+            if (Math.Abs(dx) < 60f) continue;
+            float m = (ys[i2] - ys[i1]) / dx;
+            if (Math.Abs(m) > 1.2f) continue;
+            float b = ys[i1] - m * xs[i1];
+            int cnt = 0;
+            for (int i = 0; i < n; i++) if (Math.Abs(ys[i] - (m * xs[i] + b)) < 6f) cnt++;
+            if (cnt > best) { best = cnt; bm = m; bb = b; }
+        }
+        if (best < n * 3 / 5 || best < 4) return false;
+        inl = best;
+        sigma = 2.5f;
+
+        // --- TLS / PCA on the consensus set, refined with Huber IRLS ------------
+        float c = 3f;
+        for (int pass = 0; pass < 3; pass++)
+        {
+            // weighted centroid, with the robust weight computed from the LAST residuals
+            double sw = 0, mx = 0, my = 0;
+            for (int i = 0; i < n; i++)
+            {
+                float r = ys[i] - (bm * xs[i] + bb);
+                if (Math.Abs(r) > 8f) continue;
+                float w = (ws[i] + 0.1f) / (1f + (r / c) * (r / c));
+                sw += w; mx += w * xs[i]; my += w * ys[i];
+            }
+            if (sw <= 0) break;
+            mx /= sw; my /= sw;
+            double sxx = 0, sxy = 0, syy = 0;
+            for (int i = 0; i < n; i++)
+            {
+                float r = ys[i] - (bm * xs[i] + bb);
+                if (Math.Abs(r) > 8f) continue;
+                float w = (ws[i] + 0.1f) / (1f + (r / c) * (r / c));
+                double dx = xs[i] - mx, dy = ys[i] - my;
+                sxx += w * dx * dx; sxy += w * dx * dy; syy += w * dy * dy;
+            }
+            double th = 0.5 * Math.Atan2(2.0 * sxy, sxx - syy);   // principal axis direction
+            double m2 = Math.Tan(th);
+            if (Math.Abs(m2) > 1.2) break;
+            bm = (float)m2; bb = (float)(my - bm * mx);
+            // residual spread of the inliers -> the measurement noise the filter will use
+            double sw2 = 0, ss = 0;
+            for (int i = 0; i < n; i++)
+            {
+                float r = ys[i] - (bm * xs[i] + bb);
+                if (Math.Abs(r) > 8f) continue;
+                float w = ws[i] + 0.1f;
+                sw2 += w; ss += w * r * r;
+            }
+            if (sw2 <= 0) continue;
+            sigma = (float)Math.Sqrt(ss / sw2);
+            c = sigma * 1.5f;
+            if (c < 1.5f) c = 1.5f;
+        }
+        if (Math.Abs(bm) > 1.2f) return false;
+        slope = bm; icept = bb;
+        return true;
+    }
+
+    // System ID. Compare the rate the IMAGE shows with the rate the stick COMMANDED, and nudge the
+    // gain toward it. Guarded hard: only while the stick is clearly commanding, ratio sanity-gated,
+    // and clamped - so a single bad frame can never wind the gain away.
+    void LearnGain(ref float gain, ref float lastZ, ref long lastAt, float z,
+                   float cmdRate, float stick, long now, float minStick)
+    {
+        try
+        {
+            if (Math.Abs(stick) < minStick) { lastZ = z; lastAt = now; return; }
+            if (lastAt != 0)
+            {
+                float dtZ = (now - lastAt) / 1000f;
+                if (dtZ > 0.03f && dtZ < 0.7f)
+                {
+                    float measRate = (z - lastZ) / dtZ;
+                    if (Math.Abs(cmdRate) > 4f)
+                    {
+                        float ratio = measRate / cmdRate;
+                        if (ratio > 0.25f && ratio < 4f)
+                        {
+                            gain += 0.06f * (ratio - gain);
+                            if (gain < 0.4f) gain = 0.4f;
+                            if (gain > 2.5f) gain = 2.5f;
+                        }
+                    }
+                }
+            }
+            lastZ = z; lastAt = now;
+        }
+        catch { }
+    }
+
+    // One estimator step (runs at the HUD rate). The game is RATE controlled, so the stick is a
+    // CONTROL input (its own dial value becomes deg/s), not a display offset. The vision is a
+    // measurement of the true attitude. A scalar Kalman/alpha-beta per axis fuses them:
+    //   predict:  x += v*dt ;  P += Q*dt          (Q grows -> coasting uncertainty)
+    //   update:   alpha = P/(P+R) ; beta = a^2/(2-a)   (R = the fit's variance / trust)
+    //   gate:     reject if |innovation| > 3*sqrt(P+R)   (Mahalanobis)
+    // With no usable frame it simply coasts at the last rate, which is exactly "hold where the
+    // horizon would be". Two slow learners ride along: the constant offset (the detector's bias)
+    // and the stick->rate gain (system ID).
+    void HudFuse(float dt, float sxS, float syS, long now)
+    {
+        if (dt <= 0f) return;
+        float f = HudFocalPx();
+
+        if (!_kfSeeded)
+        {
+            _kfSeeded = true;
+            _kfRollX = _hudFRoll;
+            _kfPitX = (float)(Math.Atan(_hudFPitch / f) * 180.0 / Math.PI);
+            _kfRollV = 0f; _kfPitV = 0f;
+            _kfRollOb = 0f; _kfPitOb = 0f;
+            _kfRollP = 25f; _kfPitP = 25f;
+        }
+
+        // ---- PREDICT (control model) ----
+        float rollCmd = -sxS * _hudRollRate * _kfRollGain;          // deg/s
+        float pitCmd = -syS * HudPitchRateDeg() * _kfPitGain;       // deg/s
+        float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);    // the stick->rate lag
+        _kfRollV += (rollCmd - _kfRollV) * av;
+        _kfPitV += (pitCmd - _kfPitV) * av;
+        _kfRollX += _kfRollV * dt;
+        _kfPitX += _kfPitV * dt;
+        _kfRollP += _hudManeuver * dt;      // uncertainty grows; faster while coasting
+        _kfPitP += _hudManeuver * dt;
+        // Cap the growth: an unbounded P would make the gain (and the gate) run away after a long
+        // blackout and a single frame could then yank the velocity state. 900 keeps the gate sane.
+        if (_kfRollP > 900f) _kfRollP = 900f;
+        if (_kfPitP > 900f) _kfPitP = 900f;
+
+        // ---- UPDATE (vision), when a fresh line is available ----
+        bool det = _hudDetValid && (now - _hudDetAt) < 2000;
+        if (det)
+        {
+            float zr = _hudMRoll - _kfRollOb;                       // offset learned away
+            while (zr - _kfRollX > 180f) zr -= 360f;                // unwrap (roll is periodic)
+            while (zr - _kfRollX < -180f) zr += 360f;
+            float zp = HudPxToDeg(_hudMPitch) - _kfPitOb;
+            float ir = zr - _kfRollX;
+            float ip = zp - _kfPitX;
+
+            // trust: confident frame, sky in view, and the stick NOT yanking (anti-false-flag)
+            float skyT = Smooth01(_hudSkySm, 0.04f, 0.20f);
+            float actT = Smooth01(Math.Max(Math.Abs(sxS), Math.Abs(syS)), 0.15f, 0.30f);
+            float trust = (0.55f + 0.45f * _hudMConf) * (0.40f + 0.60f * skyT) * (1f - 0.60f * actT);
+            if (trust < 0.03f) trust = 0.03f;
+
+            float Rr = _hudMRollVar / trust;                        // deg^2
+            float Rp = _hudMPitchVar * 3282.8f / (f * f) / trust;   // px^2 -> deg^2
+            if (Rr < 0.02f) Rr = 0.02f;
+            if (Rp < 0.02f) Rp = 0.02f;
+
+            float aR = _kfRollP / (_kfRollP + Rr);
+            float aP = _kfPitP / (_kfPitP + Rp);
+            // BOUNDED gain. The vision is only allowed to NUDGE the attitude; it must never slam it.
+            // An unbounded Kalman gain was exactly what made the ladder whip around: with a noisy
+            // pixel measurement and a small dt the alpha-beta BETA term differentiates the noise and
+            // drives the RATE state wild (+-100 deg/s spikes). So the RATE state is driven by the
+            // stick model only (plus the slow system-ID learner below) - the vision corrects POSITION.
+            if (aR > 0.60f) aR = 0.60f;
+            if (aP > 0.60f) aP = 0.60f;
+
+            // Mahalanobis-style gate: reject a frame that jumps further than a real horizon could in
+            // one step. Grounded in the measurement noise so a clean lock gets a tighter gate.
+            // ... opening up while the state is uncertain (a long coast) so re-locking still works.
+            float gR = 4f * (float)Math.Sqrt(Rr) + (float)Math.Sqrt(_kfRollP); if (gR < 10f) gR = 10f;
+            float gP = 4f * (float)Math.Sqrt(Rp) + (float)Math.Sqrt(_kfPitP); if (gP < 6f) gP = 6f;
+            bool okR = Math.Abs(ir) <= gR;
+            bool okP = Math.Abs(ip) <= gP;
+
+            if (okR) { _kfRollX += aR * ir; _kfRollP = (1f - aR) * _kfRollP; }
+            if (okP) { _kfPitX += aP * ip; _kfPitP = (1f - aP) * _kfPitP; }
+
+            // slow offset learning (the detector's constant bias; replaces the manual fudge)
+            if (okR) _kfRollOb += 0.02f * ir;
+            if (okP) _kfPitOb += 0.02f * ip;
+
+            // slow gain learning (system ID)
+            if (okR) LearnGain(ref _kfRollGain, ref _kfRollZ, ref _kfRollZAt, zr, -sxS * _hudRollRate, sxS, now, 0.30f);
+            if (okP) LearnGain(ref _kfPitGain, ref _kfPitZ, ref _kfPitZAt, zp, -syS * HudPitchRateDeg(), syS, now, 0.30f);
+        }
+
+        // ---- OUTPUT (roll deg, pitch px for the ladder) ----
+        if (_kfRollX > 180f) _kfRollX -= 360f;
+        if (_kfRollX < -180f) _kfRollX += 360f;
+        _hudFRoll = _kfRollX;
+        _hudFPitch = HudDegToPx(_kfPitX);
+    }
+
     void DetectHorizon()
     {
         try
         {
             int W, H; int[] px = Grab(out W, out H);
+            _hudFrameH = H;
             int yTop = H / 12, yBot = H * 80 / 100;
 
             // Sky reference = mean colour of the TOP BAND of the current frame. Sampling it per
@@ -6935,6 +7215,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float[] pxs = new float[maxPts], pys = new float[maxPts];
             int n = 0;
             bool gOk = false; float slope = 0f, icept = 0f; float conf = 0f; float detSky = -1f;
+            float frameSig = 3f; int frameN = 40;    // robust fit spread / inlier count (for the estimator)
 
             // --- PRIMARY: BLURRED sky/ground transition (the "blur then find the medium in the centre"
             // idea). Block-averaging the frame is a heavy blur that erases local detail - trees, roads,
@@ -6978,7 +7259,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     }
                 int gx0 = gw * 20 / 100, gx1 = gw * 80 / 100, gy0 = gh * 8 / 100, gy1 = gh * 88 / 100;
                 float[] bx2 = new float[gw], by2 = new float[gw], bg2 = new float[gw];
-                float[] chRoll = new float[3], chY = new float[3], chGrad = new float[3]; int cn = 0;
+                float[] chRoll = new float[3], chY = new float[3], chGrad = new float[3], chSig = new float[3];
+                int[] chN = new int[3];
+                int cn = 0;
                 float bestGrad = 0f;
                 for (int ch = 0; ch < 3; ch++)
                 {
@@ -7043,40 +7326,57 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         pn++;
                     }
                     if (pn < 12) continue;
-                    float fm = 0f, fb = 0f;
-                    for (int pass = 0; pass < 2; pass++)     // gradient-WEIGHTED fit, then outlier refit
-                    {
-                        double sw = 0, swx = 0, swy = 0, swxy = 0, swxx = 0;
-                        for (int i = 0; i < pn; i++)
-                        {
-                            if (pass == 1 && Math.Abs(by2[i] - (fm * bx2[i] + fb)) > 24f) continue;
-                            double w = bg2[i] + 0.1f;        // strong columns pull the fit
-                            sw += w; swx += w * bx2[i]; swy += w * by2[i];
-                            swxy += w * bx2[i] * by2[i]; swxx += w * bx2[i] * bx2[i];
-                        }
-                        double den = sw * swxx - swx * swx;
-                        if (sw < 4 || Math.Abs(den) < 1) break;
-                        fm = (float)((sw * swxy - swx * swy) / den);
-                        fb = (float)((swy - fm * swx) / sw);
-                    }
-                    if (Math.Abs(fm) > 1.0f) continue;
+                    // ROBUST fit (RANSAC + TLS/PCA + Huber IRLS) instead of a plain weighted LS:
+                    // a localized strong edge (tree line, road, plume) cannot drag the consensus,
+                    // and the fit also hands us its residual spread to weight the measurement.
+                    float fm, fb, fsig; int finl;
+                    if (!FitLineRobust(bx2, by2, bg2, pn, out fm, out fb, out fsig, out finl)) continue;
                     float gsum = 0f, wsum = 0f;
                     for (int i = 0; i < pn; i++) if (Math.Abs(by2[i] - (fm * bx2[i] + fb)) <= 24f) { gsum += bg2[i] * bg2[i]; wsum += bg2[i]; }
                     float gm = wsum > 0 ? gsum / wsum : 0f;
                     chRoll[cn] = (float)(Math.Atan(fm) * 180.0 / Math.PI);
                     chY[cn] = fm * (W / 2f) + fb;
                     chGrad[cn] = gm;
+                    chSig[cn] = fsig;
+                    chN[cn] = finl > 0 ? finl : pn;
                     if (gm > bestGrad) bestGrad = gm;
                     cn++;
                 }
                 if (cn > 0)
                 {
-                    // MEDIAN across the channels - a channel that latched onto the wrong edge cannot
-                    // drag the answer, and the roll/y come from the middle of R/G/B.
-                    float[] rr = new float[cn]; Array.Copy(chRoll, rr, cn); Array.Sort(rr);
-                    float[] yy2 = new float[cn]; Array.Copy(chY, yy2, cn); Array.Sort(yy2);
-                    float medRoll = rr[cn / 2];
-                    float medY = yy2[cn / 2];
+                    // COMBINE the R/G/B channel fits. When they AGREE (the normal case - all three see
+                    // the same edge) take the inverse-variance WEIGHTED MEAN: the optimal estimate,
+                    // more accurate than the median. Only when they DISAGREE does one channel risk
+                    // being wrong, so fall back to the robust median.
+                    float spread = 0f;
+                    for (int i = 0; i < cn; i++)
+                        for (int j = i + 1; j < cn; j++) { float d = Math.Abs(chY[i] - chY[j]); if (d > spread) spread = d; }
+                    float medRoll, medY, medSig; int medN;
+                    if (cn >= 2 && spread <= 6f)
+                    {
+                        double wsum = 0, wy = 0, wr = 0; double sv = 0; int sNw = 0;
+                        for (int i = 0; i < cn; i++)
+                        {
+                            float sGw = chSig[i] > 0.5f ? chSig[i] : 0.5f;
+                            double w = 1.0 / (sGw * sGw);
+                            wsum += w; wy += w * chY[i]; wr += w * chRoll[i];
+                            sv += sGw * chN[i]; sNw += chN[i];
+                        }
+                        medY = (float)(wy / wsum);
+                        medRoll = (float)(wr / wsum);
+                        medSig = sNw > 0 ? (float)(sv / sNw) : 3f;
+                        medN = sNw > 0 ? sNw : 40;
+                    }
+                    else
+                    {
+                        float[] rr = new float[cn]; Array.Copy(chRoll, rr, cn); Array.Sort(rr);
+                        float[] yy2 = new float[cn]; Array.Copy(chY, yy2, cn); Array.Sort(yy2);
+                        medRoll = rr[cn / 2];
+                        medY = yy2[cn / 2];
+                        medSig = chSig[0] > 0.5f ? chSig[0] : 3f;
+                        medN = chN[0] > 0 ? chN[0] : 40;
+                    }
+                    frameSig = medSig; frameN = medN;
                     float fm = (float)Math.Tan(medRoll * Math.PI / 180.0);
                     float fb = medY - fm * (W / 2f);
                     // Require a real sky/ground step across the line (mostly-one-colour -> no lock), and
@@ -7408,6 +7708,18 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _hudDetRoll = _hudSmRoll;
             _hudDetPitch = _hudSmPitch;
             _hudDetConf = conf;
+            // RAW robust measurement for the ESTIMATOR (captured BEFORE any smoothing). The pitch is
+            // the un-biased offset from the optical axis - the estimator learns its own offset, so
+            // the manual bias is deliberately NOT folded in here.
+            _hudMRoll = roll;
+            _hudMPitch = (slope * (W / 2f) + icept) - H / 2f;
+            _hudMConf = conf;
+            {
+                float sig = frameSig > 0.5f ? frameSig : 3f;
+                _hudMPitchVar = sig * sig * 4f / Math.Max(1, frameN) + 1f;      // px^2
+                float rsd = sig / (0.30f * W) * 57.29578f;                      // slope err -> degrees
+                _hudMRollVar = rsd * rsd + 0.05f;                               // deg^2
+            }
             // Sky fraction trusted for the gyro/image blend. Prefer the TEXTURE-verified value from the
             // primary lock (which zeroes out when the "horizon" is really just a terrain edge, so the
             // controller takes over); fall back to the plain height fraction if the primary path did not run.
