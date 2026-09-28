@@ -6744,10 +6744,14 @@ class RobloxAuto : Form
             if (conf < 0.05f) conf = 0.05f; if (conf > 1f) conf = 1f;
 
             float roll = (float)(Math.Atan(slope) * 180.0 / Math.PI);
-            if (roll > 45f) roll = 45f; if (roll < -45f) roll = -45f;
+            if (roll > 80f) roll = 80f; if (roll < -80f) roll = -80f;   // was +-45, which capped steep banks
             float pitch = (slope * (W / 2f) + icept) - H / 2f;
             pitch += _hudBias;   // tunable downward bias (dial "bias px")
-            if (pitch > H / 4f) pitch = H / 4f; if (pitch < -H / 4f) pitch = -H / 4f;
+            // Allow nearly the whole frame - a +-H/4 clamp meant the IMAGE TARGET could never sit more
+            // than ~270px from centre, so when the horizon was high (sky view) the line crept part-way
+            // and stalled instead of reaching it. This is the "moves very slowly" bug.
+            float plim = H * 0.95f;
+            if (pitch > plim) pitch = plim; if (pitch < -plim) pitch = -plim;
             // smooth across measurements - now that we measure ~10x/s the smoothing can track fast
             // (it used to be 0.55/0.45 at ~3/s, which felt laggy); seeded on the first good fix
             if (!_hudSmSeeded) { _hudSmRoll = roll; _hudSmPitch = pitch; _hudSmSeeded = true; }
