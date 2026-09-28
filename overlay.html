@@ -262,7 +262,7 @@ function drawHud(s, glitching) {
     hctx.strokeStyle = col; hctx.lineWidth = 2 * sc;
     hctx.strokeRect(bx, by, bw, bh);
     hctx.fillStyle = col; hctx.fillRect(bx + bw / 2 - 4 * sc, by - 4 * sc, 8 * sc, 4 * sc);   // nub
-    var frac = (volts - 12.0) / 8.0; if (frac < 0.06) frac = 0.06; if (frac > 1) frac = 1;
+    var frac = (volts - 12.0) / 4.8; if (frac < 0.06) frac = 0.06; if (frac > 1) frac = 1;
     var inner = bh - 6 * sc, fh = inner * frac;
     hctx.fillStyle = frac <= 0.16 ? 'rgba(235,60,60,0.95)' : col;
     hctx.fillRect(bx + 3 * sc, by + 3 * sc + (inner - fh), bw - 6 * sc, fh);
