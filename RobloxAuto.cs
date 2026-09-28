@@ -157,6 +157,7 @@ class RobloxAuto : Form
     float _hudBadLift = 5f;                         // DEGREES to lift the horizon when detector quality is
                                                     // poor (dial "bad lift") - a weak lock lands low, so
                                                     // we raise it back toward where it belongs
+    float _hudDownLim = 60f;                         // px - soft limit: image cannot push the line DOWN past this (dial "down limit")
     float _hudImgRate = 150f;                        // deg/s - max rate the IMAGE may correct (dial "image limit")
     float _hudTexW = 1f;                            // how hard the TEXTURE cue (smooth sky / busy ground)
                                                     // backs the colour cue (dial "texture"); 0 = off
@@ -171,7 +172,7 @@ class RobloxAuto : Form
     float _hudRollStick = 25f;                      // DEG - direct bank from the right stick X (dial "stick tilt")
     float _hudRollStickSm = 0f;                     // smoothed stick-tilt offset
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate;
+    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
@@ -623,6 +624,8 @@ class RobloxAuto : Form
         numMaxTilt.ValueChanged += delegate { _hudMaxTilt = (float)numMaxTilt.Value; SaveCfg(); };
         numImgRate = MkTune(x + 168, y, "image limit", (decimal)_hudImgRate, 0m, 600m, 10m, 0);
         numImgRate.ValueChanged += delegate { _hudImgRate = (float)numImgRate.Value; SaveCfg(); };
+        numDownLim = MkTune(x, y, "down limit", (decimal)_hudDownLim, 0m, 800m, 20m, 0);
+        numDownLim.ValueChanged += delegate { _hudDownLim = (float)numDownLim.Value; SaveCfg(); };
         y += 28;
 
         numImg = MkTune(x, y, "camera trust", (decimal)_hudImgGain, 0m, 4m, 0.1m, 1);
@@ -4362,8 +4365,13 @@ class RobloxAuto : Form
             // horizon FAST (smooth but decisive) instead of easing in slowly from the last gyro value.
             if (skyT > 0.40f && tau > 0.12f) tau = 0.12f;
             float a = 1f - (float)Math.Pow(0.5f, dt / tau);
+            // SOFT DOWN LIMIT: we never pull up toward the sky, so the image is not allowed to drive
+            // the horizon DOWN past this many px. Past the limit the pull is heavily compressed (a soft
+            // spring, not a hard wall), so a low/sky false-lock can only nudge it a little.
+            float tgtP = _hudDetPitch;
+            if (tgtP > _hudDownLim) tgtP = _hudDownLim + (tgtP - _hudDownLim) * 0.15f;
             float dR = (_hudDetRoll - _hudFRoll) * a;
-            float dP = (_hudDetPitch - _hudFPitch) * a;
+            float dP = (tgtP - _hudFPitch) * a;
             // ANTI-FALSE-FLAG LIMIT: the image may only move the fused attitude so fast, and only as
             // hard as the stick was ACTUALLY moving. A sudden bogus lock therefore cannot yank the
             // lines - it just nudges, unless the controller genuinely moved there.
@@ -4997,6 +5005,7 @@ class RobloxAuto : Form
             else if (k == "hudRungTilt") _hudRungTilt = ParseF(v);
             else if (k == "hudMaxTilt") _hudMaxTilt = ParseF(v);
             else if (k == "hudImgRate") _hudImgRate = ParseF(v);
+            else if (k == "hudDownLim") _hudDownLim = ParseF(v);
             else if (k == "hudImg") _hudImgGain = ParseF(v);
             else if (k == "hudRollOff") _hudRollOff = ParseF(v);
             else if (k == "hudPitOff") _hudPitOff = ParseF(v);
@@ -5075,6 +5084,7 @@ class RobloxAuto : Form
             "hudRungTilt=" + _hudRungTilt.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudMaxTilt=" + _hudMaxTilt.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudImgRate=" + _hudImgRate.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudDownLim=" + _hudDownLim.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
