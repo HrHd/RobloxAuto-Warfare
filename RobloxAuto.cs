@@ -5357,6 +5357,11 @@ class RobloxAuto : Form
         readonly SolidBrush _gb = new SolidBrush(Color.FromArgb(205, 0, 0, 0));
         readonly Pen _p = new Pen(Color.FromArgb(230, 255, 255, 255), 2);
         readonly Pen _pt = new Pen(Color.FromArgb(165, 230, 230, 230), 1);
+        readonly SolidBrush _mw = new SolidBrush(Color.FromArgb(238, 255, 255, 255));   // MAVIC (allocated ONCE)
+        readonly SolidBrush _mdim = new SolidBrush(Color.FromArgb(205, 235, 235, 235));
+        readonly SolidBrush _mrec = new SolidBrush(Color.FromArgb(230, 226, 32, 32));
+        readonly Pen _mgrid = new Pen(Color.FromArgb(58, 255, 255, 255), 1);
+        readonly Pen _mthin = new Pen(Color.FromArgb(150, 255, 255, 255), 1);
 
         public FpvHudForm()
         {
@@ -5412,12 +5417,12 @@ class RobloxAuto : Form
         // telemetry + exposure along the bottom, and a record button. Clean phone-recording look.
         void DrawMavic(Graphics g, int W, int H)
         {
-            SolidBrush white = new SolidBrush(Color.FromArgb(238, 255, 255, 255));
-            SolidBrush dim = new SolidBrush(Color.FromArgb(205, 235, 235, 235));
-            SolidBrush recB = new SolidBrush(Color.FromArgb(230, 226, 32, 32));
-            Pen grid = new Pen(Color.FromArgb(58, 255, 255, 255), 1);
-            Pen thin = new Pen(Color.FromArgb(150, 255, 255, 255), 1);
-            Pen recP = new Pen(Color.FromArgb(230, 226, 32, 32), 2);
+            // These are readonly FIELDS, never per-frame allocations. Creating 6 pens/brushes every
+            // paint (50fps) exhausted the GDI handle table within a couple of minutes; WinForms then
+            // threw OutOfMemory and painted the red-X-on-white screen. NEVER allocate GDI in OnPaint.
+            SolidBrush white = _mw, dim = _mdim;
+            SolidBrush recB = _mrec;
+            Pen grid = _mgrid, thin = _mthin;
 
             for (int i = 1; i <= 2; i++)
             {
@@ -5438,7 +5443,7 @@ class RobloxAuto : Form
             int bat = Secs <= 300 ? 100 - (int)(Secs * 50f / 300f) : 50 - (int)((Secs - 300) * 50f / 600f);
             if (bat < 0) bat = 0; if (bat > 100) bat = 100;
             bool low = bat <= 30;
-            SolidBrush batB = low ? new SolidBrush(Color.FromArgb(235, 235, 60, 60)) : white;
+            SolidBrush batB = low ? _mrec : white;   // reuse the field - was allocating a brush every frame
             string pctTxt = bat + "%";
             SizeF pct = g.MeasureString(pctTxt, _fs);
             g.DrawRectangle(thin, rEdge - 48, 70, 44, 20);
