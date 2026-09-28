@@ -5448,6 +5448,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _clickVk = ParseVk(_clickKeyText);
         }
         catch { }
+
+        // SAFETY: the joystick TRIGGER reports as Y (and R3), so a STOP bound to Y fires on every
+        // shot / bomb and aborts AUTO the moment you try to do anything. Refuse that binding no
+        // matter what settings.ini says - it is never what you want. (Same trap that made STOP
+        // fire on every bomb before.)
+        if (_padStop == "Y") { _padStop = "off"; _padStopOn = false; }
     }
 
     void SaveCfg()
