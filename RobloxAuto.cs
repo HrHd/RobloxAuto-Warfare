@@ -1928,7 +1928,33 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             AddBlackLine("> quick reconnect", "");
             AddBlackLine("re-engaging uplink with " +
                 (_serverId.Length > 8 ? _serverId.Substring(0, 8) : _serverId), "OK");
-            LaunchRejoin(uri, why);
+            // DRIVE THE CLI PROGRESS. _flowPct resets to 0 once a run completes, and this branch used
+            // to only print lines - so the OBS terminal just sat on 0% through the whole reconnect.
+            // Run a short staged boot ramp on its own thread so it animates like the full flow does.
+            string w2 = why;
+            Thread bt = new Thread(delegate ()
+            {
+                try
+                {
+                    AddBlackProgress(0.12f, "quick reconnect");
+                    Thread.Sleep(350);
+                    AddBlackLine("  tearing down session", "");
+                    AddBlackProgress(0.35f, "dropping link");
+                    Thread.Sleep(450);
+                    AddBlackLine("  client relaunch (deep link)", "");
+                    AddBlackProgress(0.58f, "relaunching client");
+                    Thread.Sleep(400);
+                    AddBlackLine("  re-engaging uplink", "");
+                    AddBlackProgress(0.82f, "handshake");
+                    Thread.Sleep(450);
+                    AddBlackProgress(1.0f, "uplink online");
+                    AddBlackLine("  link live", "OK");
+                }
+                catch { }
+            });
+            bt.IsBackground = true;
+            bt.Start();
+            LaunchRejoin(uri, w2);
             return;
         }
 
@@ -2184,7 +2210,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         {
             Log("3) switching drone to " + _drone + " (LOADOUT)...");
             ClickPhraseVerified("LOADOUT", g);
-            if (WaitPhrase("SELECT DRONE", 6000, g))
+            if (WaitPhrase("SELECT DRONE", 3000, g))
             {
                 InvalidateOcr();
                 if (DroneIs(_drone))
@@ -2434,6 +2460,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 if (!ok) Log("   Deploy As Drone did not react");
                 AddBlackLine("  uplink established", ok ? "OK" : "BAD");
                 _autoDeployed = ok;      // only a real click counts - otherwise the flow re-plans
+                if (ok) _autoResets = 0;   // a real deploy clears the wrong-payload loop breaker
             }
             else
             {
@@ -3024,15 +3051,28 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     {
         try
         {
-            Log("   backing out with Return, then opening LOADOUT to fix the loadout");
+            // LOOP BREAKER. Each wrong payload used to: Return -> open LOADOUT -> (wait for a
+            // SELECT DRONE panel that the weapons tab does not have) -> Return -> DEPLOY -> map ->
+            // base -> wrong payload -> back here. That is an endless ~30s cycle - the "misclicked
+            // and got stuck here for a bit". After a few attempts, stop instead of spinning.
+            _autoResets++;
+            if (_autoResets > 3)
+            {
+                Log("   wrong payload " + _autoResets + " times in a row - STOPPING rather than looping");
+                AddBlackError("0x13", "payload could not be selected - stopping");
+                StopAuto();
+                return;
+            }
+            Log("   backing out with Return (attempt " + _autoResets + "/3)");
             ClickRedReturn();
             Thread.Sleep(400);
             int spent = 0;
-            while (Alive(g) && spent < 5000 && !PhraseOnScreen("LOADOUT"))
+            while (Alive(g) && spent < 2500 && !PhraseOnScreen("LOADOUT"))
             { InvalidateOcr(); Thread.Sleep(200); spent += 200; }
-            Thread.Sleep(1000);                 // let the loadout screen finish loading
-            ClickPhraseVerified("LOADOUT", g);
-            Thread.Sleep(600);
+            // Do NOT open the LOADOUT tab to hunt for a drone selector: on these maps it just shows
+            // the WEAPONS list and the flow sat there. Backing out is enough - the resume-aware AUTO
+            // re-plans from the DEPLOY tab.
+            Thread.Sleep(500);
         }
         catch { }
     }
@@ -4951,6 +4991,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     volatile bool _lastDroneDet = false;
     long _lastDetLog = 0;
     int _hudCooldownUntil = 0;   // no drone-view scan until this TickCount (set on reconnect)
+    int _autoResets = 0;         // wrong-payload back-outs in a row (loop breaker)
     string _detDbg = "";
     bool DroneViewOnScreen()
     {
