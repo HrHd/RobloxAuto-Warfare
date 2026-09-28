@@ -3687,6 +3687,9 @@ class RobloxAuto : Form
 
     // ================= screen helpers =================
     static int[] _grabCache = null;
+    static int[] _grabBuf = null;                     // persistent full-screen pixel buffer (reused)
+    static Bitmap _grabBmp = null;                     // persistent capture bitmap (reused)
+    static Graphics _grabG = null;                     // its Graphics (reused)
     static int _grabW = 0, _grabH = 0;
     static DateTime _grabTime = DateTime.MinValue;
 
@@ -3702,18 +3705,26 @@ class RobloxAuto : Form
 
         Rectangle b = Screen.PrimaryScreen.Bounds;
         w = b.Width; h = b.Height;
-        using (Bitmap bmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+        // ONE persistent buffer + bitmap, refilled each grab. Allocating an 8.3MB int[] (and a bitmap)
+        // on EVERY capture put ~180MB/s of large-object-heap garbage through the GC and eventually
+        // threw OutOfMemory - which WinForms paints as the red-X-on-white screen. Never allocate the
+        // whole-screen capture repeatedly; reuse it. (Valid only until the next Grab - every caller
+        // uses it immediately.)
+        if (_grabBuf == null || _grabBuf.Length != w * h || _grabBmp == null || _grabBmp.Width != w || _grabBmp.Height != h)
         {
-            using (Graphics g = Graphics.FromImage(bmp))
-                g.CopyFromScreen(b.X, b.Y, 0, 0, bmp.Size, CopyPixelOperation.SourceCopy);
-            System.Drawing.Imaging.BitmapData bd = bmp.LockBits(new Rectangle(0, 0, w, h),
-                System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            int[] px = new int[w * h];
-            Marshal.Copy(bd.Scan0, px, 0, px.Length);
-            bmp.UnlockBits(bd);
-            _grabCache = px; _grabW = w; _grabH = h; _grabTime = DateTime.Now;
-            return px;
+            if (_grabG != null) { try { _grabG.Dispose(); } catch { } _grabG = null; }
+            if (_grabBmp != null) { try { _grabBmp.Dispose(); } catch { } _grabBmp = null; }
+            _grabBuf = new int[w * h];
+            _grabBmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            _grabG = Graphics.FromImage(_grabBmp);
         }
+        _grabG.CopyFromScreen(b.X, b.Y, 0, 0, new Size(w, h), CopyPixelOperation.SourceCopy);
+        System.Drawing.Imaging.BitmapData bd = _grabBmp.LockBits(new Rectangle(0, 0, w, h),
+            System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        Marshal.Copy(bd.Scan0, _grabBuf, 0, _grabBuf.Length);
+        _grabBmp.UnlockBits(bd);
+        _grabCache = _grabBuf; _grabW = w; _grabH = h; _grabTime = DateTime.Now;
+        return _grabBuf;
     }
 
     // save the current screen next to the exe, for diagnosing a mis-detected panel
@@ -5362,6 +5373,18 @@ class RobloxAuto : Form
         readonly SolidBrush _mrec = new SolidBrush(Color.FromArgb(230, 226, 32, 32));
         readonly Pen _mgrid = new Pen(Color.FromArgb(58, 255, 255, 255), 1);
         readonly Pen _mthin = new Pen(Color.FromArgb(150, 255, 255, 255), 1);
+        // The form is recreated on every HUD on/off cycle, so its GDI objects MUST be disposed or
+        // they leak (~13 per cycle) - which also ends in OutOfMemory / the red-X screen.
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                try { _f.Dispose(); _fb.Dispose(); _fm.Dispose(); _fs.Dispose(); } catch { }
+                try { _g.Dispose(); _gb.Dispose(); _mw.Dispose(); _mdim.Dispose(); _mrec.Dispose(); } catch { }
+                try { _p.Dispose(); _pt.Dispose(); _mgrid.Dispose(); _mthin.Dispose(); } catch { }
+            }
+            base.Dispose(disposing);
+        }
 
         public FpvHudForm()
         {
