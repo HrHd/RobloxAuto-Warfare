@@ -1947,7 +1947,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 if (PhraseOnScreen("Deploy As Drone") || PhraseOnScreenWhiten("Deploy As Drone"))
                 {
                     Log("AUTO: Deploy As Drone is on screen - clicking it again instead of returning");
-                    if (ClickPhrasePersistent("Deploy As Drone", 12000, g))
+                    if (ClickDeployAsDrone(g))
                     {
                         _autoDeployed = true;
                         if ((_watchHome || _hudOn) && _asDrone) StartRfWatch();
@@ -2329,7 +2329,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 Log("7) clicking Deploy As Drone...");
                 AddBlackLine("connecting to drone", "");
                 AddBlackProgress(0.90f, "connecting to drone");
-                bool ok = ClickPhrasePersistent("Deploy As Drone", 20000, g);
+                bool ok = ClickDeployAsDrone(g);
                 if (!ok) Log("   Deploy As Drone did not react");
                 AddBlackLine("  uplink established", ok ? "OK" : "BAD");
                 _autoDeployed = ok;      // only a real click counts - otherwise the flow re-plans
@@ -2844,6 +2844,37 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             Thread.Sleep(600);
         }
         catch { }
+    }
+
+    // The TEAM BASE panel stacks Deploy / Return / Deploy As Drone at the SAME x, one button apart
+    // (~52px). "Deploy As Drone" is gold-on-tan and the OCR often misses it, so if the phrase is not
+    // found we click just BELOW Return (or two rows below Deploy) - a known position, not a guess.
+    bool ClickDeployAsDrone(int g)
+    {
+        if (ClickPhrasePersistent("Deploy As Drone", 3000, g)) return true;   // brief try, then position
+        try
+        {
+            List<string[]> ws = OcrWords();
+            List<string[]> ww = OcrWordsWhiten();
+            List<Hit> hr = FindPhraseAll("Return", null, ws); if (hr.Count == 0) hr = FindPhraseAll("Return", null, ww);
+            List<Hit> hd = FindPhraseAll("Deploy", null, ws); if (hd.Count == 0) hd = FindPhraseAll("Deploy", null, ww);
+            List<Hit> hdr = FindPhraseAll("Drone", null, ws); if (hdr.Count == 0) hdr = FindPhraseAll("Drone", null, ww);
+            int x, y;
+            // The Deploy As Drone row is the "Deploy" token BELOW Return (the map's Deploy sits above it).
+            Hit below = default(Hit); bool hasBelow = false;
+            foreach (Hit h in hd) if (hr.Count == 0 || h.Y > hr[0].Y) { below = h; hasBelow = true; break; }
+            if (hasBelow)
+            {
+                x = below.X + 40; y = below.Y + 8;             // centre of "Deploy [As] Drone"
+                foreach (Hit d in hdr) if (d.Y >= below.Y - 20 && d.Y <= below.Y + 30) { x = (below.X + d.X + 70) / 2; y = (below.Y + d.Y) / 2 + 6; break; }
+            }
+            else if (hr.Count > 0) { x = hr[0].X; y = hr[0].Y + 52; }
+            else return false;
+            Log("   Deploy As Drone not readable - clicking below the buttons at (" + x + "," + y + ")");
+            ClickPrimaryLogged(x, y, "Deploy As Drone");
+            return true;
+        }
+        catch { return false; }
     }
 
     bool ClickRedReturn()
