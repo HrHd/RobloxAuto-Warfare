@@ -224,6 +224,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudMRoll = 0f, _hudMPitch = 0f;        // deg, px offset from centre
     float _hudAxisW = 1f;                          // dial "axis weight": influence of the sky/ground colour axis cue
     float _hudMsTau = 0.08f;                       // dial "axis smooth": low-pass time constant (s) on the detector measurement
+    float _hudSkyFlatMax = 0.70f;                 // dial "sky flat": max top-band texture as a FRACTION of the whole frame (real sky is far smoother)
     float _hudSkyMin = 0.10f;                      // dial "sky min": discard a frame with less verified sky than this
     int _hudNoSkyFrames = 0;                       // frames discarded for having no usable sky
     float _kfSmRoll = 0f, _kfSmPit = 0f;           // smoothed measurement fed to the estimator
@@ -236,7 +237,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hugSm = 0f;
     int _hugDisR = 0, _hugDisP = 0, _hugSignR = 0, _hugSignP = 0;
     bool _hugLogged = false;
-    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator, numRefDist, numAxisW, numMsTau, numSkyMin;
+    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator, numRefDist, numAxisW, numMsTau, numSkyMin, numSkyFlat;
     Button btnReloadRefs, btnCapRef;
     NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numStickThr;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
@@ -981,6 +982,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         y += 28;
         numSkyMin = MkTune(x, y, "sky min", (decimal)(_hudSkyMin * 100f), 0m, 80m, 1m, 0);
         numSkyMin.ValueChanged += delegate { _hudSkyMin = (float)numSkyMin.Value / 100f; SaveCfg(); };
+        y += 28;
+        numSkyFlat = MkTune(x, y, "sky flat", (decimal)(_hudSkyFlatMax * 100f), 0m, 100m, 5m, 0);
+        numSkyFlat.ValueChanged += delegate { _hudSkyFlatMax = (float)numSkyFlat.Value / 100f; SaveCfg(); };
         y += 28;
 
         // reload the reference photos ("base photos") without restarting
@@ -1811,6 +1815,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             case "fov": return "The game's vertical field of view (deg). Sets the focal length used to turn pixels into real angles, and back.";
             case "maneuver": return "How fast the estimator believes the attitude may swing (deg^2/s). Bigger = it reacts faster but trusts the model less.";
             case "ref match": return "How close a frame must be to a saved hudref\\\\ photo to count as a match (%) - lower = stricter.";
+            case "sky flat": return "HOW FLAT the top band must be, as a % of the whole frame (real sky is far smoother than the scene). Over this and the frame is THROWN AWAY - busy grass/ruins/trees at the top mean the lock is a boundary inside the ground, so we coast on the stick instead. LOWER = stricter. 0 = off.";
             case "sky min": return "THROW THE FRAME AWAY if it has less verified sky than this (%). Banked hard looking down at ground/clutter there is no horizon to measure - discarding it stops a terrain edge becoming a false low line, and the estimator just coasts on the stick. 0 = never discard.";
             case "axis smooth": return "Low-pass time (s) on the detector measurement before the estimator uses it. Higher = steadier but laggier; 0 = raw.";
             case "axis weight": return "INFLUENCE of the new sky/ground colour axis (per-frame brightness-vs-blueness cue). 0 = off, 1 = default, higher pulls harder toward sky-above/ground-below.";
@@ -5835,6 +5840,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudAxisW") _hudAxisW = ParseF(v);
             else if (k == "hudMsTau") _hudMsTau = ParseF(v);
             else if (k == "hudSkyMin") _hudSkyMin = ParseF(v) / 100f;
+            else if (k == "hudSkyFlat") _hudSkyFlatMax = ParseF(v) / 100f;
             else if (k == "hudSettleMs") { _hudSettleMs = (int)ParseF(v); if (_hudSettleMs < 0) _hudSettleMs = 0; if (_hudSettleMs > 60000) _hudSettleMs = 60000; }
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
@@ -5921,6 +5927,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudAxisW=" + _hudAxisW.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudMsTau=" + _hudMsTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSkyMin=" + (_hudSkyMin * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudSkyFlat=" + (_hudSkyFlatMax * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSettleMs=" + _hudSettleMs,
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -7861,6 +7868,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             bool gOk = false; float slope = 0f, icept = 0f; float conf = 0f; float detSky = -1f;
             float frameSig = 3f; int frameN = 40;    // robust fit spread / inlier count (for the estimator)
             bool onsetAnchored = false;              // did the sky-onset anchor move the line this frame?
+            bool noSky = false;                      // the band ABOVE the line is not smooth -> it is ground, not sky
             bool refHit = false;                     // did a labelled reference supply the answer?
             // Per-frame sky/ground DISCRIMINATING AXIS (chosen below from this frame's own bands).
             bool axUseLum = true; float axSign = 1f; float axGnd = 0f;
@@ -8109,6 +8117,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         // instead of being taken as gospel.
                         float skyClean = 1f;
                         if (allTex > 0.5f) skyClean = Smooth01(allTex * 1.25f - skyTex, -1.5f, 1.5f);
+                        // HARD SKY CONSTRAINT (dial "sky flat"): the band ABOVE the line must be
+                        // genuinely SMOOTH. Real sky is flat; grass, ruins and trees are busy. If the
+                        // "sky" above the line is busy then this is not a horizon at all - it is a
+                        // boundary INSIDE the ground. Refuse the lock so we go off the stick model.
+                        if (allTex > 0.5f && skyTex > _hudSkyFlatMax * allTex) noSky = true;
                         slope = fm; icept = fb; gOk = true; conf = Math.Min(1f, bestGrad / 12f) * (0.35f + 0.65f * skyClean);
                         // A near match to a labelled BAD frame (bad-*.png) means "this is the kind of
                         // view that fooled us before" - kill the lock. A match to a GOOD frame boosts it.
@@ -8532,6 +8545,20 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float skyFrac = detSky >= 0f ? detSky : (slope * (W / 2f) + icept) / H;
             if (skyFrac < 0f) skyFrac = 0f; if (skyFrac > 1f) skyFrac = 1f;
             _hudDetSky = skyFrac;
+            // GROUND-AS-HORIZON GATE (dial "sky flat"): the band above the line was busy, so what
+            // looked like a horizon is really a boundary inside the ground. Throw the frame away.
+            if (noSky)
+            {
+                _hudDetValid = false;
+                _hudDetAt = Environment.TickCount;
+                _hudNoSkyFrames++;
+                if (Environment.TickCount - _hudLogAt >= 2000)
+                {
+                    _hudLogAt = Environment.TickCount;
+                    Log("horizon det: frame DISCARDED - region above the line is not sky (busy/ground), coasting on stick model");
+                }
+                return;
+            }
             // NO-USEFUL-IMAGE GATE (dial "sky min"): if the frame shows essentially NO verified sky
             // (all ground / clutter - e.g. banked hard looking down at a ruin field), then there is no
             // horizon in it to measure. THROW THE FRAME AWAY rather than let a terrain edge become a
