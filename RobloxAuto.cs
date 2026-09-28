@@ -4535,15 +4535,18 @@ class RobloxAuto : Form
 
         // Simulated FPV pack voltage. It starts at half, rises with throttle (left stick Y up), and
         // a spring + ripple gives the sag/bounce of a real pack under load. 4S range 13.2V..16.8V.
-        float thr = _padLy > 0f ? _padLy : 0f;
-        float vTarget = 0.5f + 0.5f * thr;
+        // LEFT STICK is the throttle, and now BOTH ends are used: up = full pack, DOWN = sagged to 12V.
+        float thr = _padLy;                                  // signed: -1 (down) .. +1 (up)
+        float vTarget = 0.5f + 0.5f * thr;                   // down -> 0 (12.0V), up -> 1 (16.8V)
         _hudVVel += ((vTarget - _hudVBat) * 26f - _hudVVel * 7f) * dt;   // underdamped -> it bounces
         _hudVBat += _hudVVel * dt;
-        if (_hudVBat < 0.26f) { _hudVBat = 0.26f; _hudVVel = 0f; }
+        if (_hudVBat < 0.02f) { _hudVBat = 0.02f; _hudVVel = 0f; }       // reach ~12.0V at the bottom
         if (_hudVBat > 1f) { _hudVBat = 1f; _hudVVel = 0f; }
-        float ripple = 0.010f * (float)Math.Sin(now * 0.021) * (0.35f + thr);
+        // ripple is biggest at the ENDS of the stick (like the sag/bounce you liked at full throttle),
+        // so the reading is jumpy both when held up and when held down
+        float ripple = 0.018f * (float)Math.Sin(now * 0.021) * (0.30f + 0.70f * Math.Abs(thr));
         float chg = _hudVBat + ripple;
-        if (chg < 0.26f) chg = 0.26f;
+        if (chg < 0.02f) chg = 0.02f;
         if (chg > 1f) chg = 1f;
         _hudV1 = 12.0f + chg * 8.0f;             // 12.0 .. 20.0V - wide range so it visibly jumps
         _hudV2 = 12.0f + (chg * 0.992f) * 8.0f;  // second pack reads a hair lower
