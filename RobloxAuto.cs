@@ -7453,6 +7453,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             int n = 0;
             bool gOk = false; float slope = 0f, icept = 0f; float conf = 0f; float detSky = -1f;
             float frameSig = 3f; int frameN = 40;    // robust fit spread / inlier count (for the estimator)
+            bool onsetAnchored = false;              // did the sky-onset anchor move the line this frame?
 
             // --- PRIMARY: BLURRED sky/ground transition (the "blur then find the medium in the centre"
             // idea). Block-averaging the frame is a heavy blur that erases local detail - trees, roads,
@@ -7808,6 +7809,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                                 float hf3 = (slope * (W / 2f) + icept) / H;
                                 if (hf3 < 0f) hf3 = 0f; if (hf3 > 1f) hf3 = 1f;
                                 detSky = hf3;
+                                onsetAnchored = true;
                             }
                         }
                     }
@@ -8064,7 +8066,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (Environment.TickCount - _hudLogAt >= 2000)
             {
                 _hudLogAt = Environment.TickCount;
-                Log("horizon det: " + (gOk ? "global" : n + " pts") + ", roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px, sky " + (_hudDetSky * 100f).ToString("0") + "% trust " + (_hudDetConf * 100f).ToString("0") + "% clutter " + (_hudClutter * 100f).ToString("0") + "%" + (_refSigs.Count > 0 ? " ref " + (_refD * 100f).ToString("0") + (_refGood ? " good" : " BAD") : ""));
+                Log("horizon det: " + (gOk ? "global" : n + " pts") + ", roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px, sky " + (_hudDetSky * 100f).ToString("0") + "% trust " + (_hudDetConf * 100f).ToString("0") + "% clutter " + (_hudClutter * 100f).ToString("0") + "%" + (_refSigs.Count > 0 ? " ref " + (_refD * 100f).ToString("0") + (_refGood ? " good" : " BAD") : "")
+                    + (onsetAnchored ? "  sky-onset-anchored" : ""));
             }
         }
         catch { }
