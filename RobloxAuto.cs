@@ -1622,13 +1622,17 @@ class RobloxAuto : Form
                         if (sg != _stopGen) { Log("auto-after-rejoin cancelled by STOP"); return; }
                         List<string[]> ws = OcrWords();
                         string st = ScreenName(ws);
-                        if (st == "loading") { Log("   reconnecting (loading screen)"); break; }
+                        // WAIT FOR "JOINING SERVER". That screen is the real start of the reconnect;
+                        // starting AUTO before it runs the flow against the session we are leaving.
+                        if (st == "loading" || PhraseIn("Joining server", ws) || PhraseIn("Joining Server", ws))
+                        { Log("   Joining Server - continuing the flow"); break; }
+                        // fallback only if the joining screen is never readable (e.g. it is skipped)
                         bool live = (st == "team select" || st == "lobby" || st == "loadout" ||
                                      st == "map" || st == "team base");
-                        if (!live) { gone++; if (gone >= 2) { Log("   left the old screen - reconnecting"); break; } }
+                        if (!live) { gone++; if (gone >= 10) { Log("   no Joining Server read - reconnecting anyway"); break; } }
                         else gone = 0;
                         InvalidateOcr();
-                        Thread.Sleep(400);
+                        Thread.Sleep(300);
                     }
                     if (sg != _stopGen) { Log("auto-after-rejoin cancelled by STOP"); return; }
                     AutoRun();
