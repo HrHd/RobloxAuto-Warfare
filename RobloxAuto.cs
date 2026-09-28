@@ -6770,6 +6770,57 @@ class RobloxAuto : Form
                 }
             }
 
+            // --- FULL-RES REFINEMENT (only when the blurred pass locked). The block fit is coarse
+            // (~B px per row). Walk columns near the coarse line and snap each to the strongest
+            // FULL-RESOLUTION sky/ground step within a small window, then refit. This feeds the fit
+            // every pixel row (far more data) at a BOUNDED cost - it only searches around the line,
+            // so it stays cheap. The whole point: a sharper guess without a second full scan.
+            if (gOk)
+            {
+                int B = Math.Max(8, H / 25);                              // same block size as the coarse pass
+                float lumSky = 0.299f * sr + 0.587f * sg + 0.114f * sb;    // top-band luminance
+                int rwin = B;                                             // search window (px)
+                double sw = 0, swx = 0, swy = 0, swxy = 0, swxx = 0; int used = 0;
+                for (int x = W * 12 / 100; x < W * 88 / 100; x += 4)
+                {
+                    int cy = (int)(slope * x + icept);
+                    int y0 = cy - rwin; if (y0 < 6) y0 = 6;
+                    int y1 = cy + rwin; if (y1 > H - 8) y1 = H - 8;
+                    float bScore = -1e9f; int by = -1;
+                    for (int y = y0; y <= y1; y++)
+                    {
+                        int p1 = px[(y + 2) * W + x], p0 = px[(y - 2) * W + x];
+                        int g = Math.Abs(((p1 >> 8) & 0xFF) - ((p0 >> 8) & 0xFF));      // green ch gradient
+                        int q1 = px[(y - 5) * W + x], q2 = px[(y - 3) * W + x];
+                        float above = 0.5f * (
+                            (0.299f * ((q1 >> 16) & 0xFF) + 0.587f * ((q1 >> 8) & 0xFF) + 0.114f * (q1 & 0xFF)) +
+                            (0.299f * ((q2 >> 16) & 0xFF) + 0.587f * ((q2 >> 8) & 0xFF) + 0.114f * (q2 & 0xFF)));
+                        float sc = g - Math.Abs(above - lumSky) * 0.8f;                 // sky must be above
+                        if (sc > bScore) { bScore = sc; by = y; }
+                    }
+                    if (by < 0) continue;
+                    double w = bScore + 1.0;
+                    sw += w; swx += w * x; swy += w * by; swxy += w * x * by; swxx += w * x * x; used++;
+                }
+                if (used >= 80)
+                {
+                    double den = sw * swxx - swx * swx;
+                    if (Math.Abs(den) > 1)
+                    {
+                        float m2 = (float)((sw * swxy - swx * swy) / den);
+                        float b2 = (float)((swy - m2 * swx) / sw);
+                        if (Math.Abs(m2) < 1.0f)
+                        {
+                            slope = 0.5f * slope + 0.5f * m2;      // blend - never let the refine run away
+                            icept = 0.5f * icept + 0.5f * b2;
+                            float hf2 = (slope * (W / 2f) + icept) / H;
+                            if (hf2 < 0f) hf2 = 0f; if (hf2 > 1f) hf2 = 1f;
+                            detSky = hf2;                          // sharpen the sky fraction too
+                        }
+                    }
+                }
+            }
+
             // --- FALLBACK (only if the blurred search found nothing): full-res gradient + sky term.
             // Score = ROBUST gradient (40th percentile, so a localized
             // high-contrast streak - a smoke plume, a road - cannot win) PLUS a SKY/GROUND colour term:
