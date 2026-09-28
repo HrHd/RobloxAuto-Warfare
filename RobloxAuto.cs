@@ -202,6 +202,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // (a real sky/ground line) and a near match boosts the lock. This is how you TEACH it.
     List<float[]> _refSigs = new List<float[]>();
     List<bool> _refGoodL = new List<bool>();
+    // Each reference may carry its OWN horizon line (a .hzn sidecar written by "capture ref"). When
+    // the live frame matches such a reference VERY closely we have seen exactly this before and
+    // know the answer, so we adopt its line - that is the "trained on your photos" part.
+    List<float[]> _refLine = new List<float[]>();
+    float[] _refBestLine = null;          // horizon line of the nearest reference (null = none stored)
     bool _refLoaded = false;
     float _refDist = 0.16f;               // dial "ref match": L2 threshold (0..1) for a match
     float _refD = 9f;                     // last frame's nearest-reference distance
@@ -217,7 +222,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     int _hugDisR = 0, _hugDisP = 0, _hugSignR = 0, _hugSignP = 0;
     bool _hugLogged = false;
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator, numRefDist;
-    Button btnReloadRefs;
+    Button btnReloadRefs, btnCapRef;
     NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numStickThr;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
@@ -955,8 +960,16 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         btnReloadRefs = new Button();
         btnReloadRefs.Text = "reload refs";
         btnReloadRefs.SetBounds(x, y, 120, 24);
-        btnReloadRefs.Click += delegate { _refSigs.Clear(); _refGoodL.Clear(); _refLoaded = false; LoadHudRefs(); };
+        btnReloadRefs.Click += delegate { _refSigs.Clear(); _refGoodL.Clear(); _refLine.Clear(); _refLoaded = false; LoadHudRefs(); };
         Controls.Add(btnReloadRefs);
+
+        // CAPTURE REF: save THIS frame + its current horizon line as a labelled reference ("good").
+        // Later frames that look like it adopt that line outright - that is the teach-by-example loop.
+        btnCapRef = new Button();
+        btnCapRef.Text = "capture ref";
+        btnCapRef.SetBounds(x + 128, y, 120, 24);
+        btnCapRef.Click += delegate { SaveRef(); };
+        Controls.Add(btnCapRef);
         y += 32;
 
         var l1 = new Label();
@@ -6028,7 +6041,16 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     ? new Pen(Color.FromArgb(aMain, 255, 255, 255), 2)
                     : new Pen(Color.FromArgb(aThin, 230, 230, 230), 1);
                 float ay = cy + yy;
-                float cxx = cx - (float)Math.Tan(rad) * yy * Shear;   // rail offset = the STAIRCASE (full bank)
+                // BOUND the bank term. tan(bank) is UNBOUNDED: at a real 75-85 deg bank it sent the
+                // rungs thousands of px sideways and the whole ladder looked like it dropped off
+                // ("it was fine until I banked then it went down"). Cap the angle used for the
+                // shear, and cap the resulting offset to the frame.
+                float shAng = rad; float shMax = 55f * (float)Math.PI / 180f;
+                if (shAng > shMax) shAng = shMax; if (shAng < -shMax) shAng = -shMax;
+                float shOff = (float)Math.Tan(shAng) * yy * Shear;
+                float shLim = cx * 1.6f;
+                if (shOff > shLim) shOff = shLim; if (shOff < -shLim) shOff = -shLim;
+                float cxx = cx - shOff;                               // rail offset = the STAIRCASE (bank)
                 PointF a = new PointF(cxx - half * dxr, ay - half * dyr);
                 PointF b = new PointF(cxx + half * dxr, ay + half * dyr);
                 g.DrawLine(pen, a, b);
@@ -7199,6 +7221,30 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         bool good = nm.IndexOf("bad") < 0 && nm.IndexOf("no_") < 0 && nm.IndexOf("false") < 0;
                         _refSigs.Add(SigFromBitmap(b));
                         _refGoodL.Add(good);
+                        // optional sidecar with the horizon line captured at the same moment
+                        float[] ln = null;
+                        try
+                        {
+                            string hz = Path.ChangeExtension(fs[i], ".hzn");
+                            if (File.Exists(hz))
+                            {
+                                float rr = 0f, pp = 0f; bool got = false;
+                                foreach (string line in File.ReadAllLines(hz))
+                                {
+                                    int eq = line.IndexOf('=');
+                                    if (eq <= 0) continue;
+                                    string k = line.Substring(0, eq).Trim().ToLowerInvariant();
+                                    float v; if (!float.TryParse(line.Substring(eq + 1).Trim(),
+                                        System.Globalization.NumberStyles.Float,
+                                        System.Globalization.CultureInfo.InvariantCulture, out v)) continue;
+                                    if (k == "roll") { rr = v; got = true; }
+                                    else if (k == "pitch") { pp = v; got = true; }
+                                }
+                                if (got) ln = new float[] { rr, pp };
+                            }
+                        }
+                        catch { }
+                        _refLine.Add(ln);
                         if (good) ng++; else nb++;
                     }
                 }
@@ -7209,18 +7255,68 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         catch { }
     }
 
-    // Nearest reference by signature distance (0 = identical). Returns the distance and the label.
-    float MatchRefs(float[] sig, out bool good)
+    // Save the CURRENT frame plus the horizon line we believe is right, as a labelled reference.
+    // Later frames that look like it adopt that line outright. This is the "teach it with photos"
+    // loop: fly somewhere the HUD is correct, click this, and it will be right there next time.
+    void SaveRef()
     {
-        good = true; float best = 9f;
+        try
+        {
+            string dir = Path.Combine(_appDir, "hudref");
+            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            int W, H; int[] px = Grab(out W, out H);
+            string baseName = "good-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            float[] sig;
+            using (Bitmap b = new Bitmap(W, H, System.Drawing.Imaging.PixelFormat.Format32bppRgb))
+            {
+                System.Drawing.Imaging.BitmapData bd = b.LockBits(new Rectangle(0, 0, W, H),
+                    System.Drawing.Imaging.ImageLockMode.WriteOnly, b.PixelFormat);
+                int stride = bd.Stride;
+                byte[] buf = new byte[stride * H];
+                for (int y = 0; y < H; y++)
+                {
+                    int ro = y * stride, so = y * W;
+                    for (int x = 0; x < W; x++)
+                    {
+                        int c = px[so + x];
+                        buf[ro + x * 4] = (byte)(c & 0xFF);
+                        buf[ro + x * 4 + 1] = (byte)((c >> 8) & 0xFF);
+                        buf[ro + x * 4 + 2] = (byte)((c >> 16) & 0xFF);
+                        buf[ro + x * 4 + 3] = 255;
+                    }
+                }
+                System.Runtime.InteropServices.Marshal.Copy(buf, 0, bd.Scan0, buf.Length);
+                b.UnlockBits(bd);
+                sig = SigFromBitmap(b);
+                b.Save(Path.Combine(dir, baseName + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
+            float rr = _hudDetValid ? _hudMRoll : _hudFRoll;
+            float pp = _hudDetValid ? _hudMPitch : _hudFPitch;
+            File.WriteAllText(Path.Combine(dir, baseName + ".hzn"),
+                "roll=" + rr.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                "\r\npitch=" + pp.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            _refSigs.Add(sig);
+            _refGoodL.Add(true);
+            _refLine.Add(new float[] { rr, pp });
+            _refLoaded = true;
+            Log("capture ref: saved " + baseName + " at roll " + rr.ToString("0.0") + " deg / pitch " + pp.ToString("0") + " px (" + _refSigs.Count + " refs)");
+        }
+        catch (Exception ex) { Log("capture ref failed: " + ex.Message); }
+    }
+
+    // Nearest reference by signature distance (0 = identical). Returns the distance and the label.
+    float MatchRefs(float[] sig, out bool good, out float[] line)
+    {
+        good = true; line = null; float best = 9f; int bi = -1;
         for (int i = 0; i < _refSigs.Count; i++)
         {
             float[] r = _refSigs[i];
             float d = 0f;
             for (int k = 0; k < 108; k++) { float e = sig[k] - r[k]; d += e * e; }
             d = (float)Math.Sqrt(d / 108.0);
-            if (d < best) { best = d; good = _refGoodL[i]; }
+            if (d < best) { best = d; good = _refGoodL[i]; bi = i; }
         }
+        if (bi >= 0 && bi < _refLine.Count) line = _refLine[bi];
         return best;
     }
 
@@ -7313,7 +7409,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // trust: confident frame, sky in view, and the stick NOT yanking (anti-false-flag)
             float skyT = Smooth01(_hudSkySm, 0.04f, 0.20f);
             float actT = Smooth01(Math.Max(Math.Abs(sxS), Math.Abs(syS)), 0.15f, 0.30f);
-            float trust = (0.55f + 0.45f * _hudMConf) * (0.40f + 0.60f * skyT) * (1f - 0.60f * actT);
+            float trust = (0.55f + 0.45f * _hudMConf) * (0.40f + 0.60f * skyT) * (1f - 0.45f * actT);
             if (trust < 0.03f) trust = 0.03f;
 
             float Rr = _hudMRollVar / trust;                        // deg^2
@@ -7341,8 +7437,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (solidFrame) { if (_hudSolid < 40) _hudSolid++; }
             else if (_hudSolid > 0) _hudSolid -= 4;
             if (_hudSolid < 0) _hudSolid = 0;
-            float hugT = _hudSolid >= 10 ? 1f : 0f;
-            _hugSm += (hugT - _hugSm) * (1f - (float)Math.Pow(0.5f, dt / 0.4f));
+            // A HUG MUST NOT SURVIVE MANEUVERING. While you work the stick - especially banking - the
+            // scene moves and a held pitch would ride a small stick-Y bias into a steady drift while
+            // the vision gain is cut to 25%. That is exactly "it was fine until I banked then it went
+            // down". Any real stick input drops the hug (fast); it re-forms once things settle.
+            float stickNow = Math.Max(Math.Abs(sxS), Math.Abs(syS));
+            float hugT = (_hudSolid >= 10 && stickNow < 0.12f) ? 1f : 0f;
+            float hugTau = hugT > 0.5f ? 0.40f : 0.10f;          // ease in slowly, drop out fast
+            _hugSm += (hugT - _hugSm) * (1f - (float)Math.Pow(0.5f, dt / hugTau));
 
             // The thresholds are DELIBERATELY large: a hug means the estimate lags on purpose (the
             // pull is 4x slower), so a couple of degrees of innovation is normal and must NOT
@@ -7454,6 +7556,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             bool gOk = false; float slope = 0f, icept = 0f; float conf = 0f; float detSky = -1f;
             float frameSig = 3f; int frameN = 40;    // robust fit spread / inlier count (for the estimator)
             bool onsetAnchored = false;              // did the sky-onset anchor move the line this frame?
+            bool refHit = false;                     // did a labelled reference supply the answer?
 
             // --- PRIMARY: BLURRED sky/ground transition (the "blur then find the medium in the centre"
             // idea). Block-averaging the frame is a heavy blur that erases local detail - trees, roads,
@@ -7514,8 +7617,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 float refD = 9f; bool refGood = true;
                 if (_refSigs.Count > 0)
                 {
-                    refD = MatchRefs(SigFromBlocks(imR, imG, imB, gw, gh), out refGood);
-                    _refD = refD; _refGood = refGood;
+                    float[] rl;
+                    refD = MatchRefs(SigFromBlocks(imR, imG, imB, gw, gh), out refGood, out rl);
+                    _refD = refD; _refGood = refGood; _refBestLine = rl;
                 }
                 float[] bx2 = new float[gw], by2 = new float[gw], bg2 = new float[gw];
                 float[] chRoll = new float[3], chY = new float[3], chGrad = new float[3], chSig = new float[3];
@@ -8048,6 +8152,16 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _hudMRoll = roll;
             _hudMPitch = (slope * (W / 2f) + icept) - H / 2f;
             _hudMConf = conf;
+            // REFERENCE ANSWER ("trained on your photos"): a VERY close match to a labelled reference
+            // that carries its own horizon line means we have seen exactly this view before - so use
+            // that line outright instead of the live guess.
+            if (_refBestLine != null && _refGood && _refD <= _refDist * 0.6f)
+            {
+                _hudMRoll = _refBestLine[0];
+                _hudMPitch = _refBestLine[1];
+                _hudMConf = 0.95f;
+                refHit = true;
+            }
             {
                 float sig = frameSig > 0.5f ? frameSig : 3f;
                 _hudMPitchVar = sig * sig * 4f / Math.Max(1, frameN) + 1f;      // px^2
@@ -8067,7 +8181,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             {
                 _hudLogAt = Environment.TickCount;
                 Log("horizon det: " + (gOk ? "global" : n + " pts") + ", roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px, sky " + (_hudDetSky * 100f).ToString("0") + "% trust " + (_hudDetConf * 100f).ToString("0") + "% clutter " + (_hudClutter * 100f).ToString("0") + "%" + (_refSigs.Count > 0 ? " ref " + (_refD * 100f).ToString("0") + (_refGood ? " good" : " BAD") : "")
-                    + (onsetAnchored ? "  sky-onset-anchored" : ""));
+                    + (onsetAnchored ? "  sky-onset-anchored" : "") + (refHit ? "  REF-ANSWER" : ""));
             }
         }
         catch { }
