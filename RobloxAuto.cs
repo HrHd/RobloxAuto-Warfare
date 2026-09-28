@@ -159,6 +159,7 @@ class RobloxAuto : Form
                                                     // poor (dial "bad lift") - a weak lock lands low, so
                                                     // we raise it back toward where it belongs
     float _hudSpreadAccel = 0f;                     // expo on how the ladder fan builds up (dial "spread accel")
+    float _hudMinSpread = 5f;                        // reject frames whose colour spread is below this (dial "min colour")
     float _hudClutter = 0f;                          // 0..1 detected clutter (trees/structures) around the horizon
     float _hudTreeDrop = 3f;                         // DEG to push the horizon DOWN when clutter is high (dial "tree drop")
     float _hudSpreadAmt = 2.2f;                      // how fast the ladder FANS OUT with tilt (dial "spread")
@@ -177,7 +178,7 @@ class RobloxAuto : Form
     float _hudRollStick = 25f;                      // DEG - direct bank from the right stick X (dial "stick tilt")
     float _hudRollStickSm = 0f;                     // smoothed stick-tilt offset
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop;
+    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop, numMinSpread;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
@@ -640,9 +641,13 @@ class RobloxAuto : Form
         y += 28;
 
         numSpreadAccel = MkTune(x, y, "spread accel", (decimal)_hudSpreadAccel, 0m, 1m, 0.05m, 2);
-        numSpreadAccel.ValueChanged += delegate { _hudSpreadAccel = (float)numSpreadAccel.Value; SaveCfg(); };
         numTreeDrop = MkTune(x + 168, y, "tree drop", (decimal)_hudTreeDrop, -20m, 20m, 1m, 0);
+        numSpreadAccel.ValueChanged += delegate { _hudSpreadAccel = (float)numSpreadAccel.Value; SaveCfg(); };
         numTreeDrop.ValueChanged += delegate { _hudTreeDrop = (float)numTreeDrop.Value; SaveCfg(); };
+        y += 28;
+
+        numMinSpread = MkTune(x, y, "min colour", (decimal)_hudMinSpread, 0m, 40m, 1m, 0);
+        numMinSpread.ValueChanged += delegate { _hudMinSpread = (float)numMinSpread.Value; SaveCfg(); };
         y += 28;
 
         numImg = MkTune(x, y, "camera trust", (decimal)_hudImgGain, 0m, 4m, 0.1m, 1);
@@ -5119,6 +5124,7 @@ class RobloxAuto : Form
             else if (k == "hudSpread") _hudSpreadAmt = ParseF(v);
             else if (k == "hudSpreadAccel") _hudSpreadAccel = ParseF(v);
             else if (k == "hudTreeDrop") _hudTreeDrop = ParseF(v);
+            else if (k == "hudMinSpread") _hudMinSpread = ParseF(v);
             else if (k == "hudImg") _hudImgGain = ParseF(v);
             else if (k == "hudRollOff") _hudRollOff = ParseF(v);
             else if (k == "hudPitOff") _hudPitOff = ParseF(v);
@@ -5201,6 +5207,7 @@ class RobloxAuto : Form
             "hudSpread=" + _hudSpreadAmt.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSpreadAccel=" + _hudSpreadAccel.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudTreeDrop=" + _hudTreeDrop.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudMinSpread=" + _hudMinSpread.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -6590,6 +6597,30 @@ class RobloxAuto : Form
                 }
             if (sn == 0) { _hudDetValid = false; return; }
             sr /= sn; sg /= sn; sb /= sn;
+
+            // FRAME QUALITY GATE - "get rid of useless photos that are too close in colour". A frame
+            // whose whole picture is one tone (a flat wall of fog / sky / ground) has no horizon in it,
+            // so it must NOT be pushed into the estimate. Compute the luminance spread on a coarse
+            // grid (cheap) and drop the frame when it is nearly uniform.
+            {
+                double lsum = 0, lsum2 = 0; int lc = 0;
+                for (int y = H / 10; y < H * 9 / 10; y += 8)
+                    for (int x = W / 10; x < W * 9 / 10; x += 12)
+                    {
+                        int c = px[y * W + x];
+                        float l = 0.299f * ((c >> 16) & 0xFF) + 0.587f * ((c >> 8) & 0xFF) + 0.114f * (c & 0xFF);
+                        lsum += l; lsum2 += l * l; lc++;
+                    }
+                float lvar = lc > 0 ? (float)(lsum2 / lc - (lsum / lc) * (lsum / lc)) : 0f;
+                float spread = (float)Math.Sqrt(lvar < 0 ? 0 : lvar);
+                if (spread < _hudMinSpread)     // too close in colour -> useless frame
+                {
+                    _hudDetValid = false;
+                    if (Environment.TickCount - _hudLogAt >= 2000)
+                    { _hudLogAt = Environment.TickCount; Log("horizon det: flat frame (spread " + spread.ToString("0") + ") - skipped"); }
+                    return;
+                }
+            }
 
             int maxPts = W / 4 + 4;
             float[] pxs = new float[maxPts], pys = new float[maxPts];
