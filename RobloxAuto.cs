@@ -159,6 +159,7 @@ class RobloxAuto : Form
                                                     // poor (dial "bad lift") - a weak lock lands low, so
                                                     // we raise it back toward where it belongs
     float _hudSpreadAccel = 0f;                     // expo on how the ladder fan builds up (dial "spread accel")
+    float _hudStickThr = 15f;                        // % - right-stick travel at which the STICK takes over from the image (dial "stick override")
     float _hudMinSpread = 5f;                        // reject frames whose colour spread is below this (dial "min colour")
     float _hudClutter = 0f;                          // 0..1 detected clutter (trees/structures) around the horizon
     float _hudTreeDrop = 3f;                         // DEG to push the horizon DOWN when clutter is high (dial "tree drop")
@@ -178,7 +179,7 @@ class RobloxAuto : Form
     float _hudRollStick = 25f;                      // DEG - direct bank from the right stick X (dial "stick tilt")
     float _hudRollStickSm = 0f;                     // smoothed stick-tilt offset
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop, numMinSpread;
+    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numStickThr;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
@@ -648,6 +649,8 @@ class RobloxAuto : Form
 
         numMinSpread = MkTune(x, y, "min colour", (decimal)_hudMinSpread, 0m, 40m, 1m, 0);
         numMinSpread.ValueChanged += delegate { _hudMinSpread = (float)numMinSpread.Value; SaveCfg(); };
+        numStickThr = MkTune(x + 168, y, "stick override", (decimal)_hudStickThr, 5m, 100m, 5m, 0);
+        numStickThr.ValueChanged += delegate { _hudStickThr = (float)numStickThr.Value; SaveCfg(); };
         y += 28;
 
         numImg = MkTune(x, y, "camera trust", (decimal)_hudImgGain, 0m, 4m, 0.1m, 1);
@@ -4467,11 +4470,16 @@ class RobloxAuto : Form
             // arrives at ~20% sky (was 40%, which left the image under-powered where you actually fly).
             // Below ~4% sky it hands fully to the stick.
             float skyT = Smooth01(_hudSkySm, 0.04f, 0.20f);   // 0 = all ground, 1 = plenty of sky
-            float actT = Smooth01(Math.Max(Math.Abs(sx), Math.Abs(sy)), 0.05f, 0.60f); // stick activity
+            // STICK OVERRIDE: the image keeps most of the control until the right stick is pushed past
+            // "stick override" (dial, default 15%), then the stick takes over. Below the threshold the
+            // image is FULL; past it the image yields smoothly over the next ~15% of travel.
+            float stickAmt = Math.Max(Math.Abs(sx), Math.Abs(sy));
+            float sThr = _hudStickThr / 100f;
+            float actT = Smooth01(stickAmt, sThr, sThr + 0.15f);
             float gain = _hudImgGain; if (gain < 0f) gain = 0f; if (gain > 4f) gain = 4f;
             // The more SKY is in view the more the image is allowed to pull (up to ~1.45x at full sky) -
             // a clear sky/ground line is trustworthy, so it should win harder there.
-            float imgW = (0.50f + 0.50f * conf) * skyT * (1f - 0.60f * actT) * gain * (0.55f + 0.90f * skyT);
+            float imgW = (0.50f + 0.50f * conf) * skyT * (1f - 0.90f * actT) * gain * (0.55f + 0.90f * skyT);
             float tau = (0.08f + 0.9f * (1f - conf)) / Math.Max(0.02f, imgW);
             if (tau > 60f) tau = 60f;                          // no sky -> the image is effectively silent
             // SKY RECAPTURE: the moment the sky is clearly showing again, pull the line back to the true
@@ -5128,6 +5136,7 @@ class RobloxAuto : Form
             else if (k == "hudSpreadAccel") _hudSpreadAccel = ParseF(v);
             else if (k == "hudTreeDrop") _hudTreeDrop = ParseF(v);
             else if (k == "hudMinSpread") _hudMinSpread = ParseF(v);
+            else if (k == "hudStickThr") _hudStickThr = ParseF(v);
             else if (k == "hudImg") _hudImgGain = ParseF(v);
             else if (k == "hudRollOff") _hudRollOff = ParseF(v);
             else if (k == "hudPitOff") _hudPitOff = ParseF(v);
@@ -5211,6 +5220,7 @@ class RobloxAuto : Form
             "hudSpreadAccel=" + _hudSpreadAccel.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudTreeDrop=" + _hudTreeDrop.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudMinSpread=" + _hudMinSpread.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudStickThr=" + _hudStickThr.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
