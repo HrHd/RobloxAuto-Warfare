@@ -223,6 +223,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // Raw robust measurement from the detector (BEFORE smoothing) - what the estimator consumes.
     float _hudMRoll = 0f, _hudMPitch = 0f;        // deg, px offset from centre
     float _hudAxisW = 1f;                          // dial "axis weight": influence of the sky/ground colour axis cue
+    float _hudMsTau = 0.08f;                       // dial "axis smooth": low-pass time constant (s) on the detector measurement
+    float _kfSmRoll = 0f, _kfSmPit = 0f;           // smoothed measurement fed to the estimator
+    bool _kfSmSeeded = false;
     float _hudMRollVar = 4f, _hudMPitchVar = 9f;  // measurement variance (deg^2, px^2)
     float _hudMConf = 0f;
     // Solid-lock memory / HUG: after enough confident locks the horizon is treated as ESTABLISHED
@@ -231,7 +234,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hugSm = 0f;
     int _hugDisR = 0, _hugDisP = 0, _hugSignR = 0, _hugSignP = 0;
     bool _hugLogged = false;
-    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator, numRefDist, numAxisW;
+    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator, numRefDist, numAxisW, numMsTau;
     Button btnReloadRefs, btnCapRef;
     NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numStickThr;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
@@ -971,6 +974,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // default, higher = it pulls the lock harder toward "sky above / ground below".
         numAxisW = MkTune(x, y, "axis weight", (decimal)_hudAxisW, 0m, 3m, 0.1m, 1);
         numAxisW.ValueChanged += delegate { _hudAxisW = (float)numAxisW.Value; SaveCfg(); };
+        numMsTau = MkTune(x + 168, y, "axis smooth", (decimal)_hudMsTau, 0m, 1m, 0.02m, 2);
+        numMsTau.ValueChanged += delegate { _hudMsTau = (float)numMsTau.Value; SaveCfg(); };
         y += 28;
 
         // reload the reference photos ("base photos") without restarting
@@ -1801,6 +1806,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             case "fov": return "The game's vertical field of view (deg). Sets the focal length used to turn pixels into real angles, and back.";
             case "maneuver": return "How fast the estimator believes the attitude may swing (deg^2/s). Bigger = it reacts faster but trusts the model less.";
             case "ref match": return "How close a frame must be to a saved hudref\\\\ photo to count as a match (%) - lower = stricter.";
+            case "axis smooth": return "Low-pass time (s) on the detector measurement before the estimator uses it. Higher = steadier but laggier; 0 = raw.";
             case "axis weight": return "INFLUENCE of the new sky/ground colour axis (per-frame brightness-vs-blueness cue). 0 = off, 1 = default, higher pulls harder toward sky-above/ground-below.";
             default: return null;
         }
@@ -5821,6 +5827,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudManeuver") _hudManeuver = ParseF(v);
             else if (k == "hudRef") _refDist = ParseF(v) / 100f;
             else if (k == "hudAxisW") _hudAxisW = ParseF(v);
+            else if (k == "hudMsTau") _hudMsTau = ParseF(v);
             else if (k == "hudSettleMs") { _hudSettleMs = (int)ParseF(v); if (_hudSettleMs < 0) _hudSettleMs = 0; if (_hudSettleMs > 60000) _hudSettleMs = 60000; }
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
@@ -5905,6 +5912,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudManeuver=" + _hudManeuver.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRef=" + (_refDist * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAxisW=" + _hudAxisW.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudMsTau=" + _hudMsTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSettleMs=" + _hudSettleMs,
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -6422,6 +6430,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f;           // reset the weighted average
             _kfSeeded = false; _kfRollV = 0f; _kfPitV = 0f; _kfRollOb = 0f; _kfPitOb = 0f;                 // reset the estimator
             _kfRollGain = 1f; _kfPitGain = 1f; _kfRollP = 25f; _kfPitP = 25f; _kfRollZAt = 0; _kfPitZAt = 0;
+            _kfSmSeeded = false; _kfSmRoll = 0f; _kfSmPit = 0f;
             _hudSolid = 0; _hugSm = 0f; _hugDisR = 0; _hugDisP = 0; _hugSignR = 0; _hugSignP = 0; _hugLogged = false;
             OverlayHub.I.SetFlight(true, 0.18f, 0);
 
@@ -7674,10 +7683,23 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         bool det = _hudDetValid && (now - _hudDetAt) < 2000;
         if (det)
         {
-            float zr = _hudMRoll - _kfRollOb;                       // offset learned away
+            // AXIS/MEASUREMENT SMOOTHING (dial "axis smooth"): low-pass the detector's measurement
+            // BEFORE the estimator sees it, so a jittery per-frame colour-axis lock cannot wobble the
+            // line. 0 = no smoothing (use the raw frame measurement).
+            float mst = _hudMsTau; if (mst < 0f) mst = 0f;
+            if (!_kfSmSeeded) { _kfSmSeeded = true; _kfSmRoll = _hudMRoll; _kfSmPit = _hudMPitch; }
+            else if (mst > 0.001f)
+            {
+                float msa = 1f - (float)Math.Pow(0.5f, dt / mst);
+                _kfSmRoll += (_hudMRoll - _kfSmRoll) * msa;
+                _kfSmPit += (_hudMPitch - _kfSmPit) * msa;
+            }
+            else { _kfSmRoll = _hudMRoll; _kfSmPit = _hudMPitch; }
+
+            float zr = _kfSmRoll - _kfRollOb;                       // offset learned away
             while (zr - _kfRollX > 180f) zr -= 360f;                // unwrap (roll is periodic)
             while (zr - _kfRollX < -180f) zr += 360f;
-            float zp = HudPxToDeg(_hudMPitch) - _kfPitOb;
+            float zp = HudPxToDeg(_kfSmPit) - _kfPitOb;
             float ir = zr - _kfRollX;
             float ip = zp - _kfPitX;
 
