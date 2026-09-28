@@ -123,6 +123,15 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     int _hudSecs = 0;
     bool _hudLocked = false;
     bool _hudNeedLock = false;                    // true from Deploy As Drone until we lock
+    // SPAWN SETTLE: the drone can spawn in an odd pose (sometimes under the map), so the first
+    // frames are garbage. Hold the ladder still for a few seconds, collect what the detector sees,
+    // then lock from the MEDIAN of those samples instead of trusting one frame.
+    volatile bool _hudSettling = false;
+    int _hudSettleMs = 5000;
+    long _hudSettleUntil = 0;
+    float[] _seedR = new float[80];
+    float[] _seedP = new float[80];
+    int _seedN = 0;
     float _hudDetSky = 1f;                        // 0..1 - fraction of the frame that is SKY (above the line)
     float _hudSkySm = 1f;                         // smoothed sky fraction (no pops in the gyro/image blend)
     bool _hudDetValid = false;                    // DetectHorizon found a confident line
@@ -5586,6 +5595,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudFov") _hudFovY = ParseF(v);
             else if (k == "hudManeuver") _hudManeuver = ParseF(v);
             else if (k == "hudRef") _refDist = ParseF(v) / 100f;
+            else if (k == "hudSettleMs") { _hudSettleMs = (int)ParseF(v); if (_hudSettleMs < 0) _hudSettleMs = 0; if (_hudSettleMs > 60000) _hudSettleMs = 60000; }
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -5668,6 +5678,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudFov=" + _hudFovY.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudManeuver=" + _hudManeuver.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRef=" + (_refDist * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudSettleMs=" + _hudSettleMs,
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -6195,6 +6206,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 bool shown = true;
                 _hudLocked = false;    // re-lock the horizon each time the feed comes up
                 _hudNeedLock = true;   // start hunting for the spawn horizon immediately
+                _hudSettling = true;   // hold the ladder still while the spawn pose settles
+                _hudSettleUntil = Environment.TickCount + _hudSettleMs;
+                _seedN = 0;
+                Log("   spawn settle: holding the horizon for " + (_hudSettleMs / 1000) + "s and averaging what we see");
                 long lockArmedAt = Environment.TickCount + 1200;   // skip the base panel/map frames
                 long lastOcr = 0;      // slower cadence: NO SIGNAL / LINK / heading / AGL
                 long lastHome = 0;     // faster cadence: HOME / SPD / ALT
@@ -6374,7 +6389,35 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         lastDet = Environment.TickCount;
                         DetectHorizon();
                     }
-                    if (!_hudLocked && (_hudNeedLock || shown) && Environment.TickCount >= lockArmedAt)
+                    // SETTLE first: the drone spawns in odd poses (sometimes under the map), so one
+                    // first frame is not trustworthy. While settling we only COLLECT samples; the
+                    // lock then uses the MEDIAN of them.
+                    if (_hudSettling)
+                    {
+                        if (Environment.TickCount >= _hudSettleUntil)
+                        {
+                            _hudSettling = false;
+                            if (_seedN >= 3)
+                            {
+                                float[] a = new float[_seedN]; Array.Copy(_seedR, a, _seedN); Array.Sort(a);
+                                float[] c = new float[_seedN]; Array.Copy(_seedP, c, _seedN); Array.Sort(c);
+                                _hudFRoll = a[_seedN / 2]; _hudFPitch = c[_seedN / 2];
+                                _hudLocked = true; _hudNeedLock = false;
+                                _kfSeeded = false;      // re-seed the estimator from the settled value
+                                Log("   horizon settled: roll " + _hudFRoll.ToString("0") + " deg, pitch " +
+                                    _hudFPitch.ToString("0") + "px   (median of " + _seedN + " samples)");
+                            }
+                            else Log("   settle done but only " + _seedN + " samples - locking from the next good frame");
+                        }
+                        else if (Environment.TickCount - lastDet >= 120)
+                        {
+                            lastDet = Environment.TickCount;
+                            DetectHorizon();
+                            if (_hudDetValid && _hudDetConf >= 0.35f && _seedN < _seedR.Length)
+                            { _seedR[_seedN] = _hudDetRoll; _seedP[_seedN] = _hudDetPitch; _seedN++; }
+                        }
+                    }
+                    else if (!_hudLocked && (_hudNeedLock || shown) && Environment.TickCount >= lockArmedAt)
                     {
                         DetectHorizon();
                         if (_hudDetValid)
@@ -6383,6 +6426,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                             _hudNeedLock = false;
                             _hudFRoll = _hudDetRoll;
                             _hudFPitch = _hudDetPitch;
+                            _kfSeeded = false;
                             Log("   horizon locked at spawn: roll " + _hudFRoll.ToString("0") +
                                 " deg, pitch " + _hudFPitch.ToString("0") + "px");
                         }
@@ -7368,6 +7412,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     void HudFuse(float dt, float sxS, float syS, long now)
     {
         if (dt <= 0f) return;
+        // While the spawn pose is settling, HOLD the ladder: no stick integration and no vision.
+        // (The drone can be falling / under the map for a moment, and integrating that would throw
+        // the horizon away before the settle has even finished.)
+        if (_hudSettling) { _kfRollV = 0f; _kfPitV = 0f; return; }
         float f = HudFocalPx();
 
         if (!_kfSeeded)
