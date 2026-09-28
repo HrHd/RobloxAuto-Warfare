@@ -7758,6 +7758,62 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 }
             }
 
+            // --- SKY-ONSET ANCHOR -----------------------------------------------------------------
+            // The block search can sit one BLOCK (B px - ~43 of them at 1080p!) below the true
+            // sky/ground edge: the sky is smooth, but the hazy near-ground reads smooth too, and the
+            // strong "field / tree-line" edge sits below it - so the lock drifts DOWN onto the ground.
+            // That is the "it thinks the ground is the sky" failure (measured on a real frame: the
+            // block lock landed at y=480 while the true edge was ~435). The physical definition is
+            // "the first row that leaves the sky", so scan that at FULL resolution and re-anchor the
+            // line's height to it whenever the block line is clearly sitting below.
+            if (gOk)
+            {
+                float skyL = 0.299f * sr + 0.587f * sg + 0.114f * sb;
+                double gl = 0; int glc = 0;
+                for (int y = H * 88 / 100; y < H * 95 / 100; y += 3)
+                    for (int x = W / 10; x < W * 9 / 10; x += 8)
+                    { int c = px[y * W + x]; gl += 0.299 * ((c >> 16) & 0xFF) + 0.587 * ((c >> 8) & 0xFF) + 0.114 * (c & 0xFF); glc++; }
+                float gndL = glc > 0 ? (float)(gl / glc) : 0f;
+                float dl = Math.Abs(gndL - skyL);
+                if (dl > 10f)
+                {
+                    int cap = (W * 8 / 10) / 12 + 8;
+                    float[] oxs = new float[cap], oys = new float[cap], ows = new float[cap];
+                    int on = 0;
+                    for (int x = W / 10; x < W * 9 / 10 && on < cap; x += 12)
+                    {
+                        for (int y = H / 12; y < H * 80 / 100 - 6; y += 2)
+                        {
+                            int c = px[y * W + x];
+                            float l = 0.299f * ((c >> 16) & 0xFF) + 0.587f * ((c >> 8) & 0xFF) + 0.114f * (c & 0xFF);
+                            if (Math.Abs(l - skyL) > 0.25f * dl)
+                            {
+                                int q = px[(y + 4) * W + x];
+                                float l2 = 0.299f * ((q >> 16) & 0xFF) + 0.587f * ((q >> 8) & 0xFF) + 0.114f * (q & 0xFF);
+                                if (Math.Abs(l2 - skyL) > 0.22f * dl) { oxs[on] = x; oys[on] = y; ows[on] = 3f; on++; }
+                                break;
+                            }
+                        }
+                    }
+                    if (on >= 40)
+                    {
+                        float om, ob, osig; int oinl;
+                        if (FitLineRobust(oxs, oys, ows, on, out om, out ob, out osig, out oinl) && oinl >= on * 6 / 10)
+                        {
+                            float onY = om * (W / 2f) + ob;
+                            float grY = slope * (W / 2f) + icept;
+                            if (onY < grY - 25f)          // the block line is clearly below the sky -> pull it up
+                            {
+                                icept = onY - slope * (W / 2f);   // keep the gradient SLOPE, re-anchor the HEIGHT
+                                float hf3 = (slope * (W / 2f) + icept) / H;
+                                if (hf3 < 0f) hf3 = 0f; if (hf3 > 1f) hf3 = 1f;
+                                detSky = hf3;
+                            }
+                        }
+                    }
+                }
+            }
+
             // --- FALLBACK (only if the blurred search found nothing): full-res gradient + sky term.
             // Score = ROBUST gradient (40th percentile, so a localized
             // high-contrast streak - a smoke plume, a road - cannot win) PLUS a SKY/GROUND colour term:
