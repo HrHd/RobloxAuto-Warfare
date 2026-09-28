@@ -205,7 +205,7 @@ function drawHud(s, glitching) {
   var shear = (typeof s.shear === 'number') ? s.shear : 1;
   var lscale = (typeof s.len === 'number' && s.len > 0) ? s.len : 1;
   var tilt = Math.min(1, Math.abs(s.pit || 0) / 900 + Math.abs(s.roll || 0) / 180);
-  var spread = 1 + 1.1 * tilt;
+  var spread = 1 + (typeof s.spread === 'number' ? s.spread : 2.2) * tilt;
   var rt = rad * (typeof s.rungTilt === 'number' ? s.rungTilt : 0);
   var maxR = (typeof s.maxTilt === 'number' ? s.maxTilt : 30) * Math.PI / 180;   // cap the tilt
   if (rt > maxR) rt = maxR; if (rt < -maxR) rt = -maxR;
