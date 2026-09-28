@@ -1442,10 +1442,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         lbl.ForeColor = Color.Silver;
         lbl.SetBounds(cx, cy, 90, 20);
         Controls.Add(lbl);
-        var nud = new NumericUpDown();
-        nud.Minimum = min; nud.Maximum = max; nud.Increment = inc;
+        var nud = new TuneNum();
+        nud.Minimum = -1000000m; nud.Maximum = 1000000m;   // NO constraints - fine tune freely
+        nud.Increment = inc;
+        nud.Fine = (inc >= 1m) ? 1m : inc;                 // CTRL+wheel step
         nud.DecimalPlaces = decimals;
-        nud.Value = val;
+        nud.Value = val;   // clamp into the wide bounds
+        if (nud.Value < nud.Minimum) nud.Value = nud.Minimum;
+        if (nud.Value > nud.Maximum) nud.Value = nud.Maximum;
         nud.BackColor = Color.FromArgb(14, 15, 18);
         nud.ForeColor = Color.Gainsboro;
         nud.SetBounds(cx + 92, cy - 2, 70, 24);
