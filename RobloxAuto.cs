@@ -157,6 +157,7 @@ class RobloxAuto : Form
     float _hudBadLift = 5f;                         // DEGREES to lift the horizon when detector quality is
                                                     // poor (dial "bad lift") - a weak lock lands low, so
                                                     // we raise it back toward where it belongs
+    float _hudSpreadAccel = 0f;                     // expo on how the ladder fan builds up (dial "spread accel")
     float _hudSpreadAmt = 2.2f;                      // how fast the ladder FANS OUT with tilt (dial "spread")
     float _hudDownLim = 60f;                         // px - soft limit: image cannot push the line DOWN past this (dial "down limit")
     float _hudImgRate = 150f;                        // deg/s - max rate the IMAGE may correct (dial "image limit")
@@ -173,7 +174,7 @@ class RobloxAuto : Form
     float _hudRollStick = 25f;                      // DEG - direct bank from the right stick X (dial "stick tilt")
     float _hudRollStickSm = 0f;                     // smoothed stick-tilt offset
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread;
+    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
@@ -633,6 +634,9 @@ class RobloxAuto : Form
         numSpread = MkTune(x + 168, y, "spread", (decimal)_hudSpreadAmt, 0m, 5m, 0.2m, 1);
         numDownLim.ValueChanged += delegate { _hudDownLim = (float)numDownLim.Value; SaveCfg(); };
         numSpread.ValueChanged += delegate { _hudSpreadAmt = (float)numSpread.Value; SaveCfg(); };
+        numSpreadAccel = MkTune(x, y, "spread accel", (decimal)_hudSpreadAccel, 0m, 1m, 0.05m, 2);
+        numSpreadAccel.ValueChanged += delegate { _hudSpreadAccel = (float)numSpreadAccel.Value; SaveCfg(); };
+        y += 28;
         y += 28;
 
         numImg = MkTune(x, y, "camera trust", (decimal)_hudImgGain, 0m, 4m, 0.1m, 1);
@@ -1420,6 +1424,7 @@ class RobloxAuto : Form
             case "image limit": return "Max rate the IMAGE may correct the horizon (deg/s). Stops a false lock yanking the line.";
             case "down limit": return "The image is not allowed to push the horizon DOWN past this many px (soft limit).";
             case "spread": return "How fast the rungs fan apart with tilt (right stick left/right + pitch).";
+            case "spread accel": return "Expo on the fan: higher = the rungs stay tight for small banks and fan out fast on big ones.";
             case "camera trust": return "How hard the image horizon pulls the lines overall.";
             case "throttle": return "Left-stick throttle nudges the horizon up/down (px).";
             case "roll shift": return "Manual roll offset (deg) if the horizon sits tilted at rest.";
@@ -4480,7 +4485,7 @@ class RobloxAuto : Form
 
         string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
         OverlayHub.I.SetHud(true, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudRoll, _hudPitch, _hudStyleUav, _hudV1, _hudV2);
-        OverlayHub.I.SetDials(_hudDpp, _hudShear, _hudLen, _hudRungTilt, _hudMaxTilt, _hudSpreadAmt);
+        OverlayHub.I.SetDials(_hudDpp, _hudShear, _hudLen, _hudRungTilt, _hudMaxTilt, _hudSpreadAmt, _hudSpreadAccel);
 
         if (_hudForm == null) EnsureHud();          // UI thread - safe to create here
         if (_hudForm != null)
@@ -4491,7 +4496,7 @@ class RobloxAuto : Form
             _hudForm.Hdg = _hudHdg;
             _hudForm.Roll = _hudRoll;
             _hudForm.PitchPx = _hudPitch;
-            _hudForm.Dpp = _hudDpp; _hudForm.Shear = _hudShear; _hudForm.Len = _hudLen; _hudForm.RungTilt = _hudRungTilt; _hudForm.MaxTilt = _hudMaxTilt; _hudForm.SpreadAmt = _hudSpreadAmt;
+            _hudForm.Dpp = _hudDpp; _hudForm.Shear = _hudShear; _hudForm.Len = _hudLen; _hudForm.RungTilt = _hudRungTilt; _hudForm.MaxTilt = _hudMaxTilt; _hudForm.SpreadAmt = _hudSpreadAmt; _hudForm.SpreadAccel = _hudSpreadAccel;
             _hudForm.Uav = _hudStyleUav;
             _hudForm.V1 = _hudV1; _hudForm.V2 = _hudV2;
             _hudForm.Timer = string.Format("{0:00}:{1:00}", _hudSecs / 60, _hudSecs % 60);
@@ -5052,6 +5057,7 @@ class RobloxAuto : Form
             else if (k == "hudImgRate") _hudImgRate = ParseF(v);
             else if (k == "hudDownLim") _hudDownLim = ParseF(v);
             else if (k == "hudSpread") _hudSpreadAmt = ParseF(v);
+            else if (k == "hudSpreadAccel") _hudSpreadAccel = ParseF(v);
             else if (k == "hudImg") _hudImgGain = ParseF(v);
             else if (k == "hudRollOff") _hudRollOff = ParseF(v);
             else if (k == "hudPitOff") _hudPitOff = ParseF(v);
@@ -5132,6 +5138,7 @@ class RobloxAuto : Form
             "hudImgRate=" + _hudImgRate.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudDownLim=" + _hudDownLim.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSpread=" + _hudSpreadAmt.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudSpreadAccel=" + _hudSpreadAccel.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -5311,7 +5318,7 @@ class RobloxAuto : Form
         public float V1 = 0f, V2 = 0f;      // simulated pack voltages for the battery row
         public int Secs = 0;   // flight seconds - drives the draining battery readout
         public float Roll = 0f, PitchPx = 0f;
-        public float Dpp = 8f, Shear = 0.9f, Len = 1f, RungTilt = 0f, MaxTilt = 30f, SpreadAmt = 2.2f;   // ladder geometry dials
+        public float Dpp = 8f, Shear = 0.9f, Len = 1f, RungTilt = 0f, MaxTilt = 30f, SpreadAmt = 2.2f, SpreadAccel = 0f;   // ladder geometry dials
         public bool Uav = false;
         readonly Font _f = new Font("Consolas", 12F, FontStyle.Bold);
         readonly Font _fb = new Font("Consolas", 15F, FontStyle.Bold);
@@ -5449,7 +5456,8 @@ class RobloxAuto : Form
             // TO THE REAL HORIZON (tilted like the ground line), like a gyro/instrument horizon. Pitch
             // slides the whole ladder up/down.
             float tilt = Math.Min(1f, Math.Abs(PitchPx) / 900f + Math.Abs(Roll) / 180f);
-            float spread = 1f + SpreadAmt * tilt;
+            float tS = tilt * ((1f - SpreadAccel) + SpreadAccel * tilt * tilt);   // expo: fan builds slower then faster
+            float spread = 1f + SpreadAmt * tS;
             // Rungs follow the bank ("rung tilt"), but the angle is CAPPED at "max tilt" so they can
             // never swing way out. The SAME capped angle drives the staircase, so the rungs stay level
             // with the slide instead of fighting it.
@@ -7047,7 +7055,7 @@ class RobloxAuto : Form
         float _roll = 0f, _pit = 0f;
         bool _uav = false;
         float _v1 = 0f, _v2 = 0f;
-        float _dpp = 8f, _shear = 0.9f, _len = 1f, _rungTilt = 0f, _maxTilt = 30f, _spread = 2.2f;   // ladder geometry dials (from settings)
+        float _dpp = 8f, _shear = 0.9f, _len = 1f, _rungTilt = 0f, _maxTilt = 30f, _spread = 2.2f, _spreadAccel = 0f;   // ladder geometry dials (from settings)
         float _plx = 0f, _ply = 0f, _prx = 0f, _pry = 0f;   // live stick values (diagnostics)
         float _alx = 0f, _aly = 0f, _arx = 0f, _ary = 0f;   // stick values fed by the joystick app
         long _aPadAt = 0;
@@ -7096,8 +7104,8 @@ class RobloxAuto : Form
         }
         public void SetHud(bool on, string hdg, string spd, string agl, float roll, float pit, bool uav, float v1, float v2)
         { lock (_lock) { _hud = on; _hdg = hdg ?? ""; _spd = spd ?? ""; _agl = agl ?? ""; _roll = roll; _pit = pit; _uav = uav; _v1 = v1; _v2 = v2; } }
-        public void SetDials(float dpp, float shear, float len, float rungTilt, float maxTilt, float spread)
-        { lock (_lock) { _dpp = dpp; _shear = shear; _len = len; _rungTilt = rungTilt; _maxTilt = maxTilt; _spread = spread; } }
+        public void SetDials(float dpp, float shear, float len, float rungTilt, float maxTilt, float spread, float spreadAccel)
+        { lock (_lock) { _dpp = dpp; _shear = shear; _len = len; _rungTilt = rungTilt; _maxTilt = maxTilt; _spread = spread; _spreadAccel = spreadAccel; } }
         void Step() { lock (_lock) { _progress += (_target - _progress) * 0.12f; if (Math.Abs(_target - _progress) < 0.002f) _progress = _target; } }
 
         static string Esc(string s)
@@ -7144,6 +7152,7 @@ class RobloxAuto : Form
                     sb.Append(",\"rungTilt\":").Append(_rungTilt.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"maxTilt\":").Append(_maxTilt.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"spread\":").Append(_spread.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"spreadAccel\":").Append(_spreadAccel.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
                     // overlay.html version = its last-write time; the page reloads itself when it changes
                     // so OBS can never sit on a stale render again
                     string oVer = "0";
