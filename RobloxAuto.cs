@@ -5764,14 +5764,14 @@ class RobloxAuto : Form
                             // own name), plus only the unambiguous screen names. We must NOT use the
                             // whole ScreenName(): its "map" case matches the bare word POINT, and the
                             // MAVIC OSD prints "Return to a supply point".
-                            string why;
+                            string why; bool menuWeak = false;
                             string sn = ScreenName(OcrWords());
-                            bool menuEv = MenuOnScreen(out why)
+                            bool menuEv = MenuOnScreen(out why, out menuWeak)
                                 || sn == "team select" || sn == "lobby" || sn == "loadout"
                                 || sn == "team base" || sn == "loading";
                             // the map counts as a menu - but ONLY when there is no drone OSD text on
                             // screen, so the MAVIC's "Return to a supply point" cannot trigger it
-                            if (!menuEv && sn == "map" && !droneEv) { menuEv = true; why = "map"; }
+                            if (!menuEv && sn == "map" && !droneEv) { menuEv = true; why = "map"; menuWeak = true; }
                             if (!menuEv && sn != "unknown" && sn != "map") { menuEv = true; why = "screen " + sn; }
                             if (fs >= 0) { _flightOcrBase = fs; _flightOcrAt = Environment.TickCount; }
 
@@ -5791,6 +5791,10 @@ class RobloxAuto : Form
                             // not keep it up for the debounce. If the frame also shows drone text
                             // (contradictory), take two reads so one bad OCR frame cannot blink it.
                             int needOut = droneEv ? 2 : 1;
+                            // A WEAK-only menu (objective panel / SQUAD box / map) flashes on screen
+                            // mid-flight when you press a button, so require several consecutive reads
+                            // before dropping the HUD - a transient panel must not kill the overlay.
+                            if (menuEv && menuWeak) needOut = Math.Max(needOut, 4);
                             if (shown && outHits >= needOut)
                             {
                                 shown = false;
@@ -5981,10 +5985,16 @@ class RobloxAuto : Form
     // Words that ONLY ever appear on the nav bar, the lobby, the loadout, the map or the panels -
     // NEVER on the drone OSD. Seeing any one of them is proof we are not flying, so the HUD comes
     // down immediately; the 30s timeout only covers the case where the OSD simply reads blank.
-    bool MenuOnScreen() { string why; return MenuOnScreen(out why); }
+    bool MenuOnScreen() { string why; bool w; return MenuOnScreen(out why, out w); }
 
-    bool MenuOnScreen(out string why)
+    bool MenuOnScreen(out string why) { bool w; return MenuOnScreen(out why, out w); }
+
+    bool MenuOnScreen(out string why, out bool weak)
     {
+        // "weak" tells are words the objective panel and the SQUAD box print, but which ALSO flash
+        // on screen during flight (a button press pops the map/score board for a moment). A weak-only
+        // match must NOT drop the HUD on one read - the caller debounces it.
+        weak = false;
         // Chosen from real OCR of every non-drone screen. DELIBERATELY EXCLUDED because they appear
         // on BOTH a menu and the drone OSD: POINT (map labels vs MAVIC "supply point"), RETURN
         // (TEAM BASE vs MAVIC "Return to a supply point"), BASE (map "Base" vs "TEAM BASE"), and the
@@ -5999,12 +6009,14 @@ class RobloxAuto : Form
             // TEAM BASE panel / base. "BASE" is safe to use as a tell: the map prints a "Base"
             // label and TEAM BASE contains it, and the drone OSD never prints the word at all.
             "TEAM BASE", "BASE", "DEPLOY AS DRONE", "WARHEAD",
-            // the map's objective panel
-            "CAPTURE", "CONTROL", "ELIMINATE", "TOP KILLS", "COMPLETED",
             // team select / respawn / loading / crash (these screens have NO nav bar, which is why
             // the HUD used to linger on them)
-            "PLAYERS", "JOINING", "JOIN", "SERVER", "CONNECTING", "RESPAWN", "SPECTAT", "DEPLOYING",
-            // the persistent SQUAD box
+            "PLAYERS", "JOINING", "JOIN", "SERVER", "CONNECTING", "RESPAWN", "SPECTAT", "DEPLOYING"
+        };
+        // WEAK tells - the objective panel / SQUAD box words. They appear in-flight too (a button
+        // press flashes the map or scoreboard), so they only count after several consecutive reads.
+        string[] weakKeys = new string[] {
+            "CAPTURE", "CONTROL", "ELIMINATE", "TOP KILLS", "COMPLETED", "DEPLOY",
             "SQUAD", "GHILLE", "JOIN OR CREATE"
         };
         // Multi-word labels are matched as PHRASES, not single tokens - OCR hands back "TEAM" and
@@ -6013,6 +6025,7 @@ class RobloxAuto : Form
             "TEAM BASE", "CHANGE TEAM", "SELECT DRONE", "DEPLOY AS DRONE", "TOP KILLS", "JOIN OR CREATE"
         };
         why = "";
+        string weakWhy = "";
         List<string[]>[] sets = new List<string[]>[2];
         try { sets[0] = OcrWords(); } catch { }
         try { sets[1] = OcrWordsWhiten(); } catch { }
@@ -6023,14 +6036,22 @@ class RobloxAuto : Form
             {
                 string t = (w[4] ?? "").ToUpperInvariant();
                 for (int i = 0; i < keys.Length; i++)
-                    if (t.IndexOf(keys[i]) >= 0) { why = "saw \"" + keys[i] + "\""; return true; }
+                    if (t.IndexOf(keys[i]) >= 0) { why = "saw \"" + keys[i] + "\""; weak = false; return true; }
+                for (int i = 0; i < weakKeys.Length; i++)
+                    if (t.IndexOf(weakKeys[i]) >= 0) { if (weakWhy == "") weakWhy = "saw \"" + weakKeys[i] + "\""; }
                 // our own name is printed on every menu and never on the drone OSD
                 if (_userName.Length >= 4 && Norm(t).IndexOf(Norm(_userName)) >= 0)
-                { why = "saw username"; return true; }
+                { why = "saw username"; weak = false; return true; }
             }
             foreach (string p in phrases)
-                if (FindPhraseAll(p, null, set).Count > 0) { why = "saw \"" + p + "\""; return true; }
+                if (FindPhraseAll(p, null, set).Count > 0)
+                {
+                    // TOP KILLS / JOIN OR CREATE also flash in-flight -> treat those as weak
+                    bool strongP = p != "TOP KILLS" && p != "JOIN OR CREATE";
+                    why = "saw \"" + p + "\""; weak = !strongP; return true;
+                }
         }
+        if (weakWhy != "") { why = weakWhy; weak = true; return true; }   // weak-only match
         return false;
     }
 
