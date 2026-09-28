@@ -224,6 +224,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudMRoll = 0f, _hudMPitch = 0f;        // deg, px offset from centre
     float _hudAxisW = 1f;                          // dial "axis weight": influence of the sky/ground colour axis cue
     float _hudMsTau = 0.08f;                       // dial "axis smooth": low-pass time constant (s) on the detector measurement
+    string _hudScene = "?";                      // matched base scene (snow/fog/grey/normal)
+    float _hudSceneD = 9f;                        // distance to that base scene
+    float _hudSceneTol = 0.10f;                   // max RMS distance to claim a scene match
+    int _hudSceneTick = 0;
     float _hudSkyFlatMax = 0.70f;                 // dial "sky flat": max top-band texture as a FRACTION of the whole frame (real sky is far smoother)
     float _hudSkyMin = 0.10f;                      // dial "sky min": discard a frame with less verified sky than this
     int _hudNoSkyFrames = 0;                       // frames discarded for having no usable sky
@@ -7464,6 +7468,36 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         return s;
     }
 
+    // ---- BASE MAP SIGNATURES ("what map / scene are we on?") ------------------------------------
+    // Baked from three real reference frames, each a 6x6x3 colour signature (normalised 0..1) in the
+    // exact shape SigFromBlocks produces, so a live frame can be matched against them.
+    //   snow : Screenshot 2026-09-27 065512 - sky lum 68 over SNOW ground lum 205 (the ground is the
+    //          BRIGHT side; texture ratio 0.09 - a very flat sky).
+    //   fog  : 2026-09-27 040809 - hazy; sky lum 172, ground 184, top band as busy as the whole scene.
+    //   grey : 2026-09-27 172515 - flat overcast; B-R ~0.6 (no colour to key on).
+    static readonly string[] MapNames = { "snow", "fog", "grey" };
+    static readonly float[][] MapSigs = new float[][]
+    {
+        new float[] {0.2640f,0.2926f,0.3137f,0.2647f,0.2931f,0.3139f,0.2649f,0.2932f,0.3141f,0.2650f,0.2931f,0.3139f,0.2649f,0.2931f,0.3139f,0.2653f,0.2933f,0.3141f,0.3519f,0.3813f,0.4025f,0.3521f,0.3814f,0.4029f,0.3519f,0.3813f,0.4026f,0.3519f,0.3814f,0.4025f,0.3902f,0.4171f,0.4371f,0.3885f,0.4158f,0.4355f,0.4810f,0.5112f,0.5337f,0.4810f,0.5112f,0.5334f,0.4813f,0.5112f,0.5338f,0.4809f,0.5105f,0.5334f,0.4737f,0.5037f,0.5262f,0.4567f,0.4863f,0.5090f,0.6464f,0.6787f,0.7034f,0.6465f,0.6791f,0.7036f,0.6464f,0.6790f,0.7034f,0.6469f,0.6793f,0.7037f,0.6471f,0.6796f,0.7039f,0.6469f,0.6794f,0.7040f,0.7713f,0.8092f,0.8357f,0.7717f,0.8093f,0.8361f,0.7716f,0.8086f,0.8359f,0.7728f,0.8093f,0.8362f,0.7726f,0.8096f,0.8364f,0.7730f,0.8106f,0.8371f,0.7734f,0.8108f,0.8409f,0.7739f,0.8120f,0.8417f,0.7742f,0.8120f,0.8412f,0.7765f,0.8139f,0.8431f,0.7773f,0.8153f,0.8444f,0.7773f,0.8157f,0.8446f},
+        new float[] {0.5626f,0.6244f,0.7100f,0.6020f,0.6724f,0.7710f,0.6141f,0.6679f,0.7555f,0.6628f,0.6997f,0.7650f,0.7289f,0.7503f,0.7926f,0.7614f,0.7715f,0.7935f,0.6497f,0.7078f,0.7829f,0.6429f,0.6987f,0.7740f,0.6566f,0.7006f,0.7682f,0.6938f,0.7209f,0.7652f,0.7343f,0.7441f,0.7649f,0.7463f,0.7487f,0.7553f,0.6677f,0.7052f,0.7535f,0.6677f,0.7012f,0.7455f,0.6829f,0.7055f,0.7383f,0.7082f,0.7192f,0.7354f,0.7259f,0.7298f,0.7360f,0.7325f,0.7374f,0.7375f,0.6509f,0.6777f,0.7125f,0.6577f,0.6802f,0.7099f,0.6868f,0.7082f,0.7185f,0.7292f,0.7602f,0.7349f,0.7559f,0.8025f,0.7462f,0.7748f,0.8320f,0.7567f,0.6898f,0.7129f,0.7145f,0.7419f,0.7870f,0.7400f,0.7710f,0.8272f,0.7520f,0.7803f,0.8337f,0.7584f,0.7905f,0.8423f,0.7680f,0.7976f,0.8500f,0.7753f,0.6692f,0.6724f,0.6345f,0.6556f,0.6636f,0.6187f,0.6879f,0.7101f,0.6580f,0.8035f,0.8224f,0.7801f,0.8015f,0.8413f,0.7772f,0.7874f,0.8395f,0.7659f},
+        new float[] {0.7267f,0.7268f,0.7313f,0.8166f,0.8172f,0.8201f,0.8208f,0.8212f,0.8236f,0.8203f,0.8206f,0.8226f,0.7238f,0.7344f,0.7458f,0.6468f,0.6659f,0.6860f,0.7558f,0.7571f,0.7604f,0.7665f,0.7668f,0.7690f,0.7766f,0.7761f,0.7769f,0.7805f,0.7793f,0.7791f,0.7716f,0.7709f,0.7711f,0.7645f,0.7642f,0.7648f,0.7378f,0.7392f,0.7417f,0.7411f,0.7412f,0.7425f,0.7457f,0.7451f,0.7449f,0.7488f,0.7479f,0.7474f,0.7509f,0.7502f,0.7491f,0.7460f,0.7465f,0.7477f,0.7364f,0.7375f,0.7401f,0.7378f,0.7381f,0.7390f,0.7429f,0.7419f,0.7413f,0.7481f,0.7462f,0.7452f,0.7500f,0.7482f,0.7474f,0.7462f,0.7462f,0.7468f,0.7283f,0.7304f,0.7327f,0.7277f,0.7288f,0.7294f,0.7299f,0.7297f,0.7284f,0.7345f,0.7335f,0.7312f,0.7382f,0.7375f,0.7360f,0.7372f,0.7378f,0.7386f,0.6955f,0.6992f,0.7016f,0.7085f,0.7105f,0.7101f,0.7033f,0.7044f,0.7017f,0.7098f,0.7101f,0.7064f,0.7198f,0.7201f,0.7176f,0.7096f,0.7119f,0.7130f}
+    };
+
+    // Nearest baked base map. Returns the index and the RMS distance per channel (0..1 scale).
+    static int MatchMap(float[] s, out float dist)
+    {
+        int best = -1; float bd = float.MaxValue;
+        for (int i = 0; i < MapSigs.Length; i++)
+        {
+            float[] r = MapSigs[i]; float d = 0f;
+            int n = r.Length < s.Length ? r.Length : s.Length;
+            for (int j = 0; j < n; j++) { float df = r[j] - s[j]; d += df * df; }
+            d = n > 0 ? (float)Math.Sqrt(d / n) : 0f;
+            if (d < bd) { bd = d; best = i; }
+        }
+        dist = bd; return best;
+    }
+
     // Same signature from a reference image on disk.
     static float[] SigFromBitmap(Bitmap bmp)
     {
@@ -7944,6 +7978,19 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 axSign = axUseLum ? (skyL2 >= gndL2 ? 1f : -1f) : (skyB2 >= gndB2 ? 1f : -1f);
                 axGnd = axUseLum ? gndL2 : gndB2;
                 float axSky = axUseLum ? skyL2 : skyB2;
+                // --- SCENE CLASSIFIER: match this frame against the baked base maps (snow / fog /
+                // grey). SNOW inverts sky/ground brightness (the ground is the BRIGHT one); FOG and
+                // flat overcast GREY have almost no colour horizon at all. Knowing the scene tells us
+                // whether a colour lock is even meaningful and which axis to trust.
+                if (_hudSceneTick++ % 20 == 0)
+                {
+                    float sd; int mi = MatchMap(SigFromBlocks(imR, imG, imB, gw, gh), out sd);
+                    _hudSceneD = sd;
+                    _hudScene = (mi >= 0 && sd <= _hudSceneTol) ? MapNames[mi] : "normal";
+                }
+                // On SNOW force the brightness axis (ground brighter than sky). The bands already say
+                // so, but snow is exactly where a single frame's guess flips - the base map is surer.
+                if (_hudScene == "snow") { axUseLum = true; axSign = (skyL2 >= gndL2 ? 1f : -1f); axGnd = gndL2; axSky = skyL2; }
                 float[] imAX = new float[gw * gh];
                 for (int i = 0; i < gw * gh; i++)
                 {
@@ -8582,7 +8629,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (Environment.TickCount - _hudLogAt >= 2000)
             {
                 _hudLogAt = Environment.TickCount;
-                Log("horizon det: " + (gOk ? "global" : n + " pts") + ", roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px, sky " + (_hudDetSky * 100f).ToString("0") + "% trust " + (_hudDetConf * 100f).ToString("0") + "% clutter " + (_hudClutter * 100f).ToString("0") + "%" + (_refSigs.Count > 0 ? " ref " + (_refD * 100f).ToString("0") + (_refGood ? " good" : " BAD") : "")
+                Log("horizon det: " + (gOk ? "global" : n + " pts") + ", roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px, sky " + (_hudDetSky * 100f).ToString("0") + "% trust " + (_hudDetConf * 100f).ToString("0") + "% clutter " + (_hudClutter * 100f).ToString("0") + "% scene " + _hudScene + "(" + _hudSceneD.ToString("0.00") + ")" + (_refSigs.Count > 0 ? " ref " + (_refD * 100f).ToString("0") + (_refGood ? " good" : " BAD") : "")
                     + (onsetAnchored ? "  sky-onset-anchored" : "") + (refHit ? "  REF-ANSWER" : ""));
             }
         }
