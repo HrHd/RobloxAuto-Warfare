@@ -149,7 +149,8 @@ class RobloxAuto : Form
     float _hudDpp = 8f;                            // px per degree of pitch (rung spacing)
     float _hudShear = 0.9f;                         // 0 = lines never slide, 1 = exact geometric shear
     float _hudLen = 1f;
-    float _hudRungTilt = 0f;                       // 0 = rungs stay FLAT/horizontal, 1 = rungs parallel to the horizon                             // rung length scale
+    float _hudMaxTilt = 30f;                       // DEG - hard cap on how far the rungs may tilt (dial "max tilt")
+    float _hudRungTilt = 1f;                       // 0 = rungs stay FLAT/horizontal, 1 = rungs parallel to the horizon                             // rung length scale
     float _hudImgGain = 1f;                         // how hard the image horizon corrects the gyro (complementary)
     float _hudRollOff = 0f;                         // manual roll offset, degrees (dial "roll off")
     float _hudPitOff = 0f;                          // manual pitch offset, px (dial "pitch off")
@@ -169,7 +170,7 @@ class RobloxAuto : Form
     float _hudRollStick = 25f;                      // DEG - direct bank from the right stick X (dial "stick tilt")
     float _hudRollStickSm = 0f;                     // smoothed stick-tilt offset
     NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel;
-    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt;
+    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
@@ -617,6 +618,8 @@ class RobloxAuto : Form
         numLen.ValueChanged += delegate { _hudLen = (float)numLen.Value; SaveCfg(); };
         numRungTilt = MkTune(x + 168, y, "rung tilt", (decimal)_hudRungTilt, 0m, 1m, 0.1m, 1);
         numRungTilt.ValueChanged += delegate { _hudRungTilt = (float)numRungTilt.Value; SaveCfg(); };
+        numMaxTilt = MkTune(x, y, "max tilt (deg)", (decimal)_hudMaxTilt, 0m, 90m, 5m, 0);
+        numMaxTilt.ValueChanged += delegate { _hudMaxTilt = (float)numMaxTilt.Value; SaveCfg(); };
         y += 28;
 
         numImg = MkTune(x, y, "camera trust", (decimal)_hudImgGain, 0m, 4m, 0.1m, 1);
@@ -4411,7 +4414,7 @@ class RobloxAuto : Form
 
         string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
         OverlayHub.I.SetHud(true, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudRoll, _hudPitch, _hudStyleUav, _hudV1, _hudV2);
-        OverlayHub.I.SetDials(_hudDpp, _hudShear, _hudLen, _hudRungTilt);
+        OverlayHub.I.SetDials(_hudDpp, _hudShear, _hudLen, _hudRungTilt, _hudMaxTilt);
 
         if (_hudForm == null) EnsureHud();          // UI thread - safe to create here
         if (_hudForm != null)
@@ -4422,7 +4425,7 @@ class RobloxAuto : Form
             _hudForm.Hdg = _hudHdg;
             _hudForm.Roll = _hudRoll;
             _hudForm.PitchPx = _hudPitch;
-            _hudForm.Dpp = _hudDpp; _hudForm.Shear = _hudShear; _hudForm.Len = _hudLen; _hudForm.RungTilt = _hudRungTilt;
+            _hudForm.Dpp = _hudDpp; _hudForm.Shear = _hudShear; _hudForm.Len = _hudLen; _hudForm.RungTilt = _hudRungTilt; _hudForm.MaxTilt = _hudMaxTilt;
             _hudForm.Uav = _hudStyleUav;
             _hudForm.V1 = _hudV1; _hudForm.V2 = _hudV2;
             _hudForm.Timer = string.Format("{0:00}:{1:00}", _hudSecs / 60, _hudSecs % 60);
@@ -4979,6 +4982,7 @@ class RobloxAuto : Form
             else if (k == "hudShear") _hudShear = ParseF(v);
             else if (k == "hudLen") _hudLen = ParseF(v);
             else if (k == "hudRungTilt") _hudRungTilt = ParseF(v);
+            else if (k == "hudMaxTilt") _hudMaxTilt = ParseF(v);
             else if (k == "hudImg") _hudImgGain = ParseF(v);
             else if (k == "hudRollOff") _hudRollOff = ParseF(v);
             else if (k == "hudPitOff") _hudPitOff = ParseF(v);
@@ -5055,6 +5059,7 @@ class RobloxAuto : Form
             "hudShear=" + _hudShear.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudLen=" + _hudLen.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRungTilt=" + _hudRungTilt.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudMaxTilt=" + _hudMaxTilt.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -5234,7 +5239,7 @@ class RobloxAuto : Form
         public float V1 = 0f, V2 = 0f;      // simulated pack voltages for the battery row
         public int Secs = 0;   // flight seconds - drives the draining battery readout
         public float Roll = 0f, PitchPx = 0f;
-        public float Dpp = 8f, Shear = 0.9f, Len = 1f, RungTilt = 0f;   // ladder geometry dials
+        public float Dpp = 8f, Shear = 0.9f, Len = 1f, RungTilt = 1f, MaxTilt = 30f;   // ladder geometry dials
         public bool Uav = false;
         readonly Font _f = new Font("Consolas", 12F, FontStyle.Bold);
         readonly Font _fb = new Font("Consolas", 15F, FontStyle.Bold);
@@ -5373,7 +5378,13 @@ class RobloxAuto : Form
             // slides the whole ladder up/down.
             float tilt = Math.Min(1f, Math.Abs(PitchPx) / 900f + Math.Abs(Roll) / 250f);   // tilt fans the ladder less so it stays put
             float spread = 1f + 0.7f * tilt;
-            float rt = rad * RungTilt; float dxr = (float)Math.Cos(rt), dyr = (float)Math.Sin(rt);   // rung dir (dial "rung tilt")
+            // Rungs follow the bank ("rung tilt"), but the angle is CAPPED at "max tilt" so they can
+            // never swing way out. The SAME capped angle drives the staircase, so the rungs stay level
+            // with the slide instead of fighting it.
+            float rt = rad * RungTilt;
+            float maxR = MaxTilt * (float)Math.PI / 180f;
+            if (rt > maxR) rt = maxR; if (rt < -maxR) rt = -maxR;
+            float dxr = (float)Math.Cos(rt), dyr = (float)Math.Sin(rt);
             for (int d = -90; d <= 90; d += 10)
             {
                 float yy = PitchPx + d * Dpp * spread;       // dpp = px per degree, fanned by the tilt
@@ -5386,7 +5397,7 @@ class RobloxAuto : Form
                     ? new Pen(Color.FromArgb(aMain, 255, 255, 255), 2)
                     : new Pen(Color.FromArgb(aThin, 230, 230, 230), 1);
                 float ay = cy + yy;
-                float cxx = cx - (float)Math.Tan(rad) * yy * Shear;   // rail offset = the STAIRCASE
+                float cxx = cx - (float)Math.Tan(rt) * yy * Shear;   // rail offset = the STAIRCASE (same capped angle)
                 PointF a = new PointF(cxx - half * dxr, ay - half * dyr);
                 PointF b = new PointF(cxx + half * dxr, ay + half * dyr);
                 g.DrawLine(pen, a, b);
@@ -6964,7 +6975,7 @@ class RobloxAuto : Form
         float _roll = 0f, _pit = 0f;
         bool _uav = false;
         float _v1 = 0f, _v2 = 0f;
-        float _dpp = 8f, _shear = 0.9f, _len = 1f, _rungTilt = 0f;   // ladder geometry dials (from settings)
+        float _dpp = 8f, _shear = 0.9f, _len = 1f, _rungTilt = 1f, _maxTilt = 30f;   // ladder geometry dials (from settings)
         float _plx = 0f, _ply = 0f, _prx = 0f, _pry = 0f;   // live stick values (diagnostics)
         float _alx = 0f, _aly = 0f, _arx = 0f, _ary = 0f;   // stick values fed by the joystick app
         long _aPadAt = 0;
@@ -7013,8 +7024,8 @@ class RobloxAuto : Form
         }
         public void SetHud(bool on, string hdg, string spd, string agl, float roll, float pit, bool uav, float v1, float v2)
         { lock (_lock) { _hud = on; _hdg = hdg ?? ""; _spd = spd ?? ""; _agl = agl ?? ""; _roll = roll; _pit = pit; _uav = uav; _v1 = v1; _v2 = v2; } }
-        public void SetDials(float dpp, float shear, float len, float rungTilt)
-        { lock (_lock) { _dpp = dpp; _shear = shear; _len = len; _rungTilt = rungTilt; } }
+        public void SetDials(float dpp, float shear, float len, float rungTilt, float maxTilt)
+        { lock (_lock) { _dpp = dpp; _shear = shear; _len = len; _rungTilt = rungTilt; _maxTilt = maxTilt; } }
         void Step() { lock (_lock) { _progress += (_target - _progress) * 0.12f; if (Math.Abs(_target - _progress) < 0.002f) _progress = _target; } }
 
         static string Esc(string s)
@@ -7059,6 +7070,7 @@ class RobloxAuto : Form
                     sb.Append(",\"shear\":").Append(_shear.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"len\":").Append(_len.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"rungTilt\":").Append(_rungTilt.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"maxTilt\":").Append(_maxTilt.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
                     // overlay.html version = its last-write time; the page reloads itself when it changes
                     // so OBS can never sit on a stale render again
                     string oVer = "0";
