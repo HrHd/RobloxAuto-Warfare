@@ -2854,6 +2854,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         if (ClickPhrasePersistent("Deploy As Drone", 3000, g)) return true;   // brief try, then position
         try
         {
+            // Only use the positional method when we have CONFIRMED the TEAM BASE panel: seeing
+            // TEAM BASE tells us exactly where we are, and Return's row tells us Deploy As Drone is
+            // the button directly below it. Never guess on some other screen.
+            bool onBase = PhraseOnScreen("TEAM BASE") || PhraseOnScreenWhiten("TEAM BASE") || BasePanelVisual();
+            if (!onBase) { Log("   Deploy As Drone: not on TEAM BASE - not clicking blindly"); return false; }
             List<string[]> ws = OcrWords();
             List<string[]> ww = OcrWordsWhiten();
             List<Hit> hr = FindPhraseAll("Return", null, ws); if (hr.Count == 0) hr = FindPhraseAll("Return", null, ww);
