@@ -3022,24 +3022,41 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         {
             int W, H; int[] q = Grab(out W, out H);
             if (q == null) return false;
+            // The buttons are SOLID BARS, so match the LONGEST CONTIGUOUS RUN in each row rather
+            // than counting pixels: a green field or a brown patch has thousands of scattered
+            // matching pixels but no long run, and counting let terrain win the row and throw the
+            // pitch out. Runs cannot be fooled that way.
             int x0 = W * 12 / 100, x1 = W * 88 / 100;
             int gY = -1, mY = -1, gC = -1, mC = -1, gN = 0, mN = 0;
             for (int y = H * 24 / 100; y < H * 82 / 100; y++)
             {
-                int gn = 0, mn = 0, gf = -1, gl = -1, mf = -1, ml = -1;
+                int gBest = 0, gBestC = -1, gRun = 0, gRunStart = 0;
+                int mBest = 0, mBestC = -1, mRun = 0, mRunStart = 0;
                 for (int x = x0; x < x1; x++)
                 {
                     int v = q[y * W + x];
                     int r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
-                    if (g - r >= 30 && g - b >= 55 && g >= 100) { gn++; if (gf < 0) gf = x; gl = x; }
-                    else if (r >= 90 && r <= 125 && g <= 80 && b <= 75 && r - g >= 28 && r - b >= 30) { mn++; if (mf < 0) mf = x; ml = x; }
+                    bool isG = (g - r >= 30 && g - b >= 55 && g >= 100);
+                    bool isM = (r >= 90 && r <= 125 && g <= 80 && b <= 75 && r - g >= 28 && r - b >= 30);
+                    if (isG) { if (gRun == 0) gRunStart = x; gRun++; if (gRun > gBest) { gBest = gRun; gBestC = (gRunStart + x) / 2; } }
+                    else gRun = 0;
+                    if (isM) { if (mRun == 0) mRunStart = x; mRun++; if (mRun > mBest) { mBest = mRun; mBestC = (mRunStart + x) / 2; } }
+                    else mRun = 0;
                 }
-                if (gn > gN) { gN = gn; gY = y; gC = (gf + gl) / 2; }
-                if (mn > mN) { mN = mn; mY = y; mC = (mf + ml) / 2; }
+                if (gBest > gN) { gN = gBest; gY = y; gC = gBestC; }
+                if (mBest > mN) { mN = mBest; mY = y; mC = mBestC; }
             }
-            if (gN < 90 || mN < 90 || mY <= gY) return false;
-            int pitch = mY - gY; if (pitch < 30 || pitch > 80) pitch = 52;
+            // The green Deploy and maroon Return bars are ~200px wide. Require a solid run so a
+            // terrain streak cannot stand in for a button.
+            if (gN < 120 || mN < 120 || mY <= gY) return false;
+            int pitch = mY - gY; if (pitch < 30 || pitch > 80) pitch = 58;
             int tx = mC, ty = mY + pitch;
+            // The panel is the SAME three bars every time: Deploy (green) -> Return (maroon) ->
+            // Deploy As Drone (gold), one pitch apart. Now that BOTH bars are found with a solid
+            // run and the maroon is below the green, the gold button IS one pitch under Return -
+            // so use the geometry. The gold fill is only a CONFIDENCE reading (the button is
+            // translucent, so its colour shifts with the terrain behind it); a poor fill must not
+            // veto a click the panel layout already proves.
             int go = 0, n = 0;
             for (int dx = -60; dx <= 60; dx += 12)
                 for (int dy = -10; dy <= 10; dy += 5)
@@ -3050,10 +3067,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     int r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
                     if (r >= 128 && g >= 98 && b <= 64 && r - g >= 18 && g - b >= 42) go++;
                 }
-            if (n == 0 || go * 100 < n * 35) { Log("   TEAM BASE bars found but the Deploy As Drone fill is not gold - not clicking"); return false; }
+            int goldPct = n > 0 ? 100 * go / n : 0;
             px2 = tx; py2 = ty;
-            Log("   TEAM BASE anchors: Deploy(green) y=" + gY + ", Return(maroon) y=" + mY + ", pitch " + pitch +
-                " -> Deploy As Drone at (" + tx + "," + ty + ")  gold " + (100 * go / n) + "%");
+            Log("   TEAM BASE anchors: Deploy(green) y=" + gY + " run " + gN + ", Return(maroon) y=" + mY + " run " + mN +
+                ", pitch " + pitch + " -> Deploy As Drone at (" + tx + "," + ty + ")  gold " + goldPct + "%" +
+                (goldPct < 35 ? " (low, but the panel geometry puts it there)" : ""));
             return true;
         }
         catch { return false; }
