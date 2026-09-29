@@ -274,7 +274,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
     // ================= win32 =================
     const int WM_HOTKEY = 0x0312;
-    const int HK_REJOIN = 0x5A01, HK_AUTO = 0x5A02, HK_NIGHT = 0x5A03, HK_STOP = 0x5A04, HK_INSTANT = 0x5A05, HK_SWAP = 0x5A06;
+    const int HK_REJOIN = 0x5A01, HK_AUTO = 0x5A02, HK_NIGHT = 0x5A03, HK_STOP = 0x5A04, HK_INSTANT = 0x5A05, HK_SWAP = 0x5A06, HK_REF = 0x5A07;
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
     [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
 
@@ -1003,7 +1003,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // CAPTURE REF: save THIS frame + its current horizon line as a labelled reference ("good").
         // Later frames that look like it adopt that line outright - that is the teach-by-example loop.
         btnCapRef = new Button();
-        btnCapRef.Text = "capture ref";
+        btnCapRef.Text = "capture ref (F4)";
         btnCapRef.SetBounds(x + 128, y, 120, 24);
         btnCapRef.Click += delegate { SaveRef(); };
         Controls.Add(btnCapRef);
@@ -2560,6 +2560,16 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // HARD PAYLOAD GATE: re-verify the warhead is REALLY the selected one before touching
             // Deploy As Drone. If it is not, treat it exactly like a wrong loadout - back out and
             // re-plan - instead of launching the wrong bomb.
+            if (!WantedWarheadGreen())
+            {
+                // ONE MORE TRY before backing all the way out. A single swallowed cell click used to
+                // send the flow back through Return -> LOADOUT -> base again, which is slow and is
+                // what looked like "it skipped the bomb". Re-click the cell and re-test first.
+                Log("7) " + _bomb + " not green - one more try at the warhead cell");
+                ClickWarhead(g);
+                Thread.Sleep(450);
+                InvalidateOcr();
+            }
             if (!WantedWarheadGreen())
             {
                 Log("7) " + _bomb + " is NOT the selected warhead - NOT deploying (re-planning the loadout)");
@@ -5671,6 +5681,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         UnregisterHotKey(Handle, HK_STOP);
         UnregisterHotKey(Handle, HK_INSTANT);
         UnregisterHotKey(Handle, HK_SWAP);
+        UnregisterHotKey(Handle, HK_REF);
         // F7 = SWAP the saved MAVIC / FPV setup
         if (!RegisterHotKey(Handle, HK_SWAP, 0, 0x76))
             Log("WARNING: could not register F7 for setup swap - another app already has it.");
@@ -5684,6 +5695,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             Log("WARNING: could not register " + ((Keys)_hkRejoinKey) + " - another app already has it. Use 'Set key' to choose another.");
         if (!RegisterHotKey(Handle, HK_AUTO, 0, _hkAutoKey))
             Log("WARNING: could not register F5 - another app already has it.");
+        // F4 = CAPTURE REF - grab the current view as a labelled hudref photo (good-*.png + .hzn).
+        if (!RegisterHotKey(Handle, HK_REF, 0, 0x73))
+            Log("WARNING: could not register F4 for capture ref - another app already has it.");
         if (!RegisterHotKey(Handle, HK_NIGHT, 0, _hkNightKey))
             Log("WARNING: could not register " + ((Keys)_hkNightKey) + " for night vision - another app already has it.");
     }
@@ -5731,6 +5745,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (id == HK_AUTO) AutoRun();
             else if (id == HK_NIGHT) ToggleNightVision();
             else if (id == HK_STOP) { Log("hotkey F6 -> STOP"); StopAuto(); }
+            else if (id == HK_REF) { Log("hotkey F4 -> capture ref"); SaveRef(); }
             else if (id == HK_INSTANT) { Log("hotkey F9 -> instant reconnect (no LAND NOW)"); Rejoin("hotkey instant", false); }
             else if (id == HK_SWAP) { Log("hotkey F7 -> swap setup"); SwapFav(); }
         }
@@ -5770,6 +5785,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         UnregisterHotKey(Handle, HK_STOP);
         UnregisterHotKey(Handle, HK_INSTANT);
         UnregisterHotKey(Handle, HK_SWAP);
+        UnregisterHotKey(Handle, HK_REF);
         ApplyNightVision(false);   // never leave the display inverted after exit
         SaveCfg();
         base.OnFormClosing(e);
