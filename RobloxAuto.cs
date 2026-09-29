@@ -4380,9 +4380,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float gr = CellGreyFrac(gpx, gW, gH, cells[i].X, cells[i].Y);
             if (gv > 0.10f || gr > 0.30f) okN++;
         }
-        bool pass = okN >= Math.Min(4, cells.Count);
+        // v2.9.30: TRUST the title layout. The offsets are FIXED (measured off a clean panel
+        // screenshot); the strict pixel validation kept rejecting the CORRECT layout on live
+        // panels (2/5) and fell back to a fitted grid ~12px off - which is how the step ended
+        // up reading and clicking the wrong slot. Validation is now a log-only confidence hint;
+        // a title hit with ZERO panel-looking cells still falls back to the fit.
+        bool pass = okN >= 1;
         Log("   panel title (" + h[bi].X + "," + h[bi].Y + ") -> " + cells.Count + " cells, " + okN +
-            " validated " + (pass ? "- using them" : "- rejected, falling back"));
+            " validated " + (pass ? "- using them (title layout trusted)" : "- no cell reads as panel UI, falling back"));
         return pass;
     }
 
@@ -9206,42 +9211,77 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     {
                         // ---- STRAIGHTNESS VOTE (through-tree fix) ------------------------------------
                         // Tree tops scatter across columns and their jitter splits into several
-                        // clusters; a real horizon is ONE straight line. The HEIGHT is therefore
-                        // elected by the biggest ONSET CLUSTER - the canopy can win the pixel scorer
-                        // on contrast (blue sky vs dark green) but cannot fake a concentrated onset
-                        // cluster. If a second strong cluster sits just BELOW the winner it is taken
-                        // instead: that is exactly the "horizon sits above the tree line" case.
-                        float[] tmp = new float[onN]; Array.Copy(oks, tmp, onN); Array.Sort(tmp);
-                        float c1k = 0f, c2k = 0f; int c1n = 0, c2n = 0;
-                        for (int i = 0, j = 0; i < onN; i = j)
+                        // clusters; a real horizon is ONE straight line. The HEIGHT is elected by the
+                        // biggest ONSET CLUSTER - the canopy can win the pixel scorer on contrast
+                        // (blue sky vs dark green) but cannot fake a concentrated onset cluster. If
+                        // a second strong cluster sits just BELOW the winner it is taken instead:
+                        // that is exactly the "horizon sits above the tree line" case.
+                        //
+                        // SAFETY (v2.9.30): the first cut of this made weak frames WORSE - when the
+                        // pixel winner is degenerate (sky ~97% or ~0%) the above/below reference
+                        // means are garbage, every column onsets in the top band, and the vote
+                        // pinned the line to the tree tops / frame edge. So the vote only runs on a
+                        // CREDIBLE winner, ignores top-band clusters, and never moves the line more
+                        // than 40% of the frame height from the pixel winner.
+                        float skyW = thSky[bestTh];
+                        bool voteOk = bestScore >= 0.5f && skyW > 0.04f && skyW < 0.92f;
+                        if (voteOk)
                         {
-                            while (j < onN && tmp[j] - tmp[i] <= 6f) j++;
-                            int n = j - i; float kc = (tmp[i] + tmp[j - 1]) * 0.5f;
-                            if (n > c1n) { c2k = c1k; c2n = c1n; c1k = kc; c1n = n; }
-                            else if (n > c2n) { c2k = kc; c2n = n; }
-                        }
-                        float kOnt = c1k;
-                        if (c2n >= c1n * 70 / 100 && c2k < c1k && (c1k - c2k) < dh * 0.35f)
-                            kOnt = c2k;      // strong cluster just below -> the real line under the canopy
-                        // polish the elected cluster and adopt it
-                        double acc = 0; int cc = 0;
-                        for (int i = 0; i < onN; i++) if (Math.Abs(oks[i] - kOnt) <= 6f) { acc += oks[i]; cc++; }
-                        if (cc >= 16)
-                        {
-                            float rm = (float)(acc / cc);
-                            if (Math.Abs(rm - kHist) > 2f && Environment.TickCount - _hudLogAt >= 2000)
+                            float[] tmp = new float[onN]; Array.Copy(oks, tmp, onN); Array.Sort(tmp);
+                            float c1k = 0f, c2k = 0f; int c1n = 0, c2n = 0;
+                            for (int i = 0, j = 0; i < onN; i = j)
+                            {
+                                while (j < onN && tmp[j] - tmp[i] <= 6f) j++;
+                                int n = j - i; float kc = (tmp[i] + tmp[j - 1]) * 0.5f;
+                                if (n > c1n) { c2k = c1k; c2n = c1n; c1k = kc; c1n = n; }
+                                else if (n > c2n) { c2k = kc; c2n = n; }
+                            }
+                            float kOnt = c1k;
+                            if (c2n >= Math.Max(24, c1n * 40 / 100) && c2k < c1k && (c1k - c2k) < dh * 0.35f)
+                                kOnt = c2k;      // strong cluster just below -> the real line under the canopy
+                            // top-band guard: clusters in the top 12% are trunks/canopy exiting the
+                            // frame, never a horizon. Prefer the biggest cluster below that band.
+                            if ((cy - kOnt) < dh * 0.12f)
+                            {
+                                float alt = float.MinValue;
+                                for (int i = 0, j = 0; i < onN; i = j)
+                                {
+                                    while (j < onN && tmp[j] - tmp[i] <= 6f) j++;
+                                    int n = j - i; if (n < 24) continue;
+                                    float kc = (tmp[i] + tmp[j - 1]) * 0.5f;
+                                    if ((cy - kc) >= dh * 0.12f && kc > alt) alt = kc;
+                                }
+                                if (alt > float.MinValue) kOnt = alt;
+                            }
+                            // polish the elected cluster, then adopt it - but never further than 40%
+                            // of the frame height from the pixel winner (that distance is the whole
+                            // point of the vote, so the old 25% guard is served at 40%).
+                            double acc = 0; int cc = 0;
+                            for (int i = 0; i < onN; i++) if (Math.Abs(oks[i] - kOnt) <= 6f) { acc += oks[i]; cc++; }
+                            float rm = cc >= 16 ? (float)(acc / cc) : kOnt;
+                            if (Math.Abs(rm - kHist) <= dh * 0.40f)
+                            {
+                                if (Math.Abs(rm - kHist) > 2f && Environment.TickCount - _hudLogAt >= 2000)
+                                {
+                                    _hudLogAt = Environment.TickCount;
+                                    Log("horizon det: onset vote moved the line " + ((kHist - rm) * HD_DS).ToString("0") +
+                                        "px " + (kHist > rm ? "down off the tree line" : "up") + " (clusters " + c1n + "/" + c2n + ")");
+                                }
+                                kFinal = rm;
+                                if (cc >= 16)
+                                {
+                                    double v = 0;
+                                    for (int i = 0; i < onN; i++) if (Math.Abs(oks[i] - kOnt) <= 6f) v += (oks[i] - rm) * (oks[i] - rm);
+                                    onsetSd = cc > 1 ? (float)Math.Sqrt(v / (cc - 1)) : 6f;
+                                }
+                            }
+                            else if (Environment.TickCount - _hudLogAt >= 2000)
                             {
                                 _hudLogAt = Environment.TickCount;
-                                Log("horizon det: onset vote moved the line " + ((kHist - rm) * HD_DS).ToString("0") +
-                                    "px " + (kHist > rm ? "down off the tree line" : "up") + " (clusters " + c1n + "/" + c2n + ")");
+                                Log("horizon det: onset vote blocked - cluster is " + (Math.Abs(rm - kHist) * HD_DS).ToString("0") +
+                                    "px from the pixel line (limit " + (dh * 0.40f * HD_DS).ToString("0") + "px)");
                             }
-                            kFinal = rm;
-                            double v = 0;
-                            for (int i = 0; i < onN; i++) if (Math.Abs(oks[i] - kOnt) <= 6f) v += (oks[i] - rm) * (oks[i] - rm);
-                            onsetSd = cc > 1 ? (float)Math.Sqrt(v / (cc - 1)) : 6f;
                         }
-                        else if (Math.Abs(kOnt - kHist) > 2f)
-                            kFinal = kOnt;   // small but clearly better than the pixel winner
                     }
                 }
             }
