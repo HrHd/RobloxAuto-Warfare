@@ -8766,6 +8766,32 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 }
             }
 
+            // ---- UNIFORMITY: a loading screen / wipe is mostly ONE tone --------------------------
+            // Field rule: if ~75% of the frame is a single colour it cannot hold a horizon and it
+            // must never seed the deploy baseline. 16 luminance buckets on the downsampled frame;
+            // cheap enough to run on every detector pass (~58k adds).
+            {
+                int[] buck = new int[16];
+                for (int i = 0; i < N; i++)
+                {
+                    int bk = (int)(_hdL[i] * 15.999f);
+                    if (bk < 0) bk = 0; if (bk > 15) bk = 15;
+                    buck[bk]++;
+                }
+                int mxb = 0;
+                for (int bk = 0; bk < 16; bk++) if (buck[bk] > mxb) mxb = buck[bk];
+                if (mxb > N * 75 / 100)
+                {
+                    _hudDetValid = false;
+                    if (Environment.TickCount - _hudLogAt >= 2000)
+                    {
+                        _hudLogAt = Environment.TickCount;
+                        Log("horizon det: frame " + (mxb * 100 / N) + "% one tone (loading/wipe) - discarded");
+                    }
+                    return;
+                }
+            }
+
             // ---- COLD START: the plain median of the image until the flight settles -------------
             // QUICK GRAB AT DEPLOY (field request): the median gives an instant line, but it must
             // NOT block the real scorer - the old code RETURNED here every frame, so on a weak
@@ -8784,6 +8810,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     float cRoll = (float)(Math.Atan(cSl) * 180.0 / Math.PI);
                     float cPitch = ((cSl * (W * 0.5f) + cIc) - H * 0.5f) / cNorm;   // PERPENDICULAR
                     HudPublish(cRoll, cPitch, cSky, 0.55f, 400f, 4f);
+                    // This IS a measurement. Without these two lines the whole median branch was
+                    // DEAD: HudPublish alone never sets _hudDetValid, so BOTH the fuse and the
+                    // basis sampler ignored every median line - that was the "0 samples" and the
+                    // slow lock. Now the quick grab reaches the ladder AND the deploy baseline.
+                    _hudDetValid = true; _hudDetAt = Environment.TickCount;
                     _hnOk = true; _hnTheta = cRoll; _hnM = cSl; _hnK = -cPitch / HD_DS;
                     HudLearnSky(cSl, _hnK, cNorm);
                     coldMedian = true;
