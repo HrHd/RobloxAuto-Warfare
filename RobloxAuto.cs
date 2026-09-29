@@ -2433,34 +2433,6 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 }
             }
 
-            // Last look the other way - the Base can be inside a clump that needs pulling IN to
-            // separate from the other icons.
-            // The Base labels separate from POINT pins when zoomed in, so this pass often reads best.
-            int zQuietIn = 0;
-            for (int z = 1; z <= 6 && !sawBase && Alive(g) && zQuietIn < 3; z++)
-            {
-                List<Hit> bh = FindPhraseAll("Base", null, OcrWordsWhiten());
-                if (bh.Count == 0) bh = FindPhraseAll("Base", null, OcrWords());
-                if (bh.Count > 0)
-                {
-                    sawBase = true;
-                    baseX = bh[0].X; baseY = bh[0].Y;
-                    Log("   Base label is visible at (" + baseX + "," + baseY + ") (after " + (z - 1) + " zoom-ins)");
-                    break;
-                }
-                Log("   Base still not visible - coming back in (" + z + "/6)");
-                FocusRoblox();
-                MoveOverGameSoft(z + 10);
-                ScrollIn(3);
-                Thread.Sleep(180);
-                int[] znow2 = Signature();
-                if (DiffPct(zsig, znow2) < 1.0) zQuietIn++; else zQuietIn = 0;
-                zsig = znow2;
-            }
-            // both directions dead = the wheel is not reaching the game at all; the log must say it
-            if (zQuietOut >= 4 && zQuietIn >= 3)
-                Log("   WARNING: the map never reacted to the wheel (both directions quiet) - zooming is not working, panning instead");
-
             if (!sawBase)
             {
                 // The label is often unreadable when it is drawn over the tent icon. The icon
@@ -2492,6 +2464,35 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     Log("   Base found by its bright-red marker at (" + rx + "," + ry + ")");
                 }
             }
+
+            // ZOOM IN ONLY NOW - the final fallback. Everything above works while the map is
+            // pulled back, and AUTO must ALWAYS zoom OUT before it zooms IN: a map already at
+            // max zoom-out must never be pushed back in before the pan / icon / red-marker
+            // passes have had their chance. (Field rule, printed from watching real runs.)
+            int zQuietIn = 0;
+            for (int z = 1; z <= 6 && !sawBase && Alive(g) && zQuietIn < 3; z++)
+            {
+                List<Hit> bh = FindPhraseAll("Base", null, OcrWordsWhiten());
+                if (bh.Count == 0) bh = FindPhraseAll("Base", null, OcrWords());
+                if (bh.Count > 0)
+                {
+                    sawBase = true;
+                    baseX = bh[0].X; baseY = bh[0].Y;
+                    Log("   Base label is visible at (" + baseX + "," + baseY + ") (after " + (z - 1) + " zoom-ins)");
+                    break;
+                }
+                Log("   Base still not visible - zooming in as a last resort (" + z + "/6)");
+                FocusRoblox();
+                MoveOverGameSoft(z + 10);
+                ScrollIn(3);
+                Thread.Sleep(180);
+                int[] znow2 = Signature();
+                if (DiffPct(zsig, znow2) < 1.0) zQuietIn++; else zQuietIn = 0;
+                zsig = znow2;
+            }
+            // both directions dead = the wheel is not reaching the game at all; the log must say it
+            if (zQuietOut >= 4 && zQuietIn >= 3)
+                Log("   WARNING: the map never reacted to the wheel in either direction - zooming is not working");
 
             if (!sawBase)
             {
@@ -3783,7 +3784,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             for (int i = 0; i < blobs.Count; i++)
             {
                 double ar = (double)blobs[i].Width / blobs[i].Height;
-                if (ar < 0.78 || ar > 1.5) continue;          // pins are ~0.69 - too tall to be the tent
+                // Measured on real frames: clean tent+flag ~74x78 (0.95), an OVERLAPPED tent (grid
+                // number and POINT label across it) 77x99 = 0.78, POINT pins 53x77 = 0.69. The old
+                // 0.78 floor rejected the overlapped tent by 0.02 - it sits at 0.72 now.
+                if (ar < 0.72 || ar > 1.5) continue;
                 if (blobs[i].Width < 45 || blobs[i].Height < 35) continue;
                 double squareness = 1.0 - Math.Abs(ar - 1.02); // a real tent lands ~0.9-1.05
                 if (squareness <= 0) continue;
