@@ -17,3 +17,6 @@ Joystick2XInput/
 error.log
 auto.log
 *.log
+
+hudcap/
+*.png
