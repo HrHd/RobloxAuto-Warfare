@@ -5712,7 +5712,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // EXPO (acceleration): more % input = faster travel. A light touch barely moves the line, a full
         // stick sends it at full speed - a quadratic curve on the stick magnitude (with a linear floor
         // so small inputs still do something). The glide below turns "further target" into "faster move".
-        float stickPitchTarget = -syS * _hudPitStick;
+        // GROUND-EYE (field): when the image is NOT currently seeing a horizon (no valid fix, or
+        // the last one had under 15% sky - "it thinks its ground"), the CONTROLLER pitch gets
+        // more say: the direct stick lift is boosted 1.6x so the pilot can still place the line
+        // while the image has nothing to contribute. It returns to 1x as soon as the horizon is
+        // back in view.
+        bool groundEye = !(_hudDetValid && (Environment.TickCount - _hudDetAt) < 2000) || _hudDetSky < 0.15f;
+        float pitStickEff = _hudPitStick * (groundEye ? 1.6f : 1f);
+        float stickPitchTarget = -syS * pitStickEff;
         float pv = 1f - (float)Math.Pow(0.5, dt / 0.22f);      // ~0.22s glide
         _hudPitStickSm += (stickPitchTarget - _hudPitStickSm) * pv;
         float stickPitch = _hudPitStickSm;
@@ -5731,7 +5738,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // TREE TRIM: with the parser on, the trim is driven by the measured tree-below fraction
         // (blurred colour + unblurred texture must agree, v2.9.42); parser off falls back to the
         // old clutter number. Always px: fraction x "tree drop" dial (deg) x px-per-deg.
-        float treeDrop = (_hudParserOn ? _hudTreeBelowSm : _hudClutter) * _hudTreeDrop * _hudDpp;
+        // MUTED when a confident vote or a fog scene is present: "if it knows it is looking at the
+        // horizon it should use it" - measured evidence beats the fudge, and fog is not trees.
+        float treeFrac = _hudParserOn ? _hudTreeBelowSm : _hudClutter;
+        if ((_hudColOk && _hudColAgree >= 2) || _hudScene == "fog") treeFrac = 0f;
+        float treeDrop = treeFrac * _hudTreeDrop * _hudDpp;
         float rawRoll = _hudFRoll + _hudRollOff + stickRoll;     // + manual roll offset + direct stick bank
         float rawPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff + treeDrop;
         // OUTPUT SMOOTHING (v2.9.40): a ~90ms glide on the values the HUD and the overlay actually
@@ -8553,6 +8564,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // estimate be pulled back hard, so this does not trade away recovery.
             float gainCap = 0.15f;
             if (coastBefore > 1500f) gainCap = 0.15f + 0.25f * Math.Min(1f, (coastBefore - 1500f) / 2500f);
+            // IMAGE-LED WHEN IT KNOWS (field): a confident fix should PUT the line there, not trim
+            // it in at 0.15 forever - "if the image has a high possibility of knowing where it
+            // needs to be then it should be there". The slew limit still caps how fast anything
+            // can physically move, so this cannot teleport; it just adheres fast.
+            if (_hudMConf >= 0.75f && _hudDetSky >= 0.15f) gainCap = Math.Max(gainCap, 0.45f);
             if (aR > gainCap) aR = gainCap;
             if (aP > gainCap) aP = gainCap;
             // RE-ACQUIRE FLOOR. The gain above can come out TINY - aP = P/(P+Rp) with Rp inflated
@@ -9182,7 +9198,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 float d = SplitContrast(pL, pB, mh, y);
                 if (d > bestD) { bestD = d; bestY = y; }
             }
-            if (bestY < 0 || bestD < 6f) continue;
+            if (bestY < 0 || bestD < (_hudScene == "fog" ? 4f : 6f)) continue;
             float yRef = bestY;
             if (bestY > y0 + 1 && bestY < y1 - 1)
             {
@@ -9199,6 +9215,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float meanTex = (float)(texSum / mh);
             kv[i] = ((gx - cx) * m - (yRef - cy)) / norm;
             qv[i] = bestD / (1f + 0.15f * meanTex);
+            // PRIORITY TO STABLE STRIPS (field): the split row at a given x should not move much
+            // from frame to frame. A strip near the last vote's line outranks an identical noisy
+            // one; when the line genuinely moves, every strip moves and the bonus is neutral.
+            if (_hudColOk && Math.Abs(kv[i] - _hudColK) <= 8f) qv[i] *= 1.5f;
         }
         int a0 = -1; float q0 = 0f;
         for (int i = 0; i < 5; i++) if (qv[i] > q0) { q0 = qv[i]; a0 = i; }
