@@ -257,6 +257,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     bool _hudParserOn = true;                     // dial "parser" (settings.ini hudParser): 1 = on
     float _hudParserScore = 0f;                   // last section-parser confidence (log only)
     float _hudParserK = 0f;                       // last parser line (working px), log only
+    float _hudTreeBelow = 0f;                     // parser vote: fraction of sections under the line that are canopy
+    float _hudTreeBelowSm = 0f;                   // ...smoothed ~2s, drives the tree trim
     float _hudColK = 0f;                          // last 3-centre-column vote line (working px)
     int _hudColAgree = 0;                         // columns that agreed with the middle one
     bool _hudColOk = false;                       // the vote produced a usable line
@@ -5679,14 +5681,18 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // tight and centred, so the aim point is never disturbed; moving the stick opens it, like a
         // real drone camera. Smoothed ~0.2s so it opens and closes cleanly instead of snapping.
         // v2.9.37: the LEFT stick's X (yaw) also nudges the fan a little, like a real drone.
-        float stickMag = (float)Math.Sqrt(sx * sx + sy * sy) + 0.30f * Math.Abs(_padLx);
+        float stickMag = (float)Math.Sqrt(sx * sx + sy * sy) + 0.55f * Math.Abs(_padLx);
         if (stickMag > 1f) stickMag = 1f;
         if (stickMag < 0.05f) stickMag = 0f;
         _hudSpreadSm += (stickMag - _hudSpreadSm) * (1f - (float)Math.Pow(0.5, dt / 0.20f));
         // STAIRCASE (the sideways fan of the rungs) is ALSO right-stick driven now: it used to
         // follow the DETECTED roll, so every detection wobble slid the fan left/right and it also
         // died when the slide was centred. The STICK fans it; detection cannot move it.
-        _hudStairSm += ((-sxS) - _hudStairSm) * (1f - (float)Math.Pow(0.5, dt / 0.15f));
+        _hudStairSm += (sxS - _hudStairSm) * (1f - (float)Math.Pow(0.5, dt / 0.15f));
+        // TREE-BELOW VOTE smoothing: the parser reports what fraction of the sections just under
+        // the line are canopy/trunks (neither sky nor ground). Smoothed over 2s so the trim it
+        // drives can never wobble (the old un-smoothed clutter fudge did exactly that).
+        _hudTreeBelowSm += (_hudTreeBelow - _hudTreeBelowSm) * (1f - (float)Math.Pow(0.5, dt / 2.0f));
         bool det = _hudDetValid && (now - _hudDetAt) < 2000;
         // ---- PROPER FUSION: scalar Kalman/alpha-beta per axis, in ANGLE space (see HudFuse) ----
         // Stick = control input, vision = measurement, coast when the vision drops out.
@@ -5722,12 +5728,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
         _hudRoll = _hudFRoll + _hudRollOff + stickRoll;     // + manual roll offset + direct stick bank
         // low-quality LIFT (up) and clutter DROP (down) - both in px, off the dials
-        // v2.9.34: the tree-drop fudge is OFF while the section parser is on. The parser decides
-        // trees directly (they abstain), so this no longer needs an altitude-dependent guess -
-        // and the guess was the jitter: the clutter number breathes with the treetops (worse from
-        // high up, where more trees are on screen), the line wobbled with it, and because the
-        // ladder slides sideways by pitch x shear every wobble also swung the fan left/right.
-        float treeDrop = _hudParserOn ? 0f : _hudClutter * _hudTreeDrop * _hudDpp;
+        // TREE-BELOW VOTE (field request): when the parser's sections just UNDER the line are
+        // mostly canopy/trunks (neither sky nor ground), the line is riding the tree tops - trim
+        // it DOWN. Smoothing above makes it a slow vote, not a per-frame fudge.
+        float treeDrop = _hudParserOn ? _hudTreeBelowSm * _hudTreeDrop * _hudDpp
+                                      : _hudClutter * _hudTreeDrop * _hudDpp;
         _hudPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff + treeDrop;
         if (_physLog) PhysLogLine();                       // 50 Hz: fast stick work included
 
@@ -6958,7 +6963,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
             _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
             _hudPitchVel = 0f; _hudRollVel = 0f; _hudPitStickSm = 0f; _hudRollStickSm = 0f; _hudSkySm = 1f;   // start each flight clean
-            _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f; _hudStairSm = 0f;           // reset the weighted average
+            _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f; _hudStairSm = 0f; _hudTreeBelowSm = 0f;           // reset the weighted average
             _kfSeeded = false; _kfRollV = 0f; _kfPitV = 0f; _kfRollOb = 0f; _kfPitOb = 0f; _kfMeasAt = 0;                 // reset the estimator
             _kfRollGain = 1f; _kfPitGain = 1f; _kfRollP = 25f; _kfPitP = 25f; _kfRollZAt = 0; _kfPitZAt = 0;
             _kfSmSeeded = false; _kfSmRoll = 0f; _kfSmPit = 0f;
@@ -9013,9 +9018,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         return Math.Min(nSkyA / (float)nTot, nGndB / (float)nTot) - 0.5f * (nOpp / (float)nTot);
     }
 
-    void HudSectionParse(float thetaPrior, out float theta, out float kOut, out float score)
+    void HudSectionParse(float thetaPrior, out float theta, out float kOut, out float score, out float treeBelow)
     {
-        theta = 0; kOut = 0; score = -9f;
+        theta = 0; kOut = 0; score = -9f; treeBelow = 0f;
         int mw = _hdW, mh = _hdH;
         if (_hdL == null || mw < 64 || mh < 48) return;
         // the frame's own models: top band = sky, bottom band = ground (same bands the
@@ -9071,6 +9076,34 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         }
         theta = (float)(Math.Atan(bestM) * 180.0 / Math.PI);
         kOut = bestK; score = bestSc;
+        // TREE-BELOW VOTE: at the elected line, what fraction of the sections just UNDER it are
+        // canopy/trunks (neither sky nor ground)? High = the line is riding the tree tops.
+        {
+            int bs = 8; int tBN = 0, tNN = 0;
+            float cx = mw * 0.5f, cy = mh * 0.5f;
+            float norm = (float)Math.Sqrt(1 + bestM * bestM);
+            for (int by = 0; by + bs <= mh; by += bs)
+                for (int bx = 0; bx + bs <= mw; bx += bs)
+                {
+                    float mx = bx + bs * 0.5f, my = by + bs * 0.5f;
+                    float s = ((mx - cx) * bestM - (my - cy)) / norm;
+                    if (s > bestK || s < bestK - mh * 0.35f) continue;
+                    tBN++;
+                    float bl = 0, bb = 0, bt = 0; int n = 0;
+                    for (int y = by; y < by + bs; y++)
+                        for (int x = bx; x < bx + bs; x++)
+                        { int i = y * mw + x; bl += _hdL[i]; bb += _hdBR[i]; bt += _hdT[i]; n++; }
+                    bl /= n; bb /= n; bt /= n;
+                    float dS = (float)Math.Sqrt(((bl - muL) / sdL) * ((bl - muL) / sdL) + ((bb - muB) / sdB) * ((bb - muB) / sdB));
+                    float dG = (float)Math.Sqrt(((bl - guL) / gsdL) * ((bl - guL) / gsdL) + ((bb - guB) / gsdB) * ((bb - guB) / gsdB));
+                    bool sky = dS < 1.25f && bt < muT * 1.4f + 2f;
+                    bool gnd = dG < 1.25f;
+                    if (sky && dS > dG) sky = false;
+                    if (gnd && dG > dS) gnd = false;
+                    if (!sky && !gnd) tNN++;
+                }
+            if (tBN > 4) treeBelow = tNN / (float)tBN;
+        }
     }
 
     // ---- 3 CENTRE COLUMNS VOTE (the field idea, PASSIVE - never steers the lock) -------------
@@ -9450,7 +9483,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // 1x1 sharpening. This is the tree-line fix: the canopy files as NEITHER, and the haze
             // band under it matches SKY, so any line above the true horizon collects contradictions.
             float thetaS, kS, scoreS;
-            HudSectionParse(theta, out thetaS, out kS, out scoreS);
+            HudSectionParse(theta, out thetaS, out kS, out scoreS, out _hudTreeBelow);
             _hudParserScore = scoreS;
             _hudParserK = kS;
             // passive test instrumentation: the 3-centre-column vote, computed but never used to
