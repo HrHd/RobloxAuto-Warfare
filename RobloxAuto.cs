@@ -5678,7 +5678,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // SPREAD FEEL (field request): the fan is driven ONLY by the RIGHT stick. Centred stick =
         // tight and centred, so the aim point is never disturbed; moving the stick opens it, like a
         // real drone camera. Smoothed ~0.2s so it opens and closes cleanly instead of snapping.
-        float stickMag = (float)Math.Sqrt(sx * sx + sy * sy);
+        // v2.9.37: the LEFT stick's X (yaw) also nudges the fan a little, like a real drone.
+        float stickMag = (float)Math.Sqrt(sx * sx + sy * sy) + 0.30f * Math.Abs(_padLx);
         if (stickMag > 1f) stickMag = 1f;
         if (stickMag < 0.05f) stickMag = 0f;
         _hudSpreadSm += (stickMag - _hudSpreadSm) * (1f - (float)Math.Pow(0.5, dt / 0.20f));
@@ -9223,20 +9224,47 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     float cNorm = (float)Math.Sqrt(1f + cSl * cSl);
                     float cRoll = (float)(Math.Atan(cSl) * 180.0 / Math.PI);
                     float cPitch = ((cSl * (W * 0.5f) + cIc) - H * 0.5f) / cNorm;   // PERPENDICULAR
-                    HudPublish(cRoll, cPitch, cSky, 0.55f, 400f, 4f);
-                    // This IS a measurement. Without these two lines the whole median branch was
-                    // DEAD: HudPublish alone never sets _hudDetValid, so BOTH the fuse and the
-                    // basis sampler ignored every median line - that was the "0 samples" and the
-                    // slow lock. Now the quick grab reaches the ladder AND the deploy baseline.
-                    _hudDetValid = true; _hudDetAt = Environment.TickCount;
-                    _hnOk = true; _hnTheta = cRoll; _hnM = cSl; _hnK = -cPitch / HD_DS;
-                    HudLearnSky(cSl, _hnK, cNorm);
-                    coldMedian = true;
-                    if (!_hudColdLogged || Environment.TickCount - _hudLogAt >= 2000)
+                    // THE 3-COLUMN VOTE GETS THE FIRST WORD (field flight, 00:53-00:54): the median
+                    // line sat mid-screen while the vote held the real sky/tree boundary on every
+                    // frame. When the vote disagrees with the median by >40px, publish the vote.
+                    bool usedVote = false;
+                    float vk; int vag;
+                    if (HudColVote(cRoll, out vk, out vag) && vag >= 2)
                     {
-                        _hudLogAt = Environment.TickCount; _hudColdLogged = true;
-                        Log("horizon det: COLD START median line (quick grab) - roll " + cRoll.ToString("0") + " deg, sky " +
-                            (cSky * 100f).ToString("0") + "%, " + cN + " onset columns");
+                        float vPitch = -vk * HD_DS;
+                        if (Math.Abs(vPitch - cPitch) > 40f)
+                        {
+                            usedVote = true;
+                            HudPublish(cRoll, vPitch, cSky, 0.55f, 400f, 4f);
+                            _hudDetValid = true; _hudDetAt = Environment.TickCount;
+                            _hnOk = true; _hnTheta = cRoll; _hnM = (float)Math.Tan(cRoll * Math.PI / 180.0); _hnK = vk;
+                            HudLearnSky(_hnM, _hnK, cNorm);
+                            coldMedian = true;
+                            if (!_hudColdLogged || Environment.TickCount - _hudLogAt >= 2000)
+                            {
+                                _hudLogAt = Environment.TickCount; _hudColdLogged = true;
+                                Log("horizon det: COLD START - median says " + ((int)cPitch) + "px but the 3-column vote says " +
+                                    ((int)vPitch) + "px (agree " + vag + ") - publishing the VOTE");
+                            }
+                        }
+                    }
+                    if (!usedVote)
+                    {
+                        HudPublish(cRoll, cPitch, cSky, 0.55f, 400f, 4f);
+                        // This IS a measurement. Without these two lines the whole median branch was
+                        // DEAD: HudPublish alone never sets _hudDetValid, so BOTH the fuse and the
+                        // basis sampler ignored every median line - that was the "0 samples" and the
+                        // slow lock. Now the quick grab reaches the ladder AND the deploy baseline.
+                        _hudDetValid = true; _hudDetAt = Environment.TickCount;
+                        _hnOk = true; _hnTheta = cRoll; _hnM = cSl; _hnK = -cPitch / HD_DS;
+                        HudLearnSky(cSl, _hnK, cNorm);
+                        coldMedian = true;
+                        if (!_hudColdLogged || Environment.TickCount - _hudLogAt >= 2000)
+                        {
+                            _hudLogAt = Environment.TickCount; _hudColdLogged = true;
+                            Log("horizon det: COLD START median line (quick grab) - roll " + cRoll.ToString("0") + " deg, sky " +
+                                (cSky * 100f).ToString("0") + "%, " + cN + " onset columns");
+                        }
                     }
                     // do NOT return - let the scorer try to beat it this very frame
                 }
@@ -9588,6 +9616,24 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // comes with it. That is the "it gets lost". Coast instead.
             if (bestScore < 0.5f || (bestScore < 2.5f && (skyFrac2 > 0.90f || skyFrac2 < 0.05f)))
             {
+                // THE VOTE RESCUES WEAK FRAMES (field flight, 00:52-00:54: the scorer coasted for
+                // half a minute over the night forest while the vote held the boundary on every
+                // frame). When the pixel scorer has no usable split but the 3-column vote is
+                // confident (2+ columns), publish the vote line instead of coasting.
+                if (!coldMedian && _hudColOk && _hudColAgree >= 2)
+                {
+                    float vPitch = -_hudColK * HD_DS;
+                    HudPublish(theta, vPitch, 0.30f, 0.55f, 900f, 9f);
+                    _hudDetValid = true; _hudDetAt = Environment.TickCount;
+                    _hnOk = true; _hnTheta = theta; _hnM = mFin; _hnK = _hudColK;
+                    if (Environment.TickCount - _hudLogAt >= 2000)
+                    {
+                        _hudLogAt = Environment.TickCount;
+                        Log("horizon det: WEAK frame (sep " + bestScore.ToString("0.0") + ") - colvote lock at " +
+                            ((int)vPitch) + "px (agree " + _hudColAgree + ")");
+                    }
+                    return;
+                }
                 // a scorer miss during the cold start must NOT wipe the median's quick-grab line
                 if (!coldMedian)
                 {
