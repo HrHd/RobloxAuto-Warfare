@@ -635,6 +635,13 @@ ComboBox cmbPadThermal;
                                     // through the thermal unchanged (forced full green to pop)
                                     p[0] = 0; p[1] = 255; p[2] = 0;
                                 }
+                                else if (bb >= 120 && bb - rr >= 60 && bb - gg >= 35)
+                                {
+                                    // BLUE DRONE / enemy indicators (field request): must be a
+                                    // SATURATED blue - the game's pale sky also reads blue but at
+                                    // b-r of only ~15-25, so it never trips these bars.
+                                    p[0] = 255; p[1] = 120; p[2] = 0;
+                                }
                                 else
                                 {
                                     int lum = (77 * rr + 150 * gg + 29 * bb) >> 8;
