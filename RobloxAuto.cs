@@ -7975,8 +7975,9 @@ ComboBox cmbPadThermal;
                                 _detGrabMs.ToString("0.0") + "ms  map " + _detMapMs.ToString("0.0") + "ms  stage3 " +
                                 _detScoreMs.ToString("0.0") + "ms  rest " +
                                 Math.Max(0f, _detMs - _detGrabMs - _detMapMs - _detScoreMs).ToString("0.0") + "ms" +
-                                "  | pub " + _stPub + " coast " + _stCoast + " disc " + _stDisc + "]");
-                            _stPub = 0; _stCoast = 0; _stDisc = 0;
+                                "  | pub " + _stPub + " coast " + _stCoast + " disc " + _stDisc +
+                                "  thm " + (_thmBestD >= 9f ? "-" : _thmBestD.ToString("0.000") + "/" + _thmBestName) + "]");
+                            _stPub = 0; _stCoast = 0; _stDisc = 0; _thmBestD = 9f; _thmBestName = "";
                         }
                     }
                     // SETTLE first: the drone spawns in odd poses (sometimes under the map), so one
@@ -10181,6 +10182,7 @@ ComboBox cmbPadThermal;
     int _sideTick = 0;                    // the Hough side pass runs every 3rd detector pass
     float _detMs = 0f; long _detLogAt = 0; // detector pass time (throughput read-out)
     int _stPub = 0, _stCoast = 0, _stDisc = 0;   // outcomes since the last cadence log (main path)
+    float _thmBestD = 9f, _thmBestMargin = 0f; string _thmBestName = ""; long _thmNearAt = 0;
     float _detGrabMs = 0f, _detMapMs = 0f, _detScoreMs = 0f; // sub-stage read-out (grab / map / stage-3)
     float _sideRoll = 0f, _sidePitch = 0f, _sideConf = 0f;
     long _sideAt = 0;                     // when the side estimate was last computed (freshness gate)
@@ -11088,20 +11090,32 @@ ComboBox cmbPadThermal;
                 float tsecond;
                 bool tgood; float[] tline; string tname; bool tground;
                 float td = MatchRefsThm(SigThermalFromBlocks(_hdL, dw, dh), out tgood, out tline, out tname, out tground, out tsecond);
-                if (tline != null && tgood && td <= 0.022f)
+                // CALIBRATION TELEMETRY: the best distance each pass (cadence line shows it), and a
+                // near-miss log so we finally SEE what live matches score. The 0.022 gate was
+                // measured ref-vs-ref (true 0.000, nearest-other 0.035) - live frames from a
+                // different moment score higher, which is why this matcher fired 9 times ever.
+                if (td < _thmBestD) { _thmBestD = td; _thmBestName = tname; _thmBestMargin = tsecond - td; }
+                if (tline != null && tgood && td > 0.022f && td <= 0.045f && Environment.TickCount - _thmNearAt >= 3000)
+                {
+                    _thmNearAt = Environment.TickCount;
+                    Log("horizon det: thm near-miss d " + td.ToString("0.000") + " margin " +
+                        (tsecond - td).ToString("0.000") + " (" + tname + ")");
+                }
+                if (tline != null && tgood && td <= 0.038f)
                 {
                     float tcos = (float)Math.Cos(tline[0] * Math.PI / 180.0);
                     if (Math.Abs(tcos) < 0.2f) tcos = 0.2f;
+                    bool strong = td <= 0.022f;
                     if (tground)
                     {
                         _groundRefAt = Environment.TickCount;   // ground-eye boost without publishing
                     }
-                    else if ((tsecond - td) >= 0.008f)
+                    else if ((tsecond - td) >= (strong ? 0.008f : 0.006f))
                     {
-                        float tConf = 0.93f;
-                        if (tname.IndexOf("-sky-none") >= 0) tConf = 0.60f;
-                        else if (tname.IndexOf("-sky-med") >= 0) tConf = 0.82f;
-                        else if (tname.IndexOf("-sky-low") >= 0) tConf = 0.70f;
+                        float tConf = strong ? 0.93f : 0.70f;     // soft tier: trim, never snap
+                        if (tname.IndexOf("-sky-none") >= 0) tConf = Math.Min(tConf, 0.60f);
+                        else if (tname.IndexOf("-sky-med") >= 0) tConf = Math.Min(tConf, 0.82f);
+                        else if (tname.IndexOf("-sky-low") >= 0) tConf = Math.Min(tConf, 0.70f);
                         HudPublish(tline[0], tline[1] / tcos, 0.5f, tConf, 9f, 0.25f);
                         _hudDetValid = true; _hudDetAt = Environment.TickCount;
                         _hnOk = true; _hnTheta = tline[0];
@@ -11112,7 +11126,7 @@ ComboBox cmbPadThermal;
                         if (Environment.TickCount - _hudLogAt >= 2000)
                         {
                             _hudLogAt = Environment.TickCount;
-                            Log("horizon det: SIDE thermal ref " + tname + " (d " + td.ToString("0.000") +
+                            Log("horizon det: SIDE thermal ref " + tname + (strong ? "" : " [soft]") + " (d " + td.ToString("0.000") +
                                 ", margin " + (tsecond - td).ToString("0.000") + ") - roll " + tline[0].ToString("0.0") +
                                 " deg, pitch " + (tline[1] / tcos).ToString("0") + "px");
                         }
