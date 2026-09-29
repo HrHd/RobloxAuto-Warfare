@@ -9160,33 +9160,66 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         float cx = mw * 0.5f, cy = mh * 0.5f;
         float m = (float)Math.Tan(thetaPrior * Math.PI / 180.0);
         float norm = (float)Math.Sqrt(1 + m * m);
-        float[] offs = new float[] { -0.12f, 0f, 0.12f };
-        float[] kv = new float[3]; bool[] okv = new bool[3];
+        // FIVE candidate strips, the best THREE by QUALITY vote (field idea: high-quality strips
+        // with priority - but never two alone: one strip through a trunk and there is no
+        // tie-breaker). Quality = split contrast / (1 + column texture): a strip full of tree
+        // clutter is worth less than a clean one. Rows are subpixel-refined, so the vote output
+        // is smooth instead of quantised to whole cells.
+        float[] offs = new float[] { -0.25f, -0.12f, 0f, 0.12f, 0.25f };
+        float[] kv = new float[5]; float[] qv = new float[5];
         double[] pL = new double[mh + 1]; double[] pB = new double[mh + 1];
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < 5; i++)
         {
+            qv[i] = 0f;
             int gx = (int)(cx + offs[i] * mw);
-            if (gx < 12 || gx >= mw - 12) { okv[i] = false; continue; }
-            for (int y = 0; y < mh; y++) { int idx = y * mw + gx; pL[y + 1] = pL[y] + _hdL[idx]; pB[y + 1] = pB[y] + _hdBR[idx]; }
+            if (gx < 12 || gx >= mw - 12) continue;
+            double texSum = 0;
+            for (int y = 0; y < mh; y++) { int idx = y * mw + gx; pL[y + 1] = pL[y] + _hdL[idx]; pB[y + 1] = pB[y] + _hdBR[idx]; texSum += _hdT[idx]; }
             float bestD = -1f; int bestY = -1;
             int y0 = mh / 8, y1 = mh * 7 / 8;
             for (int y = y0; y < y1; y++)
             {
-                double aL = pL[y] / y, aB = pB[y] / y;
-                double bL = (pL[mh] - pL[y]) / (mh - y), bB = (pB[mh] - pB[y]) / (mh - y);
-                float d = (float)Math.Sqrt((aL - bL) * (aL - bL) + 0.6 * (aB - bB) * (aB - bB));
+                float d = SplitContrast(pL, pB, mh, y);
                 if (d > bestD) { bestD = d; bestY = y; }
             }
-            if (bestY < 0) { okv[i] = false; continue; }
-            okv[i] = bestD >= 6f;
-            kv[i] = ((gx - cx) * m - (bestY - cy)) / norm;
+            if (bestY < 0 || bestD < 6f) continue;
+            float yRef = bestY;
+            if (bestY > y0 + 1 && bestY < y1 - 1)
+            {
+                float dPrev = SplitContrast(pL, pB, mh, bestY - 1);
+                float dNext = SplitContrast(pL, pB, mh, bestY + 1);
+                float den = dPrev - 2f * bestD + dNext;
+                if (Math.Abs(den) > 1e-3f)
+                {
+                    float fr = 0.5f * (dPrev - dNext) / den;
+                    if (fr > 0.9f) fr = 0.9f; if (fr < -0.9f) fr = -0.9f;
+                    yRef = bestY + fr;
+                }
+            }
+            float meanTex = (float)(texSum / mh);
+            kv[i] = ((gx - cx) * m - (yRef - cy)) / norm;
+            qv[i] = bestD / (1f + 0.15f * meanTex);
         }
-        if (!okv[1]) return false;
-        int ag = 1; float sum = 2f * kv[1]; float wsum = 2f;
-        for (int i = 0; i < 3; i += 2)
-            if (okv[i] && Math.Abs(kv[i] - kv[1]) <= 9f) { ag++; sum += kv[i]; wsum += 1f; }
+        int a0 = -1; float q0 = 0f;
+        for (int i = 0; i < 5; i++) if (qv[i] > q0) { q0 = qv[i]; a0 = i; }
+        if (a0 < 0) return false;
+        int ag = 1; float sum = kv[a0] * q0; float wsum = q0;
+        for (int i = 0; i < 5 && ag < 3; i++)
+        {
+            if (i == a0 || qv[i] <= 0f || qv[i] < q0 * 0.35f) continue;
+            if (Math.Abs(kv[i] - kv[a0]) <= 9f) { ag++; sum += kv[i] * qv[i]; wsum += qv[i]; }
+        }
         kOut = sum / wsum; nAgree = ag;
         return ag >= 2;
+    }
+
+    // split contrast at one row: mean of everything above vs everything below, luminance + 0.6x
+    // blue-red. Shared by the strip scan and its subpixel refine.
+    float SplitContrast(double[] pL, double[] pB, int mh, int y)
+    {
+        double aL = pL[y] / y, aB = pB[y] / y;
+        double bL = (pL[mh] - pL[y]) / (mh - y), bB = (pB[mh] - pB[y]) / (mh - y);
+        return (float)Math.Sqrt((aL - bL) * (aL - bL) + 0.6 * (aB - bB) * (aB - bB));
     }
 
     // save the frame into hwatch\ when the passive vote strongly disagrees with what we published
@@ -9751,7 +9784,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 if (!coldMedian && _hudColOk && _hudColAgree >= 2 && VoteNearLast(_hudColK))
                 {
                     float vPitch = -_hudColK * HD_DS;
-                    HudPublish(theta, vPitch, 0.30f, 0.55f, 900f, 9f);
+                    // high-priority case: all three quality strips agree -> publish more confidently
+                    float vconf = 0.55f + 0.08f * (_hudColAgree - 2);
+                    HudPublish(theta, vPitch, 0.30f, vconf, 900f, 9f);
                     _hudDetValid = true; _hudDetAt = Environment.TickCount;
                     _hnOk = true; _hnTheta = theta; _hnM = mFin; _hnK = _hudColK;
                     if (Environment.TickCount - _hudLogAt >= 2000)
