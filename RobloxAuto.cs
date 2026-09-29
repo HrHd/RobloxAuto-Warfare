@@ -7956,7 +7956,23 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // While the spawn pose is settling, HOLD the ladder: no stick integration and no vision.
         // (The drone can be falling / under the map for a moment, and integrating that would throw
         // the horizon away before the settle has even finished.)
-        if (_hudSettling) { _kfRollV = 0f; _kfPitV = 0f; return; }
+        if (_hudSettling)
+        {
+            _kfRollV = 0f; _kfPitV = 0f;
+            // HOLD THE ESTIMATE STILL, BUT SHOW THE HORIZON WE CAN ALREADY SEE. This used to return
+            // with _hudFRoll/_hudFPitch untouched, and at the start of a flight those are still 0 -
+            // so the ladder parked at the CENTRE OF THE SCREEN for the whole settle window while the
+            // horizon was several hundred px away, then snapped. Seen live: HUD pit 0 against a
+            // measured -382. The settle is meant to stop the estimate moving, not to hide the truth.
+            if (_hudDetValid && (now - _hudDetAt) < 2000)
+            {
+                _kfRollX = _hudMRoll;
+                _kfPitX = HudPxToDeg(_hudMPitch);
+                _hudFRoll = _kfRollX;
+                _hudFPitch = HudDegToPx(_kfPitX);
+            }
+            return;
+        }
         float f = HudFocalPx();
 
         if (!_kfSeeded)
