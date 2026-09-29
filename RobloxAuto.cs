@@ -1,4 +1,4 @@
-// RobloxAuto.cs - one window for the Warfare loop.
+﻿// RobloxAuto.cs - one window for the Warfare loop.
 //
 //   REJOIN      rejoin the last server (deep link), auto-reconnect, OCR loading watch
 //   AUTO RUN    wait for load -> team -> drone -> DEPLOY -> Base -> Deploy As Drone
@@ -1104,7 +1104,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 try
                 {
                     File.WriteAllText(Path.Combine(_appDir, "hudphys.csv"),
-                        "t_ms,sx,sy,lx,ly,detRoll,detPitch,conf,fuseRoll,fusePitch,modelRollRate,modelPitchRate");
+                        "t_ms,sx,sy,lx,ly,vision,detRoll,detPitch,conf,fuseRoll,fusePitch,modelRollRate,modelPitchRate\r\n");
                 }
                 catch { }
                 Log("physics log ON - writing hudphys.csv (shaped stick + the horizon the detector measured)");
@@ -5365,6 +5365,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // low-quality LIFT (up) and clutter DROP (down) - both in px, off the dials
         float treeDrop = _hudClutter * _hudTreeDrop * _hudDpp;   // trees/structures -> push the line DOWN
         _hudPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff + treeDrop;
+        if (_physLog) PhysLogLine();                       // 50 Hz: fast stick work included
 
         // Simulated FPV pack voltage. It starts at half, rises with throttle (left stick Y up), and
         // a spring + ripple gives the sag/bounce of a real pack under load. 4S range 13.2V..16.8V.
@@ -8323,15 +8324,17 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         try
         {
             long tn = Environment.TickCount;
-            if (tn - _physAt < 80) return;
+            if (tn - _physAt < 18) return;              // ~50 Hz
             _physAt = tn;
             System.Globalization.CultureInfo ci = System.Globalization.CultureInfo.InvariantCulture;
             StringBuilder b = new StringBuilder();
+            bool fresh = _hudDetValid && (tn - _hudDetAt) < 2000;
             b.Append((tn - _physT0).ToString(ci)).Append(',')
              .Append(_lastSxS.ToString("0.000", ci)).Append(',')
              .Append(_lastSyS.ToString("0.000", ci)).Append(',')
              .Append(_padLx.ToString("0.000", ci)).Append(',')
              .Append(_padLy.ToString("0.000", ci)).Append(',')
+             .Append(fresh ? "1" : "0").Append(',')
              .Append(_hudDetRoll.ToString("0.00", ci)).Append(',')
              .Append(_hudDetPitch.ToString("0.0", ci)).Append(',')
              .Append(_hudDetConf.ToString("0.000", ci)).Append(',')
@@ -8687,7 +8690,6 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _hnOk = true; _hnTheta = theta; _hnM = mFin; _hnK = kFinal;
             _hudTrkM = mFin; _hudTrkB = cy - mFin * cx - normF * kFinal;
             _hudTrkAt = Environment.TickCount;
-            if (_physLog) PhysLogLine();
 
             // scene classifier (informational) + the "trained on your photos" override
             if (_hudSceneTick++ % 20 == 0)
