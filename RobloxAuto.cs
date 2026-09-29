@@ -2410,7 +2410,31 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (zQuietOut >= 4)
                 Log("   the map stopped reacting after " + zQuietOut + " bursts (already at max zoom, or the wheel is not landing)");
 
-            // Then the other way - the Base can be inside a clump that needs pulling IN to separate.
+            // Pan next, WHILE THE MAP IS STILL PULLED ALL THE WAY BACK - at max zoom-out one drag
+            // sweeps the whole map, which is what actually turns up a Base hugging the edge. (Field
+            // report: "it found it a lot quicker by zooming out" - so pan at that zoom, not deeper.)
+            if (!sawBase)
+            {
+                int[,] pans = { { 520, 0 }, { -1040, 0 }, { 520, 0 }, { 0, 300 }, { 0, -600 }, { 0, 300 } };
+                for (int p = 0; p < 6 && !sawBase && Alive(g); p++)
+                {
+                    Log("   panning the map to look for the Base (" + (p + 1) + "/6)");
+                    FocusRoblox();
+                    DragPan(pans[p, 0], pans[p, 1]);
+                    Thread.Sleep(180);
+                    InvalidateOcr();
+                    List<Hit> bh = FindPhraseAll("Base", null, OcrWordsWhiten());
+                    if (bh.Count == 0) bh = FindPhraseAll("Base", null, OcrWords());
+                    if (bh.Count > 0)
+                    {
+                        sawBase = true; baseX = bh[0].X; baseY = bh[0].Y;
+                        Log("   Base label is visible at (" + baseX + "," + baseY + ") after panning");
+                    }
+                }
+            }
+
+            // Last look the other way - the Base can be inside a clump that needs pulling IN to
+            // separate from the other icons.
             // The Base labels separate from POINT pins when zoomed in, so this pass often reads best.
             int zQuietIn = 0;
             for (int z = 1; z <= 6 && !sawBase && Alive(g) && zQuietIn < 3; z++)
@@ -2436,29 +2460,6 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // both directions dead = the wheel is not reaching the game at all; the log must say it
             if (zQuietOut >= 4 && zQuietIn >= 3)
                 Log("   WARNING: the map never reacted to the wheel (both directions quiet) - zooming is not working, panning instead");
-
-            // THEN pan, but only gently - the drag is clamped away from the screen edges so it can
-            // never yank the pointer to the top of the window (which dragged the Roblox window
-            // around). Panning is the fallback for a Base sitting off to one side.
-            if (!sawBase)
-            {
-                int[,] pans = { { 520, 0 }, { -1040, 0 }, { 520, 0 }, { 0, 300 }, { 0, -600 }, { 0, 300 } };
-                for (int p = 0; p < 6 && !sawBase && Alive(g); p++)
-                {
-                    Log("   panning the map to look for the Base (" + (p + 1) + "/6)");
-                    FocusRoblox();
-                    DragPan(pans[p, 0], pans[p, 1]);
-                    Thread.Sleep(180);
-                    InvalidateOcr();
-                    List<Hit> bh = FindPhraseAll("Base", null, OcrWordsWhiten());
-                    if (bh.Count == 0) bh = FindPhraseAll("Base", null, OcrWords());
-                    if (bh.Count > 0)
-                    {
-                        sawBase = true; baseX = bh[0].X; baseY = bh[0].Y;
-                        Log("   Base label is visible at (" + baseX + "," + baseY + ") after panning");
-                    }
-                }
-            }
 
             if (!sawBase)
             {
@@ -2512,9 +2513,20 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             }
             else
             {
-                Log("5) could not open TEAM BASE - pressing the red Return, then stopping");
-                ClickRedReturn();
-                return;
+                // The label may have been read from overlapped text ("Base" drawn over POINT A).
+                // The ICON is still there and is the only real click target - find it by shape.
+                int tx, ty;
+                if (FindBaseTent(out tx, out ty))
+                {
+                    Log("   Base label click failed - trying the tent icon at (" + tx + "," + ty + ")");
+                    if (ClickBaseAt(tx, ty, g)) panelUp = true;
+                }
+                if (!panelUp)
+                {
+                    Log("5) could not open TEAM BASE - pressing the red Return, then stopping");
+                    ClickRedReturn();
+                    return;
+                }
             }
         }
         else Log("5) base step skipped (" + (panelUp ? "TEAM BASE already open" : "step off") + ")");
@@ -3705,6 +3717,18 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         {
             InvalidateGrab();
             int W, H; int[] px = Grab(out W, out H);
+            return TentScan(px, W, H, out bx, out by);
+        }
+        catch (Exception e) { Log("   tent detect failed: " + e.Message); return false; }
+    }
+
+    // The actual shape search, split out so the exact same code can also run on a saved frame
+    // (RobloxAuto.exe --tenttest <png>) - that is how it is verified against real map screenshots.
+    bool TentScan(int[] px, int W, int H, out int bx, out int by)
+    {
+        bx = by = -1;
+        try
+        {
             bool[] m = new bool[W * H];
             for (int i = 0; i < px.Length; i++)
             {
@@ -3732,7 +3756,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 }
                 int bw = x1-x0+1, bh = y1-y0+1;
                 // drop the thin front-line strip (bh ~10) and the tiny diamond specks (~30x29)
-                if (area < 500 || bw < 30 || bh < 35 || bw > 220 || bh > 220) continue;
+                if (area < 500 || bw < 30 || bh < 35 || bw > 400 || bh > 400) continue;
                 blobs.Add(new Rectangle(x0, y0, bw, bh));
             }
 
@@ -3751,17 +3775,29 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     }
             }
 
-            int best = -1; double bestErr = 1e9;
+            // Pick the BIGGEST near-square red mass. There is NO fixed size window any more: the
+            // tent scales with the map zoom (~73x77 at one zoom, ~150x130 at another - proven by
+            // two real crops), so the old 40..100px height band missed it at half the zooms. The
+            // POINT pins are teardrops (aspect ~0.69) and are rejected by shape alone.
+            int best = -1; double bestScore = -1;
             for (int i = 0; i < blobs.Count; i++)
             {
                 double ar = (double)blobs[i].Width / blobs[i].Height;
-                if (ar < 0.85 || ar > 1.5) continue;          // pins are ~0.69 - too tall to be the tent
-                if (blobs[i].Height < 40 || blobs[i].Height > 100) continue;
-                if (blobs[i].Width < 45) continue;
-                double err = Math.Abs(ar - 1.0);
-                if (err < bestErr) { bestErr = err; best = i; }
+                if (ar < 0.78 || ar > 1.5) continue;          // pins are ~0.69 - too tall to be the tent
+                if (blobs[i].Width < 45 || blobs[i].Height < 35) continue;
+                double squareness = 1.0 - Math.Abs(ar - 1.02); // a real tent lands ~0.9-1.05
+                if (squareness <= 0) continue;
+                double score = squareness * 1000.0 + (double)(blobs[i].Width * blobs[i].Height) / 2000.0;
+                if (score > bestScore) { bestScore = score; best = i; }
             }
-            if (best < 0) return false;
+            if (best < 0)
+            {
+                // leave the measurements in the log so a miss is diagnosable from a real run
+                for (int i = 0; i < blobs.Count && i < 4; i++)
+                    Log("   tent scan: red blob " + blobs[i].Width + "x" + blobs[i].Height +
+                        " aspect " + ((double)blobs[i].Width / blobs[i].Height).ToString("0.00"));
+                return false;
+            }
 
             Rectangle t = blobs[best];
             bx = t.X + t.Width / 2;
@@ -9804,6 +9840,32 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             IntPtr rw = RobloxWindow();
             st.Log("test wheel " + n + ": screenchange=" + DiffPct(sig1, sig2).ToString("0.0") + "%  fg=" +
                    (GetForegroundWindow() == rw ? "roblox" : "OTHER") + "  cursor=" + Cursor.Position.X + "," + Cursor.Position.Y);
+            return;
+        }
+        // --tenttest <png> : run the Base tent shape scan on a saved frame and log the result.
+        // This is how the icon detector is verified against real map screenshots.
+        if (args.Length > 1 && args[0] == "--tenttest")
+        {
+            _selfTest = true;
+            RobloxAuto st = new RobloxAuto();
+            try
+            {
+                using (Bitmap bmp = new Bitmap(args[1]))
+                {
+                    int W = bmp.Width, H = bmp.Height;
+                    int[] px = new int[W * H];
+                    System.Drawing.Imaging.BitmapData bd = bmp.LockBits(new Rectangle(0, 0, W, H),
+                        System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                    for (int y = 0; y < H; y++)
+                        Marshal.Copy(IntPtr.Add(bd.Scan0, y * bd.Stride), px, y * W, W);
+                    bmp.UnlockBits(bd);
+                    int tx, ty;
+                    bool ok = st.TentScan(px, W, H, out tx, out ty);
+                    st.Log("tenttest " + System.IO.Path.GetFileName(args[1]) + " (" + W + "x" + H + "): found=" + ok +
+                           " at (" + tx + "," + ty + ")");
+                }
+            }
+            catch (Exception ex) { st.Log("tenttest error: " + ex.Message); }
             return;
         }
         // --auto : run the real AUTO flow exactly as the button/pad trigger does, then exit.
