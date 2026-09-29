@@ -1,4 +1,4 @@
-﻿// RobloxAuto.cs - one window for the Warfare loop.
+// RobloxAuto.cs - one window for the Warfare loop.
 //
 //   REJOIN      rejoin the last server (deep link), auto-reconnect, OCR loading watch
 //   AUTO RUN    wait for load -> team -> drone -> DEPLOY -> Base -> Deploy As Drone
@@ -1088,7 +1088,31 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         chkHudAuto.CheckedChanged += delegate { _hudAutoDetect = chkHudAuto.Checked; SaveCfg(); };
         Controls.Add(chkHudAuto);
         y += 24;
-         // PHYSICS LOG: record stick + measured horizon together so the stick->rate model can be         // fitted from a real flight instead of guessed. Writes hudphys.csv next to the exe.         chkPhys = new CheckBox();         chkPhys.Text = "physics log  (hudphys.csv - stick + horizon per frame)";         chkPhys.SetBounds(x, y, 330, 22);         chkPhys.Checked = _physLog;         chkPhys.CheckedChanged += delegate         {             _physLog = chkPhys.Checked; SaveCfg();             if (_physLog)             {                 _physT0 = Environment.TickCount; _physAt = 0;                 try                 {                     File.WriteAllText(Path.Combine(_appDir, "hudphys.csv"),                         "t_ms,sx,sy,lx,ly,detRoll,detPitch,conf,fuseRoll,fusePitch,modelRollRate,modelPitchRate\r\n");                 }                 catch { }                 Log("physics log ON - writing hudphys.csv (shaped stick + the horizon the detector measured)");             }             else Log("physics log off");         };         Controls.Add(chkPhys);         y += 24;
+
+        // PHYSICS LOG: record stick + measured horizon together so the stick->rate model can be
+        // fitted from a real flight instead of guessed. Writes hudphys.csv next to the exe.
+        chkPhys = new CheckBox();
+        chkPhys.Text = "physics log  (hudphys.csv - stick + horizon per frame)";
+        chkPhys.SetBounds(x, y, 330, 22);
+        chkPhys.Checked = _physLog;
+        chkPhys.CheckedChanged += delegate
+        {
+            _physLog = chkPhys.Checked; SaveCfg();
+            if (_physLog)
+            {
+                _physT0 = Environment.TickCount; _physAt = 0;
+                try
+                {
+                    File.WriteAllText(Path.Combine(_appDir, "hudphys.csv"),
+                        "t_ms,sx,sy,lx,ly,detRoll,detPitch,conf,fuseRoll,fusePitch,modelRollRate,modelPitchRate");
+                }
+                catch { }
+                Log("physics log ON - writing hudphys.csv (shaped stick + the horizon the detector measured)");
+            }
+            else Log("physics log off");
+        };
+        Controls.Add(chkPhys);
+        y += 24;
 
         chkNight = new CheckBox();
         chkNight.Text = "Night vision (invert display)";
