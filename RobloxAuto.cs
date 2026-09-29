@@ -9135,7 +9135,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     bool gnd = dG < 1.25f;
                     if (sky && dS > dG) sky = false;
                     if (gnd && dG > dS) gnd = false;
-                    if (!sky && !gnd) tNN++;
+                    // TREE = the BLURRED version matches neither model AND the UNBLURRED version is
+                    // textured (trees are high-frequency detail that survives as clutter in the
+                    // detail map while hazy grey patches do not). Blurred + unblurred must agree
+                    // before a section counts as tree (field request).
+                    if (!sky && !gnd && bt > muT * 1.05f) tNN++;
                 }
             if (tBN > 4) treeBelow = tNN / (float)tBN;
         }
