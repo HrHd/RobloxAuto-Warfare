@@ -194,7 +194,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                                                     // while a FULL push is unchanged
     float _hudLeftPx = 0f;                         // px - max horizon offset from the LEFT stick (dial "thr pitch"); 0 = off
     float _hudPitStick = 280f;                      // px - DIRECT horizon offset from the RIGHT stick Y (dial "stick pitch")
-    float _hudGndBoost = 1f;                        // x  - extra stick-pitch lift when the image has no horizon (dial "ground boost"; was hard-wired 1.6x)
+    float _hudGndBoost = 1.6f;                      // x  - extra stick-pitch lift when the image has no horizon (dial "ground boost"; was hard-wired 1.6x)
                                                     //      push forward = line UP, pull back = line DOWN (signed: set - to invert)
     float _hudPitStickSm = 0f;                      // smoothed stick-pitch offset (glides, never jumps)
     float _hudRollStick = 8f;                       // DEG - direct bank from the right stick X (dial "stick tilt").
@@ -254,6 +254,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     bool _refGood = true;                 // last frame's nearest-reference label
     string _refName = "";                 // last frame's nearest-reference file name (log)
     bool _refGround = false;              // the nearest ref is a GROUND scene ("-ground"): no horizon
+    long _groundRefAt = 0;                // when a GROUND ref last matched (ground-eye: sticks get more control)
     // Raw robust measurement from the detector (BEFORE smoothing) - what the estimator consumes.
     float _hudMRoll = 0f, _hudMPitch = 0f;        // deg, px offset from centre
     float _hudAxisW = 1f;                          // dial "axis weight": influence of the sky/ground colour axis cue
@@ -1989,7 +1990,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             case "fine gain": return "Boosts SMALL right-stick inputs so fine movements move the line more (full push unchanged).";
             case "stick pitch": return "Direct horizon lift from the right stick Y (px). Negative inverts.";
             case "stick tilt": return "Direct bank from the right stick X (deg). Negative inverts.";
-            case "ground boost": return "Extra stick-pitch lift while the image has NO horizon (no fix, or sky under 15%). 1.00 = off - the stick then moves the line exactly by 'stick pitch'.";
+            case "ground boost": return "Extra stick-pitch lift when the scene is GROUND (a ref you marked -ground is matching) or the image has no horizon at all. 1.00 = off - the stick then moves the line exactly by 'stick pitch'.";
             case "tree drop": return "Push the horizon DOWN (deg) when the detector sees lots of clutter (trees/structures), which pull a lock UP onto the canopy.";
             case "roll gain": return "LEARNED, shown live: the roll-rate scale the fine-tune learner has found (1.00 = your roll speed dial is exact). Type to override for this flight; the next deploy hands it back to the learner.";
             case "pitch gain": return "LEARNED, shown live: the pitch-rate scale the fine-tune learner has found, including off-screen traverse corrections (1.00 = your pitch speed dial is exact). Type to override for this flight.";
@@ -5917,12 +5918,15 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // EXPO (acceleration): more % input = faster travel. A light touch barely moves the line, a full
         // stick sends it at full speed - a quadratic curve on the stick magnitude (with a linear floor
         // so small inputs still do something). The glide below turns "further target" into "faster move".
-        // GROUND-EYE (field): when the image is NOT currently seeing a horizon (no valid fix, or
-        // the last one had under 15% sky - "it thinks its ground"), the CONTROLLER pitch gets
-        // more say: the direct stick lift is boosted 1.6x so the pilot can still place the line
-        // while the image has nothing to contribute. It returns to 1x as soon as the horizon is
-        // back in view.
-        bool groundEye = !(_hudDetValid && (Environment.TickCount - _hudDetAt) < 2000) || _hudDetSky < 0.15f;
+        // GROUND-EYE: the sticks get more say exactly when the image has NOTHING to say:
+        //  - a ref you marked "GROUND" in the editor is matching (this scene has no horizon), or
+        //  - no valid fix for 2s (looking at the ground / off screen / blind).
+        // The old trigger also fired on "sky under 15%", which is nearly EVERY forest frame - so
+        // it boosted the stick almost the whole flight, not just on ground, and that reads as
+        // over-control. Trees are not ground; your marked refs know the difference. The
+        // "ground boost" dial scales the extra lift (1.00 = off).
+        bool groundEye = (_groundRefAt != 0 && Environment.TickCount - _groundRefAt < 1500) ||
+                         !(_hudDetValid && (Environment.TickCount - _hudDetAt) < 2000);
         float pitStickEff = _hudPitStick * (groundEye ? _hudGndBoost : 1f);
         float stickPitchTarget = -syS * pitStickEff;
         float pv = 1f - (float)Math.Pow(0.5, dt / 0.22f);      // ~0.22s glide
@@ -10386,7 +10390,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     // open-sky boundary trusts at 0.95; a canopy-threaded line publishes softer so
                     // the live fusion trims toward it instead of snapping.
                     float refConf = 0.95f;
-                    if (_refName.IndexOf("-sky-med") >= 0) refConf = 0.80f;
+                    if (_refName.IndexOf("-sky-none") >= 0) refConf = 0.50f;   // no sky in the frame: softest - a trim, not a lock
+                    else if (_refName.IndexOf("-sky-med") >= 0) refConf = 0.80f;
                     else if (_refName.IndexOf("-sky-low") >= 0) refConf = 0.60f;
                     HudPublish(rl[0], rl[1] / c2, skyFrac2, refConf, 9f, 0.25f);
                     refHit = true;
@@ -10406,7 +10411,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 {
                     // GROUND reference matched (marked in RefEditor): this scene has NO horizon by
                     // definition - never keep a lock here, coast on the model. The ref name is in
-                    // the log so it is obvious which picture did it.
+                    // the log so it is obvious which picture did it. The match also flags
+                    // GROUND-EYE: while it keeps matching, the direct stick pitch is boosted so
+                    // the pilot can still place the line.
+                    _groundRefAt = Environment.TickCount;
                     _hudDetValid = false;
                     if (Environment.TickCount - _hudLogAt >= 2000)
                     {

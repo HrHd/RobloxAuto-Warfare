@@ -126,14 +126,14 @@ class RefEditor : Form
         lk.Font = new Font("Segoe UI", 9F, FontStyle.Bold); pnl.Controls.Add(lk);
         tbSky = new TrackBar();
         tbSky.SetBounds(10, 174, 158, 34);
-        tbSky.Minimum = 0; tbSky.Maximum = 3; tbSky.TickFrequency = 1;
+        tbSky.Minimum = 0; tbSky.Maximum = 4; tbSky.TickFrequency = 1;
         tbSky.SmallChange = 1; tbSky.LargeChange = 1;
         pnl.Controls.Add(tbSky);
         lblSkyLevel = new Label(); lblSkyLevel.SetBounds(14, 214, 76, 26);
         lblSkyLevel.Font = new Font("Segoe UI", 11F, FontStyle.Bold); pnl.Controls.Add(lblSkyLevel);
         tbSky.ValueChanged += delegate
         {
-            lblSkyLevel.Text = TreeName(tbSky.Value);
+            lblSkyLevel.Text = SkyName(tbSky.Value);
             if (!loadingRef) SetSkyLevel(tbSky.Value);
         };
         btnSkyKey = new Button(); btnSkyKey.SetBounds(96, 212, 74, 28);
@@ -274,7 +274,7 @@ class RefEditor : Form
             tbTrees.Value = lv;
             lblTreeLevel.Text = TreeName(lv);
             tbSky.Value = sv;
-            lblSkyLevel.Text = TreeName(sv);
+            lblSkyLevel.Text = SkyName(sv);
             loadingRef = false;
             dirty = false;
             if (lblSaved != null) { lblSaved.Text = "SAVED \u2713"; lblSaved.ForeColor = Color.FromArgb(0, 220, 80); }
@@ -282,9 +282,21 @@ class RefEditor : Form
         catch { }
     }
 
+    string CurName()
+    {
+        if (list.SelectedIndex < 0) return "";
+        return (string)list.Items[list.SelectedIndex];
+    }
+
+    bool CurIsGround()
+    {
+        return CurName().ToLowerInvariant().IndexOf("-ground") >= 0;
+    }
+
     void SetFromMouse(MouseEventArgs e)
     {
         if (img == null) return;
+        if (CurIsGround()) return;                    // no horizon here - nothing to drag
         float nw = img.Width, nh = img.Height;
         float nx = (e.X - ox) / sc, ny = (e.Y - oy) / sc;
         float cx = nw / 2f, cy = nh / 2f;
@@ -326,6 +338,17 @@ class RefEditor : Form
         ox = (W - dw) / 2; oy = (H - dh) / 2;
         e.Graphics.InterpolationMode = InterpolationMode.HighQualityBilinear;
         e.Graphics.DrawImage(img, ox, oy, dw, dh);
+        string bn = CurName();
+        if (bn.ToLowerInvariant().IndexOf("-ground") >= 0)
+        {
+            // GROUND refs have NO horizon - the app coasts on them, so drawing a line (usually
+            // off screen anyway) would be a lie. Badge only.
+            h1x = -1000; h1y = -1000; h2x = -1000; h2y = -1000;
+            using (Font fo = new Font("Segoe UI", 16, FontStyle.Bold))
+            using (SolidBrush sb = new SolidBrush(Color.FromArgb(255, 255, 190, 60)))
+                e.Graphics.DrawString("GROUND - no horizon (matched frames coast)   " + bn, fo, sb, ox + 16, oy + 12);
+            return;
+        }
         float rad = roll * (float)Math.PI / 180f;
         float c2 = (float)Math.Cos(rad); if (Math.Abs(c2) < 0.2f) c2 = 0.2f;
         float cx = ox + dw / 2f, cy = oy + dh / 2f;
@@ -341,7 +364,7 @@ class RefEditor : Form
         using (Font fo = new Font("Segoe UI", 16, FontStyle.Bold))
         using (SolidBrush sb = new SolidBrush(Color.FromArgb(255, 255, 0, 255)))
             e.Graphics.DrawString("roll=" + roll.ToString("0.0") + "  pitch=" + pitch.ToString("0") + "px   " +
-                (string)list.Items[list.SelectedIndex], fo, sb, ox + 16, oy + 12);
+                bn, fo, sb, ox + 16, oy + 12);
         // TWO DRAGGABLE DOTS: white CENTRE dot = whole line up/down (height), cyan SIDE dot = tilt.
         float yc2 = cy + yOff;
         h1x = (int)cx; h1y = (int)yc2;
@@ -403,15 +426,21 @@ class RefEditor : Form
     static int SkyLevelOf(string bn)
     {
         string s = bn.ToLowerInvariant();
-        if (s.IndexOf("-sky-high") >= 0) return 3;
-        if (s.IndexOf("-sky-med") >= 0) return 2;
-        if (s.IndexOf("-sky-low") >= 0) return 1;
+        if (s.IndexOf("-sky-none") >= 0) return 1;
+        if (s.IndexOf("-sky-low") >= 0) return 2;
+        if (s.IndexOf("-sky-med") >= 0) return 3;
+        if (s.IndexOf("-sky-high") >= 0) return 4;
         return 0;
     }
 
     static string StripSky(string bn)
     {
-        return bn.Replace("-sky-high", "").Replace("-sky-med", "").Replace("-sky-low", "");
+        return bn.Replace("-sky-none", "").Replace("-sky-high", "").Replace("-sky-med", "").Replace("-sky-low", "");
+    }
+
+    static string SkyName(int lv)
+    {
+        return lv == 0 ? "AUTO" : (lv == 1 ? "NONE" : (lv == 2 ? "LOW" : (lv == 3 ? "MED" : "HIGH")));
     }
 
     void SetSkyLevel(int lv)
@@ -422,14 +451,14 @@ class RefEditor : Form
         {
             string bn = Path.GetFileNameWithoutExtension(f);
             if (SkyLevelOf(bn) == lv) return;
-            string nb = StripSky(bn) + (lv == 0 ? "" : (lv == 1 ? "-sky-low" : (lv == 2 ? "-sky-med" : "-sky-high")));
+            string nb = StripSky(bn) + (lv == 0 ? "" : (lv == 1 ? "-sky-none" : (lv == 2 ? "-sky-low" : (lv == 3 ? "-sky-med" : "-sky-high"))));
             string nf = Path.Combine(dir, nb + ".png");
             if (img != null) { img.Dispose(); img = null; }
             File.Move(f, nf);
             string ohz = Path.ChangeExtension(f, ".hzn");
             if (File.Exists(ohz)) File.Move(ohz, Path.ChangeExtension(nf, ".hzn"));
             try { img = new Bitmap(nf); } catch { }
-            lblSaved.Text = "sky = " + TreeName(lv);
+            lblSaved.Text = "sky = " + SkyName(lv);
             lblSaved.ForeColor = Color.FromArgb(255, 170, 60);
             ReSelect(nf);
         }
@@ -533,22 +562,27 @@ class RefEditor : Form
                 {
                     using (Graphics g = Graphics.FromImage(b))
                     {
-                        float rad = roll * (float)Math.PI / 180f;
-                        float c2 = (float)Math.Cos(rad); if (Math.Abs(c2) < 0.2f) c2 = 0.2f;
-                        float W2 = b.Width, H2 = b.Height, cxx = W2 / 2f, cyy = H2 / 2f;
-                        float y2 = pitch / c2;
-                        PointF a2 = new PointF(cxx - (float)Math.Cos(rad) * W2, cyy + y2 - (float)Math.Sin(rad) * W2);
-                        PointF b2 = new PointF(cxx + (float)Math.Cos(rad) * W2, cyy + y2 + (float)Math.Sin(rad) * W2);
-                        using (Pen p = new Pen(Color.FromArgb(235, 0, 255, 60), 5)) g.DrawLine(p, a2, b2);
-                        using (Pen p2 = new Pen(Color.FromArgb(230, 255, 230, 0), 3))
+                        bool gnd = Path.GetFileName(f).ToLowerInvariant().IndexOf("-ground") >= 0;
+                        if (!gnd)
                         {
-                            g.DrawLine(p2, cxx - 26, cyy + y2, cxx + 26, cyy + y2);
-                            g.DrawLine(p2, cxx, cyy + y2 - 26, cxx, cyy + y2 + 26);
+                            float rad = roll * (float)Math.PI / 180f;
+                            float c2 = (float)Math.Cos(rad); if (Math.Abs(c2) < 0.2f) c2 = 0.2f;
+                            float W2 = b.Width, H2 = b.Height, cxx = W2 / 2f, cyy = H2 / 2f;
+                            float y2 = pitch / c2;
+                            PointF a2 = new PointF(cxx - (float)Math.Cos(rad) * W2, cyy + y2 - (float)Math.Sin(rad) * W2);
+                            PointF b2 = new PointF(cxx + (float)Math.Cos(rad) * W2, cyy + y2 + (float)Math.Sin(rad) * W2);
+                            using (Pen p = new Pen(Color.FromArgb(235, 0, 255, 60), 5)) g.DrawLine(p, a2, b2);
+                            using (Pen p2 = new Pen(Color.FromArgb(230, 255, 230, 0), 3))
+                            {
+                                g.DrawLine(p2, cxx - 26, cyy + y2, cxx + 26, cyy + y2);
+                                g.DrawLine(p2, cxx, cyy + y2 - 26, cxx, cyy + y2 + 26);
+                            }
                         }
                         using (Font fo = new Font("Segoe UI", 26, FontStyle.Bold))
-                        using (SolidBrush sb = new SolidBrush(Color.FromArgb(255, 255, 0, 255)))
-                            g.DrawString("roll=" + roll.ToString("0.0") + "  pitch=" + pitch.ToString("0") + "px   " +
-                                Path.GetFileName(f), fo, sb, 24, 24);
+                        using (SolidBrush sb = new SolidBrush(gnd ? Color.FromArgb(255, 255, 190, 60) : Color.FromArgb(255, 255, 0, 255)))
+                            g.DrawString(gnd ? ("GROUND - no horizon   " + Path.GetFileName(f))
+                                             : ("roll=" + roll.ToString("0.0") + "  pitch=" + pitch.ToString("0") + "px   " +
+                                                Path.GetFileName(f)), fo, sb, 24, 24);
                     }
                     b.Save(Path.Combine(dirMarked, Path.GetFileName(f)), System.Drawing.Imaging.ImageFormat.Png);
                 }
@@ -576,7 +610,7 @@ class RefEditor : Form
     // One key per slider cycles AUTO > LOW > MED > HIGH (and back). The buttons show the current
     // keys; click one, press any key, and it is stored in refkeys.ini next to the exe.
     void CycleTrees() { tbTrees.Value = (tbTrees.Value + 1) % 4; }
-    void CycleSky() { tbSky.Value = (tbSky.Value + 1) % 4; }
+    void CycleSky() { tbSky.Value = (tbSky.Value + 1) % 5; }
 
     void StartBind(int which)
     {
