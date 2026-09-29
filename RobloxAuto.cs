@@ -3788,10 +3788,20 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 if (!namesOurs) { Log("   payload check: our cell reads \"" + lab + "\" which is not " + _bomb); return false; }
             }
             if (cur == slot) return true;
-            // green undetectable -> accept only a positive label match for OUR bomb in our slot
+            // green undetectable
             if (cur < 0)
             {
+                // a positive label match for OUR bomb in our slot is proof enough
                 if (lab != "" && SimPct(lab, _bomb) >= 60) return true;
+                // BOTH the green box and the label were unreadable, so there is no EVIDENCE of a
+                // wrong payload - and we already clicked the right cell. Blocking here just wedged
+                // the flow on the panel forever ("clicks the rack then never deploys"). Deploy, and
+                // let the wrong-payload loop breaker handle a genuine mismatch.
+                if (lab == "")
+                {
+                    Log("   payload check: green and label both unreadable - trusting the click on " + _bomb);
+                    return true;
+                }
             }
             Log("   payload check: green slot is " + (cur < 0 ? "not detected" : cur + " (" + BombsFor(_drone)[cur + 1] + ")") +
                 ", want " + slot + " (" + _bomb + ")");
@@ -4124,17 +4134,18 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // score 1.0 the way the real overlay does.
     float CellGreenFrac(int[] px, int W, int H, int cx, int cy)
     {
+        // Wide, dense sampling. A sparse 3x3 missed the green when the ICON and the label text sat
+        // on the sampled points (the selected cell read "none" while clearly green on screen, which
+        // then hard-vetoed the deploy). Scan the whole cell face and take the fraction.
         int green = 0, n = 0;
-        int[] dxs = new int[] { -34, 0, 34 };
-        int[] dys = new int[] { -14, 0, 14 };
-        foreach (int dy in dys)
-            foreach (int dx in dxs)
+        for (int dy = -22; dy <= 22; dy += 4)
+            for (int dx = -44; dx <= 44; dx += 4)
             {
                 int x = cx + dx, y = cy + dy;
                 if (x < 0 || y < 0 || x >= W || y >= H) continue;
                 int v = px[y * W + x];
                 int b = v & 0xFF, g = (v >> 8) & 0xFF, r = (v >> 16) & 0xFF;
-                if ((g - Math.Max(r, b)) >= 30 && g >= 95) green++;
+                if ((g - Math.Max(r, b)) >= 22 && g >= 80) green++;
                 n++;
             }
         return n > 0 ? (float)green / n : 0f;
@@ -4152,7 +4163,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (v > best) { second = best; best = v; bi = i; }
             else if (v > second) second = v;
         }
-        if (bi >= 0 && best >= 0.55f && (best - second) >= 0.25f) return bi;
+        // Loosened: a real green cell scores ~0.6+ here, while the runner-up is background. 0.55/0.25
+        // was too strict and reported "none" on a genuinely selected cell.
+        if (bi >= 0 && best >= 0.30f && (best - second) >= 0.10f) return bi;
         return -1;
     }
 
