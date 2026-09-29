@@ -397,12 +397,23 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 // translation lives in the LAST ROW - exactly like Direct2D/WPF ColorMatrix.
                 // Putting the "+1" in the last column instead makes every channel (1 - v) come
                 // out negative, clamps to 0, and blacks the whole screen out. This is that bug.
+                // WHITE-HOT THERMAL (field request): instead of a plain invert (a photo negative,
+                // the old look) every output channel is driven from the INVERTED LUMINANCE with a
+                // warm ramp (r gain 1.30 > g 1.10 > b 0.90) and a small contrast stretch: dark
+                // game = white-hot, bright game = black, and everything between reads as the warm
+                // heat ramp a thermal camera shows. Linear matrix only - a true palette is not
+                // possible through the Magnification API.
+            {
+                float lr = 0.299f, lg = 0.587f, lb = 0.114f;    // luminance weights
+                float gr = 1.30f, gg = 1.10f, gb = 0.90f;       // per-channel gain
+                float or0 = -0.10f, og0 = -0.08f, ob0 = -0.06f; // small contrast offset
                 e.transform = new float[] {
-                    -1, 0, 0, 0, 0,
-                     0,-1, 0, 0, 0,
-                     0, 0,-1, 0, 0,
+                    -lr * gr, -lr * gg, -lr * gb, 0, 0,
+                    -lg * gr, -lg * gg, -lg * gb, 0, 0,
+                    -lb * gr, -lb * gg, -lb * gb, 0, 0,
                      0, 0, 0, 1, 0,
-                     1, 1, 1, 0, 1 };
+                     gr + or0, gg + og0, gb + ob0, 0, 1 };
+            }
             else
                 e.transform = new float[] {
                      1, 0, 0, 0, 0,
