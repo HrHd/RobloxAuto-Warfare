@@ -9204,21 +9204,44 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     }
                     if (onN >= 24)
                     {
+                        // ---- STRAIGHTNESS VOTE (through-tree fix) ------------------------------------
+                        // Tree tops scatter across columns and their jitter splits into several
+                        // clusters; a real horizon is ONE straight line. The HEIGHT is therefore
+                        // elected by the biggest ONSET CLUSTER - the canopy can win the pixel scorer
+                        // on contrast (blue sky vs dark green) but cannot fake a concentrated onset
+                        // cluster. If a second strong cluster sits just BELOW the winner it is taken
+                        // instead: that is exactly the "horizon sits above the tree line" case.
                         float[] tmp = new float[onN]; Array.Copy(oks, tmp, onN); Array.Sort(tmp);
-                        float med = tmp[onN / 2];
+                        float c1k = 0f, c2k = 0f; int c1n = 0, c2n = 0;
+                        for (int i = 0, j = 0; i < onN; i = j)
+                        {
+                            while (j < onN && tmp[j] - tmp[i] <= 6f) j++;
+                            int n = j - i; float kc = (tmp[i] + tmp[j - 1]) * 0.5f;
+                            if (n > c1n) { c2k = c1k; c2n = c1n; c1k = kc; c1n = n; }
+                            else if (n > c2n) { c2k = kc; c2n = n; }
+                        }
+                        float kOnt = c1k;
+                        if (c2n >= c1n * 70 / 100 && c2k < c1k && (c1k - c2k) < dh * 0.35f)
+                            kOnt = c2k;      // strong cluster just below -> the real line under the canopy
+                        // polish the elected cluster and adopt it
                         double acc = 0; int cc = 0;
-                        for (int i = 0; i < onN; i++) if (Math.Abs(oks[i] - med) <= 12f) { acc += oks[i]; cc++; }
+                        for (int i = 0; i < onN; i++) if (Math.Abs(oks[i] - kOnt) <= 6f) { acc += oks[i]; cc++; }
                         if (cc >= 16)
                         {
                             float rm = (float)(acc / cc);
-                            if (Math.Abs(rm - kHist) < dh * 0.25f)
+                            if (Math.Abs(rm - kHist) > 2f && Environment.TickCount - _hudLogAt >= 2000)
                             {
-                                kFinal = rm;
-                                double v = 0;
-                                for (int i = 0; i < onN; i++) if (Math.Abs(oks[i] - med) <= 12f) v += (oks[i] - rm) * (oks[i] - rm);
-                                onsetSd = cc > 1 ? (float)Math.Sqrt(v / (cc - 1)) : 6f;
+                                _hudLogAt = Environment.TickCount;
+                                Log("horizon det: onset vote moved the line " + ((kHist - rm) * HD_DS).ToString("0") +
+                                    "px " + (kHist > rm ? "down off the tree line" : "up") + " (clusters " + c1n + "/" + c2n + ")");
                             }
+                            kFinal = rm;
+                            double v = 0;
+                            for (int i = 0; i < onN; i++) if (Math.Abs(oks[i] - kOnt) <= 6f) v += (oks[i] - rm) * (oks[i] - rm);
+                            onsetSd = cc > 1 ? (float)Math.Sqrt(v / (cc - 1)) : 6f;
                         }
+                        else if (Math.Abs(kOnt - kHist) > 2f)
+                            kFinal = kOnt;   // small but clearly better than the pixel winner
                     }
                 }
             }
