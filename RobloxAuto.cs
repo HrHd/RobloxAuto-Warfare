@@ -253,6 +253,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     bool _hudLockedOnce = false;                  // a good hug formed at least once this flight
     int _hudBigRn = 0, _hudBigRat = 0, _hudBigRsg = 0;   // consecutive large ROLL innovations (persistent-pull gate)
     int _hudBigPn = 0, _hudBigPat = 0, _hudBigPsg = 0;   // consecutive large PITCH innovations
+    bool _hudParserOn = true;                     // dial "parser" (settings.ini hudParser): 1 = on
+    float _hudParserScore = 0f;                   // last section-parser confidence (log only)
     float _hudSceneTol = 0.10f;                   // max RMS distance to claim a scene match
     int _hudSceneTick = 0;
     float _hudSkyMin = 0.10f;                      // dial "sky min": discard a frame with less verified sky than this
@@ -6332,6 +6334,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudMsTau") _hudMsTau = ParseF(v);
             else if (k == "hudSkyMin") _hudSkyMin = ParseF(v) / 100f;
             else if (k == "hudSkyTex") { _hudSkyTex = ParseF(v); if (_hudSkyTex < 0f) _hudSkyTex = 0f; if (_hudSkyTex > 60f) _hudSkyTex = 60f; }
+            else if (k == "hudParser") _hudParserOn = ParseF(v) != 0f;
             else if (k == "physLog") _physLog = v != "0";
             else if (k == "hudSettleMs") { _hudSettleMs = (int)ParseF(v); if (_hudSettleMs < 0) _hudSettleMs = 0; if (_hudSettleMs > 60000) _hudSettleMs = 60000; }
             else if (k == "hudColdMs") { _hudColdMs = (int)ParseF(v); if (_hudColdMs < 0) _hudColdMs = 0; if (_hudColdMs > 60000) _hudColdMs = 60000; }
@@ -6412,6 +6415,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudManeuver=" + _hudManeuver.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRef=" + (_refDist * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAxisW=" + _hudAxisW.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudParser=" + (_hudParserOn ? "1" : "0"),
             "hudMsTau=" + _hudMsTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSkyMin=" + (_hudSkyMin * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSkyTex=" + _hudSkyTex.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -8948,6 +8952,104 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         _hudDetSky = skyFrac < 0f ? 0f : (skyFrac > 1f ? 1f : skyFrac);
     }
 
+    // ---- MULTI-SCALE SECTION PARSER (v2.9.33) -------------------------------------------------
+    // The coarse-to-fine idea: decide the horizon on BIG sections first (32px), then 16 -> 8 ->
+    // 4 -> 2, and let the per-column ONSET stage below do the final 1x1 sharpening. Every
+    // section votes SKY / GROUND / NEITHER against the frame's own top/bottom colour models.
+    // NEITHER (tree canopy, trunks) abstains, so a forest cannot outvote the real line. The
+    // line must have BOTH sides supporting it (sky above AND ground below), and a section
+    // matching the WRONG side counts against it. That is what stops the lock sitting on the
+    // tree tops: the canopy is "neither", while the haze band below it still matches SKY and
+    // penalises any line drawn above the true horizon.
+    float HudSectionScore(float m, float k, int bs, float muL, float sdL, float muB, float sdB,
+                          float guL, float gsdL, float guB, float gsdB, float muT)
+    {
+        int mw = _hdW, mh = _hdH;
+        float cx = mw * 0.5f, cy = mh * 0.5f;
+        float norm = (float)Math.Sqrt(1 + m * m);
+        int nTot = 0, nSkyA = 0, nGndB = 0, nOpp = 0;
+        for (int by = 0; by + bs <= mh; by += bs)
+            for (int bx = 0; bx + bs <= mw; bx += bs)
+            {
+                nTot++;
+                float bl = 0, bb = 0, bt = 0; int n = 0;
+                for (int y = by; y < by + bs; y++)
+                    for (int x = bx; x < bx + bs; x++)
+                    { int i = y * mw + x; bl += _hdL[i]; bb += _hdBR[i]; bt += _hdT[i]; n++; }
+                bl /= n; bb /= n; bt /= n;
+                float dS = (float)Math.Sqrt(((bl - muL) / sdL) * ((bl - muL) / sdL) + ((bb - muB) / sdB) * ((bb - muB) / sdB));
+                float dG = (float)Math.Sqrt(((bl - guL) / gsdL) * ((bl - guL) / gsdL) + ((bb - guB) / gsdB) * ((bb - guB) / gsdB));
+                bool sky = dS < 1.25f && bt < muT * 1.4f + 2f;
+                bool gnd = dG < 1.25f;
+                if (sky && dS > dG) sky = false;
+                if (gnd && dG > dS) gnd = false;
+                if (!sky && !gnd) continue;
+                float mx = bx + bs * 0.5f, my = by + bs * 0.5f;
+                float s = ((mx - cx) * m - (my - cy)) / norm;
+                bool above = s > k;
+                if (sky && above) nSkyA++;
+                else if (gnd && !above) nGndB++;
+                else nOpp++;
+            }
+        if (nTot < 8) return -9f;
+        return Math.Min(nSkyA / (float)nTot, nGndB / (float)nTot) - 0.5f * (nOpp / (float)nTot);
+    }
+
+    void HudSectionParse(out float theta, out float kOut, out float score)
+    {
+        theta = 0; kOut = 0; score = -9f;
+        int mw = _hdW, mh = _hdH;
+        if (_hdL == null || mw < 64 || mh < 48) return;
+        // the frame's own models: top band = sky, bottom band = ground (same bands the
+        // prototype used; deliberately not the long-running learned sky model)
+        double sl = 0, sb = 0, sl2 = 0, sb2 = 0, st = 0; int nA = 0;
+        for (int y = 2; y < mh / 7; y++)
+            for (int x = mw / 8; x < mw * 7 / 8; x++)
+            { int i = y * mw + x; sl += _hdL[i]; sb += _hdBR[i]; sl2 += _hdL[i] * _hdL[i]; sb2 += _hdBR[i] * _hdBR[i]; st += _hdT[i]; nA++; }
+        if (nA < 40) return;
+        float muL = (float)(sl / nA), muB = (float)(sb / nA);
+        float sdL = (float)Math.Sqrt(Math.Max(4.0, sl2 / nA - (sl / nA) * (sl / nA)));
+        float sdB = (float)Math.Sqrt(Math.Max(4.0, sb2 / nA - (sb / nA) * (sb / nA)));
+        float muT = (float)(st / nA);
+        double gl = 0, gb = 0, gl2 = 0, gb2 = 0; int nB = 0;
+        for (int y = mh * 6 / 7; y < mh - 2; y++)
+            for (int x = mw / 6; x < mw * 5 / 6; x++)
+            { int i = y * mw + x; gl += _hdL[i]; gb += _hdBR[i]; gl2 += _hdL[i] * _hdL[i]; gb2 += _hdBR[i] * _hdBR[i]; nB++; }
+        if (nB < 40) return;
+        float guL = (float)(gl / nB), guB = (float)(gb / nB);
+        float gsdL = (float)Math.Sqrt(Math.Max(4.0, gl2 / nB - (gl / nB) * (gl / nB)));
+        float gsdB = (float)Math.Sqrt(Math.Max(4.0, gb2 / nB - (gb / nB) * (gb / nB)));
+
+        float bestSc = -9f, bestM = 0, bestK = 0;
+        int bs0 = 32; if (bs0 > mh / 4) bs0 = Math.Max(8, mh / 4);
+        for (int a = -24; a <= 24; a += 4)
+        {
+            float m = (float)Math.Tan(a * Math.PI / 180.0);
+            for (float kk = -mh * 0.45f; kk <= mh * 0.45f; kk += 2f)
+            {
+                float s = HudSectionScore(m, kk, bs0, muL, sdL, muB, sdB, guL, gsdL, guB, gsdB, muT);
+                if (s > bestSc) { bestSc = s; bestM = m; bestK = kk; }
+            }
+        }
+        int[] sizes = new int[] { 16, 8, 4, 2 };
+        foreach (int b in sizes)
+        {
+            float baseA = (float)(Math.Atan(bestM) * 180.0 / Math.PI);
+            float kk = bestK;
+            for (int a = -4; a <= 4; a++)
+            {
+                float mm = (float)Math.Tan((baseA + a) * Math.PI / 180.0);
+                for (float dk = -b * 2f; dk <= b * 2f; dk += 1f)
+                {
+                    float s = HudSectionScore(mm, kk + dk, b, muL, sdL, muB, sdB, guL, gsdL, guB, gsdB, muT);
+                    if (s > bestSc) { bestSc = s; bestM = mm; bestK = kk + dk; }
+                }
+            }
+        }
+        theta = (float)(Math.Atan(bestM) * 180.0 / Math.PI);
+        kOut = bestK; score = bestSc;
+    }
+
     void DetectHorizon()
     {
         try
@@ -9212,13 +9314,48 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float normF = (float)Math.Sqrt(1f + mFin * mFin);
             float kHist = bestK;
 
+            // ---- MULTI-SCALE SECTION PARSER (v2.9.33): big sections -> 16 -> 8 -> 4 -> 2 decide
+            // the coarse line when they are confident; the onset stage below still does the final
+            // 1x1 sharpening. This is the tree-line fix: the canopy files as NEITHER, and the haze
+            // band under it matches SKY, so any line above the true horizon collects contradictions.
+            float thetaS, kS, scoreS;
+            HudSectionParse(out thetaS, out kS, out scoreS);
+            _hudParserScore = scoreS;
+            bool parserOn = _hudParserOn && scoreS >= 0.12f;
+            if (parserOn)
+            {
+                theta = thetaS;
+                mFin = (float)Math.Tan(theta * Math.PI / 180.0);
+                normF = (float)Math.Sqrt(1f + mFin * mFin);
+                kHist = kS;
+            }
+
             // ---- STAGE 4: onset precision on the HEIGHT only --------------------------------------
             // The winning offset is quantised to a bin, so sharpen it with the per-column "first row
             // that leaves the sky" - the definition of a horizon. The reference is the frame's OWN
             // above-region mean, not the top band, so this does not care where the camera points.
             float kFinal = kHist, onsetSd = 6f; int onN = 0;
             {
-                float aRef = thAL[bestTh], bRef = thBL[bestTh];
+                float aRef, bRef;
+                if (parserOn)
+                {
+                    // above/below means around the PARSER line (same definition as thAL/thBL,
+                    // but at our own line - the fisher angle's means are meaningless here)
+                    double sA = 0, sB = 0; int nA2 = 0, nB2 = 0;
+                    for (int y = 0; y < dh; y++)
+                    {
+                        float yy = y - cy; int row = y * dw;
+                        for (int x = 0; x < dw; x++)
+                        {
+                            float ss = ((x - cx) * mFin - yy) / normF;
+                            if (ss > kHist + 2f) { sA += _hdL[row + x]; nA2++; }
+                            else if (ss < kHist - 2f) { sB += _hdL[row + x]; nB2++; }
+                        }
+                    }
+                    aRef = nA2 > 0 ? (float)(sA / nA2) : 0f;
+                    bRef = nB2 > 0 ? (float)(sB / nB2) : 0f;
+                }
+                else { aRef = thAL[bestTh]; bRef = thBL[bestTh]; }
                 float spreadL = Math.Abs(bRef - aRef);
                 if (spreadL > 8f)
                 {
@@ -9443,6 +9580,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     "%, sep " + bestScore.ToString("0.0") + " (next angle " + second.ToString("0.0") + "), onset " +
                     onN + ", clutter " + (_hudClutter * 100f).ToString("0") + "%, sky-model " +
                     (_skyModelOk ? "on" : "none") + ", scene " + _hudScene +
+                    ", parser " + _hudParserScore.ToString("0.00") +
                     (refHit ? "  REF-ANSWER" : ""));
             }
         }
