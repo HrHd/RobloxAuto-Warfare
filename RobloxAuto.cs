@@ -130,7 +130,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // COLD START. For the first seconds of a flight the detector is at its most likely to latch
     // onto terrain and swing the ladder, so it is ordered to stop being clever and just report the
     // MEDIAN of the image until this expires. See MedianHorizonLine.
-    int _hudColdMs = 10000;
+    int _hudColdMs = 4000;      // the quick median is a stopgap to get a line on screen fast
     volatile int _hudColdUntil = 0;
     bool _hudColdLogged = false;
     int _hudSettleMs = 2500;
@@ -8231,7 +8231,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // leaves the sky" then trips on noise just under the top band and reports a horizon near
         // the top of the frame. Measured live: a clean frame steps ~114, a hazy fog/grey frame only
         // ~18. Below 30 we hand the frame to the normal detector instead of guessing.
-        if (dly < 30f) return false;
+        // Relaxed for the COLD START ONLY. The median is used nowhere else, and at a deploy a rough
+        // line beats no line - a blank HUD is worse than one that is a few percent out. (The 30
+        // guard was added when a weak frame produced a bogus 7% horizon in normal flight.)
+        if (dly < 15f) return false;
 
         int cap = W / 8 + 8;
         float[] onX = new float[cap], onY = new float[cap]; int onN = 0;
@@ -8530,7 +8533,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             {
                 float cSl, cIc, cSky; int cN;
                 if (MedianHorizonLine(px, W, H, out cSl, out cIc, out cSky, out cN)
-                    && cSky > 0.12f && cSky < 0.88f)
+                    && cSky > 0.05f && cSky < 0.95f)
                 {
                     float cNorm = (float)Math.Sqrt(1f + cSl * cSl);
                     float cRoll = (float)(Math.Atan(cSl) * 180.0 / Math.PI);
