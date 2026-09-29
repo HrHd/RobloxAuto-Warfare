@@ -4004,7 +4004,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         if (sc <= 0f) sc = 1f;
 
         int ax, ay;
-        if (!WarheadAnchor(out ax, out ay))
+        // Use the PIXEL anchor (the gold button, derived from the green and maroon bars) whenever
+        // the panel is really up. The OCR phrase centroid jitters by up to 60 px between reads and
+        // the ENTIRE grid is placed relative to it, so the cells slid out from under the cursor and
+        // it clicked the WRONG warhead - which is exactly what was seen. Button geometry does not
+        // jitter. The OCR anchor stays as the fallback.
+        bool haveAnchor = PanelDeployAsDrone(out ax, out ay);
+        if (!haveAnchor) haveAnchor = WarheadAnchor(out ax, out ay);
+        if (!haveAnchor)
         {
             Log("   no 'Deploy As Drone' anchor on screen - falling back to the colour hunt");
             return FindWarheadCellsByColour(count);
