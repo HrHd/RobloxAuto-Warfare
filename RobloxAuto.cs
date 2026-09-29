@@ -8127,6 +8127,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // ... opening up while the state is uncertain (a long coast) so re-locking still works.
             float gR = 4f * (float)Math.Sqrt(Rr) + (float)Math.Sqrt(_kfRollP); if (gR < 10f) gR = 10f;
             float gP = 4f * (float)Math.Sqrt(Rp) + (float)Math.Sqrt(_kfPitP); if (gP < 6f) gP = 6f;
+            // FILTER DIVERGENCE GUARD. The gate above is sized for small errors, so if the estimate
+            // drifts a long way while the horizon is off screen the error can exceed it - and then
+            // EVERY correction is rejected and the filter can never recover. (Seen live: the ladder
+            // sat 670 px from the measurement and was drifting further, not converging.) After a long
+            // blind stretch the error is legitimately large, so widen the gate and let it come back.
+            if (coastBefore > 800f) { float wf = 1f + coastBefore / 2000f; if (wf > 6f) wf = 6f; gR *= wf; gP *= wf; }
             bool okR = Math.Abs(ir) <= gR;
             bool okP = Math.Abs(ip) <= gP;
 
