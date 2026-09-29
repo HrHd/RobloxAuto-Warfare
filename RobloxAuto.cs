@@ -8217,7 +8217,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // EVERY correction is rejected and the filter can never recover. (Seen live: the ladder
             // sat 670 px from the measurement and was drifting further, not converging.) After a long
             // blind stretch the error is legitimately large, so widen the gate and let it come back.
-            if (coastBefore > 800f) { float wf = 1f + coastBefore / 2000f; if (wf > 6f) wf = 6f; gR *= wf; gP *= wf; }
+            // After a long blind stretch the estimate has NO authority left - the model has been
+            // free to drift for the whole time - so ANY measurement that already passed the
+            // detector's own checks is better than what we have. The gate is therefore opened
+            // COMPLETELY rather than merely widened. Measured live: the estimate sat 1116 px out
+            // (74 deg) with a zero model rate and 0.7-0.9 confidence readings arriving, and even
+            // the 6x-wide gate (~18 deg) rejected every single correction - so it stayed there.
+            if (coastBefore > 1200f) { gR = 1e9f; gP = 1e9f; }
+            else if (coastBefore > 800f) { float wf = 1f + coastBefore / 2000f; if (wf > 6f) wf = 6f; gR *= wf; gP *= wf; }
             bool okR = Math.Abs(ir) <= gR;
             bool okP = Math.Abs(ip) <= gP;
 
