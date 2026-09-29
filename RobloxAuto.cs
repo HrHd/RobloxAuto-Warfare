@@ -9227,9 +9227,21 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     // THE 3-COLUMN VOTE GETS THE FIRST WORD (field flight, 00:53-00:54): the median
                     // line sat mid-screen while the vote held the real sky/tree boundary on every
                     // frame. When the vote disagrees with the median by >40px, publish the vote.
+                    // The vote needs a GOOD ANGLE PRIOR: the median's own angle can fail its
+                    // agreement test (measured 00:59:14 - median 126, the same frame's vote with
+                    // the scorer's angle said -285). Try, in order: the median angle, the last
+                    // accepted angle, and the previous frame's vote result (stable across frames).
                     bool usedVote = false;
                     float vk; int vag;
-                    if (HudColVote(cRoll, out vk, out vag) && vag >= 2)
+                    bool voteOk = false;
+                    if (HudColVote(cRoll, out vk, out vag) && vag >= 2) voteOk = true;
+                    if (!voteOk && _hnOk && Math.Abs(_hnTheta - cRoll) > 1.5f)
+                    {
+                        float vk2; int vag2;
+                        if (HudColVote(_hnTheta, out vk2, out vag2) && vag2 >= 2) { vk = vk2; vag = vag2; voteOk = true; }
+                    }
+                    if (!voteOk && _hudColOk && _hudColAgree >= 2) { vk = _hudColK; vag = _hudColAgree; voteOk = true; }
+                    if (voteOk)
                     {
                         float vPitch = -vk * HD_DS;
                         if (Math.Abs(vPitch - cPitch) > 40f)
