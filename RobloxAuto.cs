@@ -8477,6 +8477,25 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     {
         try
         {
+            // REF CAP (field): the automatic library must not grow without bound - every extra ref
+            // costs matching time and dilutes the set. Manual F4 captures and the editor still work.
+            try
+            {
+                string capDir = Path.Combine(_appDir, "hudref");
+                int have = 0;
+                if (Directory.Exists(capDir))
+                    foreach (string s2 in Directory.GetFiles(capDir))
+                    {
+                        string e2 = Path.GetExtension(s2).ToLowerInvariant();
+                        if (e2 == ".png" || e2 == ".jpg" || e2 == ".bmp") have++;
+                    }
+                if (have >= 80)
+                {
+                    Log("   deploy refs: cap reached (" + have + "/80) - not saving another (delete some in RefEditor)");
+                    return;
+                }
+            }
+            catch { }
             if (_autoRefN < 3 || _autoRefPx == null)
             {
                 Log("   deploy refs: only " + _autoRefN + " good frames in the first 2s - nothing saved");
