@@ -151,6 +151,16 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     bool _hudStyleUav = false;                     // MAVIC gets the UAV-style layout
     FpvHudForm _hudForm = null;
     CheckBox chkHud, chkNight;
+    // ---- PHYSICS LOG --------------------------------------------------------------------------
+    // One CSV line per accepted horizon measurement, carrying the STICK and the MEASURED horizon
+    // together. That is what lets the stick->horizon-rate model be FITTED against reality instead of
+    // guessed: fly it, then regress d(roll)/dt on the roll stick and d(pitch)/dt on the pitch stick.
+    // Columns: t_ms,sx,sy,lx,ly,detRoll,detPitch,conf,fuseRoll,fusePitch,modelRollRate,modelPitchRate
+    bool _physLog = false;
+    long _physT0 = 0;
+    long _physAt = 0;
+    float _lastSxS = 0f, _lastSyS = 0f;
+    CheckBox chkPhys;
     // ---- HUD tuning dials (live-adjustable, hotkeys below) ----
     float _hudPitchRate = 660f;                    // px/s the horizon moves per unit of stick pitch
     float _hudRollRate = 220f;                     // deg/s per unit of stick roll
@@ -1078,6 +1088,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         chkHudAuto.CheckedChanged += delegate { _hudAutoDetect = chkHudAuto.Checked; SaveCfg(); };
         Controls.Add(chkHudAuto);
         y += 24;
+         // PHYSICS LOG: record stick + measured horizon together so the stick->rate model can be         // fitted from a real flight instead of guessed. Writes hudphys.csv next to the exe.         chkPhys = new CheckBox();         chkPhys.Text = "physics log  (hudphys.csv - stick + horizon per frame)";         chkPhys.SetBounds(x, y, 330, 22);         chkPhys.Checked = _physLog;         chkPhys.CheckedChanged += delegate         {             _physLog = chkPhys.Checked; SaveCfg();             if (_physLog)             {                 _physT0 = Environment.TickCount; _physAt = 0;                 try                 {                     File.WriteAllText(Path.Combine(_appDir, "hudphys.csv"),                         "t_ms,sx,sy,lx,ly,detRoll,detPitch,conf,fuseRoll,fusePitch,modelRollRate,modelPitchRate\r\n");                 }                 catch { }                 Log("physics log ON - writing hudphys.csv (shaped stick + the horizon the detector measured)");             }             else Log("physics log off");         };         Controls.Add(chkPhys);         y += 24;
 
         chkNight = new CheckBox();
         chkNight.Text = "Night vision (invert display)";
@@ -5292,6 +5303,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // Tilt: NO fine-gain boost (it made the bank accelerate in as you pushed) - just the expo dial,
         // so the roll stays a steady acro rate and HOLDS the bank when you centre.
         float sxS = Shape(sx, _hudAccRoll);
+        _lastSxS = sxS; _lastSyS = syS;                   // for the physics log
         bool det = _hudDetValid && (now - _hudDetAt) < 2000;
         // ---- PROPER FUSION: scalar Kalman/alpha-beta per axis, in ANGLE space (see HudFuse) ----
         // Stick = control input, vision = measurement, coast when the vision drops out.
@@ -5944,6 +5956,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudMsTau") _hudMsTau = ParseF(v);
             else if (k == "hudSkyMin") _hudSkyMin = ParseF(v) / 100f;
             else if (k == "hudSkyTex") { _hudSkyTex = ParseF(v); if (_hudSkyTex < 0f) _hudSkyTex = 0f; if (_hudSkyTex > 60f) _hudSkyTex = 60f; }
+            else if (k == "physLog") _physLog = v != "0";
             else if (k == "hudSettleMs") { _hudSettleMs = (int)ParseF(v); if (_hudSettleMs < 0) _hudSettleMs = 0; if (_hudSettleMs > 60000) _hudSettleMs = 60000; }
             else if (k == "hudColdMs") { _hudColdMs = (int)ParseF(v); if (_hudColdMs < 0) _hudColdMs = 0; if (_hudColdMs > 60000) _hudColdMs = 60000; }
             else if (k == "uav") _hudStyleUav = v == "1";
@@ -6026,6 +6039,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudMsTau=" + _hudMsTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSkyMin=" + (_hudSkyMin * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSkyTex=" + _hudSkyTex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "physLog=" + (_physLog ? "1" : "0"),
             "hudSettleMs=" + _hudSettleMs, "hudColdMs=" + _hudColdMs,
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -8280,6 +8294,33 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         _skyModelOk = true;
     }
 
+    void PhysLogLine()
+    {
+        try
+        {
+            long tn = Environment.TickCount;
+            if (tn - _physAt < 80) return;
+            _physAt = tn;
+            System.Globalization.CultureInfo ci = System.Globalization.CultureInfo.InvariantCulture;
+            StringBuilder b = new StringBuilder();
+            b.Append((tn - _physT0).ToString(ci)).Append(',')
+             .Append(_lastSxS.ToString("0.000", ci)).Append(',')
+             .Append(_lastSyS.ToString("0.000", ci)).Append(',')
+             .Append(_padLx.ToString("0.000", ci)).Append(',')
+             .Append(_padLy.ToString("0.000", ci)).Append(',')
+             .Append(_hudDetRoll.ToString("0.00", ci)).Append(',')
+             .Append(_hudDetPitch.ToString("0.0", ci)).Append(',')
+             .Append(_hudDetConf.ToString("0.000", ci)).Append(',')
+             .Append(_hudFRoll.ToString("0.00", ci)).Append(',')
+             .Append(_hudFPitch.ToString("0.0", ci)).Append(',')
+             .Append(_kfRollV.ToString("0.00", ci)).Append(',')
+             .Append(_kfPitV.ToString("0.00", ci))
+             .Append("\r\n");
+            File.AppendAllText(Path.Combine(_appDir, "hudphys.csv"), b.ToString());
+        }
+        catch { }
+    }
+
     // ONE place that publishes a measurement, so there is a single definition of what the detector
     // hands the estimator. roll = degrees; pitch = PERPENDICULAR pixels from centre, + = below.
     void HudPublish(float roll, float pitch, float skyFrac, float conf, float pitchVar, float rollVar)
@@ -8622,6 +8663,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _hnOk = true; _hnTheta = theta; _hnM = mFin; _hnK = kFinal;
             _hudTrkM = mFin; _hudTrkB = cy - mFin * cx - normF * kFinal;
             _hudTrkAt = Environment.TickCount;
+            if (_physLog) PhysLogLine();
 
             // scene classifier (informational) + the "trained on your photos" override
             if (_hudSceneTick++ % 20 == 0)
