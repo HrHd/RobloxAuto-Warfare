@@ -5711,7 +5711,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
         _hudRoll = _hudFRoll + _hudRollOff + stickRoll;     // + manual roll offset + direct stick bank
         // low-quality LIFT (up) and clutter DROP (down) - both in px, off the dials
-        float treeDrop = _hudClutter * _hudTreeDrop * _hudDpp;   // trees/structures -> push the line DOWN
+        // v2.9.34: the tree-drop fudge is OFF while the section parser is on. The parser decides
+        // trees directly (they abstain), so this no longer needs an altitude-dependent guess -
+        // and the guess was the jitter: the clutter number breathes with the treetops (worse from
+        // high up, where more trees are on screen), the line wobbled with it, and because the
+        // ladder slides sideways by pitch x shear every wobble also swung the fan left/right.
+        float treeDrop = _hudParserOn ? 0f : _hudClutter * _hudTreeDrop * _hudDpp;
         _hudPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff + treeDrop;
         if (_physLog) PhysLogLine();                       // 50 Hz: fast stick work included
 
@@ -8995,7 +9000,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         return Math.Min(nSkyA / (float)nTot, nGndB / (float)nTot) - 0.5f * (nOpp / (float)nTot);
     }
 
-    void HudSectionParse(out float theta, out float kOut, out float score)
+    void HudSectionParse(float thetaPrior, out float theta, out float kOut, out float score)
     {
         theta = 0; kOut = 0; score = -9f;
         int mw = _hdW, mh = _hdH;
@@ -9022,7 +9027,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
         float bestSc = -9f, bestM = 0, bestK = 0;
         int bs0 = 32; if (bs0 > mh / 4) bs0 = Math.Max(8, mh / 4);
-        for (int a = -24; a <= 24; a += 4)
+        // The ANGLE search is locked to the pixel stage's angle +-6 deg: the pixel stage's angle
+        // is usually right even when its HEIGHT is at the canopy - so the parser only decides the
+        // height (the thing the pixel stage gets wrong in forests). Without this it chased shadow
+        // bands on the ground and made DIAGONAL lines (-27 deg) on hazy high views.
+        int pa0 = (int)Math.Round(thetaPrior);
+        for (int a = pa0 - 6; a <= pa0 + 6; a += 2)
         {
             float m = (float)Math.Tan(a * Math.PI / 180.0);
             for (float kk = -mh * 0.45f; kk <= mh * 0.45f; kk += 2f)
@@ -9036,10 +9046,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         {
             float baseA = (float)(Math.Atan(bestM) * 180.0 / Math.PI);
             float kk = bestK;
-            for (int a = -4; a <= 4; a++)
+            for (int a = -2; a <= 2; a++)
             {
                 float mm = (float)Math.Tan((baseA + a) * Math.PI / 180.0);
-                for (float dk = -b * 2f; dk <= b * 2f; dk += 1f)
+                for (float dk = -b * 1.5f; dk <= b * 1.5f; dk += 1f)
                 {
                     float s = HudSectionScore(mm, kk + dk, b, muL, sdL, muB, sdB, guL, gsdL, guB, gsdB, muT);
                     if (s > bestSc) { bestSc = s; bestM = mm; bestK = kk + dk; }
@@ -9319,9 +9329,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // 1x1 sharpening. This is the tree-line fix: the canopy files as NEITHER, and the haze
             // band under it matches SKY, so any line above the true horizon collects contradictions.
             float thetaS, kS, scoreS;
-            HudSectionParse(out thetaS, out kS, out scoreS);
+            HudSectionParse(theta, out thetaS, out kS, out scoreS);
             _hudParserScore = scoreS;
-            bool parserOn = _hudParserOn && scoreS >= 0.12f;
+            // 0.15 bar: the true-horizon forest line scores 0.21; a diagonal shadow band that
+            // used to win scores 0.12. Weak frames (fisher sep < 0.5) are discarded later anyway.
+            bool parserOn = _hudParserOn && scoreS >= 0.15f;
             if (parserOn)
             {
                 theta = thetaS;
