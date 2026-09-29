@@ -8034,7 +8034,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // turns, the ground rushing past), so the image gets LESS say than it did at the spawn
             // baseline. The damping was 0.45; at 0.75 a worked stick leaves the estimator largely to
             // the control model, which is what stops a random frame yanking the line.
-            float trust = (0.55f + 0.45f * _hudMConf) * (0.40f + 0.60f * skyT) * (1f - 0.75f * actT);
+            // Hard stick = the scene is changing fast (a 180 swings the whole view), so the image is
+            // at its least reliable exactly when it can do the most damage. At full deflection the image
+            // now gets ~5% say instead of 25%, leaving the turn to the control model; the vision resumes
+            // as the stick comes back. This is what stops a hard turn throwing the line.
+            float trust = (0.55f + 0.45f * _hudMConf) * (0.40f + 0.60f * skyT) * (1f - 0.95f * actT);
             if (trust < 0.03f) trust = 0.03f;
 
             float Rr = _hudMRollVar / trust;                        // deg^2
