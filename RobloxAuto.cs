@@ -1100,13 +1100,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _physLog = chkPhys.Checked; SaveCfg();
             if (_physLog)
             {
-                _physT0 = Environment.TickCount; _physAt = 0;
-                try
-                {
-                    File.WriteAllText(Path.Combine(_appDir, "hudphys.csv"),
-                        "t_ms,sx,sy,lx,ly,vision,detRoll,detPitch,conf,fuseRoll,fusePitch,mRoll,mPitch,modelRollRate,modelPitchRate,rollGain,pitchGain\r\n");
-                }
-                catch { }
+                PhysLogReset("checkbox");
                 Log("physics log ON - writing hudphys.csv (shaped stick + the horizon the detector measured)");
             }
             else Log("physics log off");
@@ -6624,6 +6618,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 _seedN = 0; _hudSettleExt = 0;
                 _hudColdUntil = Environment.TickCount + _hudColdMs;   // first 10s = plain median of the image
                 _hudColdLogged = false;
+                if (_physLog) PhysLogReset("deploy as drone");
                 Log("   cold start: using the plain median horizon for the first " + (_hudColdMs / 1000) + "s while a solid line builds");
                 Log("   spawn settle: holding the horizon for " + (_hudSettleMs / 1000) + "s and averaging what we see");
                 long lockArmedAt = Environment.TickCount + 1200;   // skip the base panel/map frames
@@ -8346,6 +8341,21 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         if (_skySdL < 6f) _skySdL = 6f;
         if (_skySdB < 6f) _skySdB = 6f;
         _skyModelOk = true;
+    }
+
+    // Start a FRESH physics recording. A flight is the natural unit of data: stitching several
+    // flights into one file mixes different terrain, loadout and wind, which makes the fit unstable
+    // (it did exactly that). Called automatically when the drone is deployed.
+    void PhysLogReset(string why)
+    {
+        try
+        {
+            _physT0 = Environment.TickCount; _physAt = 0;
+            File.WriteAllText(Path.Combine(_appDir, "hudphys.csv"),
+                "t_ms,sx,sy,lx,ly,vision,detRoll,detPitch,conf,fuseRoll,fusePitch,mRoll,mPitch,modelRollRate,modelPitchRate,rollGain,pitchGain\r\n");
+            Log("physics log: fresh recording for this flight (" + why + ")");
+        }
+        catch { }
     }
 
     void PhysLogLine()
