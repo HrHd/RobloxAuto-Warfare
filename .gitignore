@@ -1,5 +1,6 @@
 # runtime / personal state
 settings.ini
+settings.ini.autotune.bak
 auto.log
 debug_*.png
 
@@ -25,3 +26,11 @@ hudphys.csv
 filter*.log
 .git-rewrite/
 *.mp4
+
+# flight recordings / session artifacts (GBs of captures, not source)
+hudrec/
+reffix-preview/
+*.hzn.bak
+autotune-report.txt
+autotune-state.txt
+RobloxAuto.new.exe

@@ -74,9 +74,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     bool _padAutoWasDown = false;
     bool _padStopWasDown = false;
     bool _padLandWasDown = false;
-    bool _padReconnectWasDown = false;
-    bool _padSwapWasDown = false;
+bool _padReconnectWasDown = false;
+bool _padSwapWasDown = false;
+bool _padThermalWasDown = false;
     bool _padSwapOn = false; string _padSwap = "B";
+string _padThermal = "R3";
     ushort _lastButtons = 0;
 
     // ================= ui =================
@@ -85,6 +87,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     Label lblKeyVal, lblNightVal;
     bool _capturingKey = false;
     ComboBox cmbTeam, cmbDrone, cmbBomb, cmbPadRejoin, cmbPadAuto, cmbPadStop, cmbPadLand, cmbPadReconnect;
+ComboBox cmbPadThermal;
     ComboBox cmbPadSwap; CheckBox chkPadSwap; Button btnSwap; Label lblActiveFav;
     CheckBox chkAsDrone, chkAutoRecon, chkOcrWatch, chkPadRejoin, chkPadAuto, chkPadStop, chkPadLand, chkPadReconnect, chkTop, chkNoAct, chkClickKey, chkHudAuto;
     CheckBox chkStepTeam, chkStepDrone, chkStepDeploy, chkStepBase, chkStepBomb;
@@ -166,6 +169,24 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudRollRate = 220f;                     // deg/s per unit of stick roll
     float _hudPitchVel = 0f, _hudRollVel = 0f;     // current horizon velocity (px/s, deg/s) - the ACCEL model
     float _hudAccelTau = 0.12f;                    // s - how fast the velocity chases the stick (accel/brake)
+    // APPEARANCE MODEL: expected sky fraction per 10-deg pitch bucket (-90..+90). Learned from
+    // confident, model-agreeing frames; used to predict what the view SHOULD look like.
+    float[] _skyByPit = new float[] { 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f };
+    int[] _skyByN = new int[19];
+    long _appearLogAt = 0;
+    float _hudSkyExpect = 0.5f;
+    // ALTITUDE-COUPLED TERRAIN MODEL (user request): from AGL altitude and the boundary pitch we
+    // learn the RANGE to the terrain boundary we are locked on. Physics: raising the craft by dAlt
+    // drops a boundary at range R by dAlt/R radians. Uses: (1) during climbs/dives the model
+    // shifts the boundary by that amount so the OFF-SCREEN fallback keeps the right direction;
+    // (2) a lock whose motion contradicts (model attitude change + geometry) is de-trusted.
+    float _terrRange = 0f;                       // m, 0 = not learned yet
+    float _geoPrevTheta = float.NaN, _geoPrevAlt = float.NaN, _geoPrevKf = float.NaN;
+    double _geoSA = 0, _geoSAT = 0;              // regression accumulators (sum dAlt^2, sum dAlt*dTheta)
+    int _geoN = 0;
+    float _altApplied = float.NaN;               // last AGL value already folded into the model
+    long _geoLogAt = 0;
+    float _aglCacheVal = float.NaN; string _aglCacheStr = "";
     float _hudV1 = 15.0f, _hudV2 = 15.0f;          // simulated FPV pack voltages (4S), driven by throttle
     float _hudVBat = 0.5f, _hudVVel = 0f;          // internal spring state of the battery sim
     float _hudBias = 6f;                           // px - constant downward offset of the detected line
@@ -194,7 +215,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                                                     // while a FULL push is unchanged
     float _hudLeftPx = 0f;                         // px - max horizon offset from the LEFT stick (dial "thr pitch"); 0 = off
     float _hudPitStick = 280f;                      // px - DIRECT horizon offset from the RIGHT stick Y (dial "stick pitch")
-    float _hudGndBoost = 1.6f;                      // x  - extra stick-pitch lift when the image has no horizon (dial "ground boost"; was hard-wired 1.6x)
+    float _hudGndBoost = 2.0f;                      // x  - extra stick-pitch lift when the image has no horizon (dial "ground boost"; was hard-wired 1.6x)
                                                     //      push forward = line UP, pull back = line DOWN (signed: set - to invert)
     float _hudPitStickSm = 0f;                      // smoothed stick-pitch offset (glides, never jumps)
     float _hudRollStick = 8f;                       // DEG - direct bank from the right stick X (dial "stick tilt").
@@ -215,6 +236,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     int _hudFrameH = 1080;                // frame height the detector saw (camera model)
     float _kfRollX = 0f, _kfRollV = 0f, _kfRollOb = 0f, _kfRollGain = 1f;
     float _kfPitX = 0f, _kfPitV = 0f, _kfPitOb = 0f, _kfPitGain = 1f;
+    // Pending vision corrections, applied as a capped VELOCITY on every 50 Hz tick so the line
+    // GLIDES to the horizon instead of stepping there once per measurement.
+    float _kfRollCorr = 0f, _kfPitCorr = 0f;
     float _kfRollZ = 0f, _kfPitZ = 0f; long _kfRollZAt = 0, _kfPitZAt = 0;
     float _kfRollP = 25f, _kfPitP = 25f;  // state variance (deg^2) - drives the Kalman gains
     bool _kfSeeded = false;
@@ -225,6 +249,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // "this is ground, not sky" - and a near match to one kills the lock. Everything else is GOOD
     // (a real sky/ground line) and a near match boosts the lock. This is how you TEACH it.
     List<float[]> _refSigs = new List<float[]>();
+    List<float[]> _refThmSigs = new List<float[]>();   // same refs through the THERMAL LUT (side method)
     List<bool> _refGoodL = new List<bool>();
     List<bool> _refEditL = new List<bool>();   // "-edit" = a HUMAN verified/adjusted this line: higher priority
     List<bool> _refGroundL = new List<bool>(); // "-ground" = no horizon here; matching frame must coast
@@ -270,6 +295,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     string _recDir = null; int _recN = 0; int _recTick = 0;
     float _hudParserScore = 0f;                   // last section-parser confidence (log only)
     float _hudParserK = 0f;                       // last parser line (working px), log only
+    int _detPass = 0;                             // pass counter - the parser runs every 3rd pass
+    float _parserTh = 0f, _parserKs = 0f, _parserSc = 0f; bool _parserCacheOk = false;
+    long _droneViewAt = 0;                        // last positive drone-view read (recorder gate)
     float _hudTreeBelow = 0f;                     // parser vote: fraction of sections under the line that are canopy
     float _hudTreeBelowSm = 0f;                   // ...smoothed ~2s, drives the tree trim
     int _treeLogAt = 0;                           // "trees de-value the vision" log throttle
@@ -301,7 +329,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hugSm = 0f;
     int _hugDisR = 0, _hugDisP = 0, _hugSignR = 0, _hugSignP = 0;
     bool _hugLogged = false;
-    NumericUpDown numPitch, numRoll, numBias, numAccel, numFov, numManeuver, numRefDist, numAxisW, numMsTau, numSkyMin, numSkyTex, numGndBoost;
+    NumericUpDown numPitch, numRoll, numBias, numAccel, numFov, numManeuver, numRefDist, numAxisW, numMsTau, numSkyMin, numSkyTex, numGndBoost, numSideVote, numYawFade, numCorrSpeed, numLockPull, numModelDrive;
     Button btnReloadRefs, btnCapRef;
     NumericUpDown numDpp, numShear, numLen, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numRollGain, numPitchGain;
     System.Windows.Forms.Timer _gainTick; bool _updGains = false;
@@ -358,6 +386,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] static extern IntPtr SetCursor(IntPtr h);
     [DllImport("user32.dll")] static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
@@ -374,153 +403,319 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         try { SetWindowDisplayAffinity(h, 0x00000011); } catch { }   // WDA_EXCLUDEFROMCAPTURE
     }
 
-    // ---- thermal / night vision (PER-WINDOW) ----
-    // The game pixels are recoloured with the Windows Magnification API. The FULLSCREEN call
-    // (MagSetFullscreenColorEffect) is desktop-wide - it has no monitor parameter, which is why
-    // the old invert tinted EVERY monitor. Instead a HOST window with a MAGNIFIER CHILD is pinned
-    // over the Roblox window only, its source filter is set to INCLUDE just that window, and the
-    // colour matrix is applied to the magnifier (MagSetColorEffect). Result: the thermal look
-    // covers the game and nothing else. Screen capture still sees it, so OBS records the feed.
-    // The host is a plain (non-layered) window - layered parents cannot show child controls -
-    // and click-through is done by returning HTTRANSPARENT from WM_NCHITTEST instead.
-    [StructLayout(LayoutKind.Sequential)]
-    struct MAGCOLOREFFECT
-    {
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 25)] public float[] transform;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    struct MAGTRANSFORM
-    {
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 9)] public float[] m;
-    }
+    // ---- thermal / night vision (game-window OVERLAY) ----
+    // A click-through TOPMOST overlay is pinned over the Roblox window. ONE dedicated thread
+    // owns the overlay window, its message loop, the screen grab and all painting (cross-thread
+    // GDI here deadlocks - everything stays on that thread). Each frame: BitBlt the game rect
+    // from the screen, run the inverted-luminance warm ramp through 3x256 LUTs, blit the result
+    // onto the overlay. The overlay is marked WDA_EXCLUDEFROMCAPTURE, so our own OCR grabs and
+    // OBS still see the RAW game - no feedback loop, the vision pipeline keeps working while
+    // thermal is on. Verified standalone (~33 fps) before wiring it in.
     [StructLayout(LayoutKind.Sequential)]
     struct RECTW { public int L, T, R, B; }
-    [DllImport("Magnification.dll")] static extern bool MagInitialize();
-    [DllImport("Magnification.dll")] static extern bool MagSetFullscreenColorEffect(ref MAGCOLOREFFECT effect);
-    [DllImport("Magnification.dll")] static extern bool MagSetColorEffect(IntPtr hwnd, ref MAGCOLOREFFECT effect);
-    [DllImport("Magnification.dll")] static extern bool MagSetWindowSource(IntPtr hwnd, RECTW rect);
-    [DllImport("Magnification.dll")] static extern bool MagSetWindowFilterList(IntPtr hwnd, int mode, int count, IntPtr[] hwnds);
-    [DllImport("Magnification.dll")] static extern bool MagSetWindowTransform(IntPtr hwnd, ref MAGTRANSFORM transform);
-    // MUST be the W entry point: the ANSI import could not resolve the class registered with
-    // RegisterClassExW (CreateWindowEx returned 0 / ERROR_CANNOT_FIND_WND_CLASS), which is why
-    // the host window was never created. Verified standalone before wiring it in.
+    [StructLayout(LayoutKind.Sequential)]
+    struct BMIH2 { public int biSize, biWidth, biHeight; public short biPlanes, biBitCount; public int biCompression, biSizeImage, biXPelsPerMeter, biYPelsPerMeter, biClrUsed, biClrImportant; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct BMI2 { public BMIH2 h; public int colors; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct OVLMSG { public IntPtr h; public uint m; public IntPtr w, l; public uint time; public int x, y; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct OVLPAINT { public IntPtr hdc; public bool fErase; public RECTW rcPaint; public bool fRestore, fIncUpdate; public int r1, r2, r3, r4; }
+    // MUST be the W entry points: the ANSI imports failed with ERROR_CANNOT_FIND_WND_CLASS (1407).
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "CreateWindowExW", SetLastError = true)]
     static extern IntPtr CreateWindowEx(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
     [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECTW r);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
-    IntPtr _thermalHost = IntPtr.Zero;     // black click-through host painted over the game
-    IntPtr _thermalWnd = IntPtr.Zero;      // the Magnifier CHILD that renders the game through the matrix
-    int _thL, _thT, _thW, _thH;            // where it currently is
-    long _thAt = 0;                        // follow throttle (250 ms)
-    const int MW_FILTERMODE_INCLUDE = 0;
-    const int BLACK_BRUSH = 4;
-    const uint WS_CHILD = 0x40000000, WSPOPUP = 0x80000000, WSVISIBLE = 0x10000000;
+    [DllImport("user32.dll")] static extern bool PeekMessageW(out OVLMSG m, IntPtr h, uint min, uint max, uint remove);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref OVLMSG m);
+    [DllImport("user32.dll")] static extern IntPtr DispatchMessageW(ref OVLMSG m);
+    [DllImport("user32.dll")] static extern IntPtr BeginPaint(IntPtr h, out OVLPAINT ps);
+    [DllImport("user32.dll")] static extern bool EndPaint(IntPtr h, ref OVLPAINT ps);
+    [DllImport("user32.dll")] static extern bool InvalidateRect(IntPtr h, IntPtr r, bool erase);
+    [DllImport("user32.dll")] static extern bool UpdateWindow(IntPtr h);
+    [DllImport("gdi32.dll")] static extern bool BitBlt(IntPtr dst, int dx, int dy, int w, int h, IntPtr src, int sx, int sy, uint rop);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateDIBSection(IntPtr dc, ref BMI2 bi, uint usage, out IntPtr bits, IntPtr sect, uint off);
+    [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr o);
+    [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr o);
+    [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
+    [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
+    Thread _thThread = null;
+    volatile bool _thStop = false;         // set by the UI thread, read by the overlay thread
+    IntPtr _thZAfter = new IntPtr(-1);     // overlay z-insert-after: right below the HUD form
+    const uint SRCCOPY2 = 0x00CC0020;
+    const uint WSPOPUP = 0x80000000;
     const uint WSEX_TOPMOST = 0x00000008, WSEX_NOACTIVATE = 0x08000000, WSEX_TOOLWINDOW = 0x00000080;
     const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010, SWP_SHOWWINDOW = 0x0040;
-    // The host is a SYSTEM class ("STATIC" + SS_BLACKRECT = a black rectangle) and click-through
-    // comes from SUBCLASSING it with SetWindowLongPtr and answering WM_NCHITTEST with
-    // HTTRANSPARENT. A custom registered class was tried first and failed in this app: the
-    // registration returned an atom but CreateWindowEx still refused with
-    // ERROR_CANNOT_FIND_WND_CLASS (1407) - the same code works in a bare harness, so the system
-    // class is used instead of chasing it.
+    // Click-through comes from SUBCLASSING the STATIC window and answering WM_NCHITTEST with
+    // HTTRANSPARENT. (The overlay must be a plain window: layered windows cannot be subclassed
+    // into click-through AND the earlier magnifier experiments proved this class setup works.)
     delegate IntPtr ThermalProc(IntPtr h, uint m, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] static extern IntPtr DefWindowProc(IntPtr h, uint m, IntPtr w, IntPtr l);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr h, int idx, IntPtr val);
     [DllImport("user32.dll", EntryPoint = "CallWindowProcW")] static extern IntPtr CallWindowProc(IntPtr prev, IntPtr h, uint m, IntPtr w, IntPtr l);
-    static ThermalProc _thermalProc = ThermalHostProc;      // keep the delegate alive
-    static IntPtr _thermalOldProc = IntPtr.Zero;
-    static IntPtr ThermalHostProc(IntPtr h, uint m, IntPtr w, IntPtr l)
+    static ThermalProc _ovlProc = ThermalOverlayProc;      // keep the delegate alive
+    static IntPtr _ovlOldProc = IntPtr.Zero;
+    static IntPtr _ovlWnd = IntPtr.Zero, _ovlDc = IntPtr.Zero, _ovlDib = IntPtr.Zero, _ovlBits = IntPtr.Zero;
+    static int _ovlW = 0, _ovlH = 0;
+    // OBS thermal feed: the thermal loop drops a downscaled JPEG here and /thermal.mjpg streams it.
+    static byte[] _mjpeg = null; static long _mjpegAt = 0; static readonly object _mjpegLock = new object(); static int _mjFrame = 0;
+    static readonly byte[] _thLutR = new byte[256], _thLutG = new byte[256], _thLutB = new byte[256];
+    static bool _thLutsReady = false;
+    // Build the thermal LUTs once (used by the overlay, the Hough side method AND the thermal
+    // ref signatures - one definition of the transform everywhere).
+    static void ThBuildLuts()
+    {
+        if (_thLutsReady) return;
+        for (int i = 0; i < 256; i++)
+        {
+            double v = i / 255.0;
+            _thLutR[i] = ThByte((1.0 - v) * 1.30 - 0.10);
+            _thLutG[i] = ThByte((1.0 - v) * 1.10 - 0.08);
+            _thLutB[i] = ThByte((1.0 - v) * 0.90 - 0.06);
+        }
+        _thLutsReady = true;
+    }
+    static IntPtr ThermalOverlayProc(IntPtr h, uint m, IntPtr w, IntPtr l)
     {
         if (m == 0x0084) return new IntPtr(-1);   // WM_NCHITTEST -> HTTRANSPARENT: clicks fall through
-        if (_thermalOldProc != IntPtr.Zero) return CallWindowProc(_thermalOldProc, h, m, w, l);
+        if (m == 0x000F)                          // WM_PAINT: repaint from the last transformed frame
+        {
+            OVLPAINT ps;
+            IntPtr dc = BeginPaint(h, out ps);
+            if (_ovlDc != IntPtr.Zero && _ovlW > 0 && _ovlH > 0) BitBlt(dc, 0, 0, _ovlW, _ovlH, _ovlDc, 0, 0, SRCCOPY2);
+            EndPaint(h, ref ps);
+            return IntPtr.Zero;
+        }
+        if (m == 0x0014) return new IntPtr(1);    // WM_ERASEBKGND
+        // WM_SETCURSOR: hand back a NULL cursor so the arrow never pops up over the thermal.
+        // This is how games hide the pointer - whoever owns the window under the mouse decides.
+        if (m == 0x0020) { SetCursor(IntPtr.Zero); return new IntPtr(1); }
+        if (_ovlOldProc != IntPtr.Zero) return CallWindowProc(_ovlOldProc, h, m, w, l);
         return DefWindowProc(h, m, w, l);
     }
 
+    static IntPtr _ovlOldObj = IntPtr.Zero;
+    // Hotkey + button entry point flips _nightVision and calls this. ON starts the overlay
+    // thread; OFF stops it and waits (the thread tears everything down in its finally).
     void ApplyNightVision(bool on)
     {
         try
         {
-            if (!MagInitialize()) { Log("thermal: the Magnification API is unavailable"); return; }
-            MAGCOLOREFFECT e = new MAGCOLOREFFECT();
             if (on)
             {
-                // WHITE-HOT THERMAL: every output channel is driven from the INVERTED LUMINANCE
-                // with a warm ramp (r gain 1.30 > g 1.10 > b 0.90) and a small contrast stretch:
-                // dark game = white-hot, bright game = black. (Row vector v*M -> translation in
-                // the LAST ROW; a "+1" in the last column blacks the screen out - that old bug.)
-                float lr = 0.299f, lg = 0.587f, lb = 0.114f;    // luminance weights
-                float gr = 1.30f, gg = 1.10f, gb = 0.90f;       // per-channel gain
-                float or0 = -0.10f, og0 = -0.08f, ob0 = -0.06f; // small contrast offset
-                e.transform = new float[] {
-                    -lr * gr, -lr * gg, -lr * gb, 0, 0,
-                    -lg * gr, -lg * gg, -lg * gb, 0, 0,
-                    -lb * gr, -lb * gg, -lb * gb, 0, 0,
-                     0, 0, 0, 1, 0,
-                     gr + or0, gg + og0, gb + ob0, 0, 1 };
+                if (_thThread != null && _thThread.IsAlive) return;   // already running
+                // WHITE-HOT THERMAL: every channel is driven from the INVERTED LUMINANCE with a
+                // warm ramp (r 1.30 > g 1.10 > b 0.90) and a slight contrast trim: dark game =
+                // white-hot, bright game = black. Prebuilt as 3x256 LUTs for the per-pixel pass.
+                ThBuildLuts();
+                _thZAfter = ThermalZAfter();
+                _thStop = false;
+                _thThread = new Thread(ThermalOverlayLoop);
+                _thThread.IsBackground = true;
+                _thThread.Name = "thermal-overlay";
+                _thThread.Start();
+                try { OverlayHub.I.SetNight(true); } catch { }
+                Log("thermal ON (game window only)");
             }
             else
-                e.transform = new float[] {
-                     1, 0, 0, 0, 0,
-                     0, 1, 0, 0, 0,
-                     0, 0, 1, 0, 0,
-                     0, 0, 0, 1, 0,
-                     0, 0, 0, 0, 1 };
-
-            if (!on)
             {
-                if (_thermalHost != IntPtr.Zero) { DestroyWindow(_thermalHost); _thermalHost = IntPtr.Zero; _thermalWnd = IntPtr.Zero; }
-                else if (_thermalWnd != IntPtr.Zero) { DestroyWindow(_thermalWnd); _thermalWnd = IntPtr.Zero; }
-                MagSetFullscreenColorEffect(ref e);    // clear any old fullscreen tint (previous builds)
+                _thStop = true;
+                if (_thThread != null) { _thThread.Join(1500); _thThread = null; }
+                try { OverlayHub.I.SetNight(false); } catch { }
                 Log("thermal OFF");
-                return;
             }
-
-            IntPtr rw = RobloxWindow();
-            if (rw == IntPtr.Zero) { Log("thermal: no Roblox window found"); return; }
-            RECTW r; if (!GetWindowRect(rw, out r)) { Log("thermal: could not read the game window"); return; }
-            if (_thermalHost == IntPtr.Zero)
-            {
-                // DOCUMENTED LAYOUT: a black host window with the Magnifier as a CHILD. A bare
-                // top-level Magnifier renders black/blank on some drivers - that was the "Roblox
-                // went invisible" report. SS_BLACKRECT (4) makes the STATIC host solid black.
-                _thermalHost = CreateWindowEx(
-                    WSEX_TOPMOST | WSEX_NOACTIVATE | WSEX_TOOLWINDOW,
-                    "STATIC", "", WSPOPUP | WSVISIBLE | 0x00000004,
-                    r.L, r.T, r.R - r.L, r.B - r.T, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
-                if (_thermalHost == IntPtr.Zero)
-                {
-                    Log("thermal: could not create the host window (err " + Marshal.GetLastWin32Error() + ")");
-                    return;
-                }
-                _thermalOldProc = SetWindowLongPtr(_thermalHost, -4, Marshal.GetFunctionPointerForDelegate(_thermalProc));
-                _thermalWnd = CreateWindowEx(0, "Magnifier", "", WS_CHILD | WSVISIBLE,
-                    0, 0, r.R - r.L, r.B - r.T, _thermalHost, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
-                if (_thermalWnd == IntPtr.Zero)
-                {
-                    DestroyWindow(_thermalHost); _thermalHost = IntPtr.Zero;
-                    Log("thermal: could not create the magnifier");
-                    return;
-                }
-            }
-            _thL = r.L; _thT = r.T; _thW = r.R - r.L; _thH = r.B - r.T;
-            SetWindowPos(_thermalHost, ThermalZAfter(), r.L, r.T, _thW, _thH, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-            SetWindowPos(_thermalWnd, IntPtr.Zero, 0, 0, _thW, _thH, SWP_NOACTIVATE);
-            IntPtr[] only = new IntPtr[] { rw };
-            MagSetWindowFilterList(_thermalWnd, MW_FILTERMODE_INCLUDE, 1, only);   // ONLY the game
-            MagSetWindowSource(_thermalWnd, r);
-            MAGTRANSFORM t = new MAGTRANSFORM(); t.m = new float[] { 1, 0, 0, 0, 1, 0, 0, 0, 1 };   // 1:1
-            MagSetWindowTransform(_thermalWnd, ref t);
-            bool ok = MagSetColorEffect(_thermalWnd, ref e);
-            Log("thermal ON (game window only)" + (ok ? "" : " - the call was refused"));
         }
         catch (Exception ex) { Log("thermal failed: " + ex.Message); }
     }
 
-    // Both the thermal magnifier and the app's HUD overlay are TOPMOST windows: whoever is raised
-    // last wins, and if that is the magnifier it would hide the ladder. Keep the magnifier just
-    // BELOW the overlay when it is showing.
+    static byte ThByte(double v) { int i = (int)(v * 255.0 + 0.5); return (byte)(i < 0 ? 0 : i > 255 ? 255 : i); }
+
+    // The whole thermal engine lives on this thread: window creation, message loop, capture,
+    // transform and painting. Never touch these GDI objects from another thread - that is the
+    // deadlock that made the first overlay attempts hang.
+    void ThermalOverlayLoop()
+    {
+        try
+        {
+            IntPtr rw = RobloxWindow();
+            if (rw == IntPtr.Zero) { Log("thermal: no Roblox window found"); return; }
+            RECTW r; if (!GetWindowRect(rw, out r)) { Log("thermal: could not read the game window"); return; }
+            int w = r.R - r.L, h = r.B - r.T;
+            if (w <= 0 || h <= 0) { Log("thermal: the game window has no size"); return; }
+
+            IntPtr screen = GetDC(IntPtr.Zero);
+            _ovlDc = CreateCompatibleDC(screen);
+            ReleaseDC(IntPtr.Zero, screen);
+            BMI2 bi = new BMI2();
+            bi.h.biSize = 40;
+            bi.h.biWidth = w; bi.h.biHeight = -h; bi.h.biPlanes = 1; bi.h.biBitCount = 32;
+            _ovlDib = CreateDIBSection(_ovlDc, ref bi, 0, out _ovlBits, IntPtr.Zero, 0);
+            if (_ovlDib == IntPtr.Zero) { Log("thermal: could not create the frame buffer"); return; }
+            _ovlOldObj = SelectObject(_ovlDc, _ovlDib);
+            _ovlW = w; _ovlH = h;
+
+            _ovlWnd = CreateWindowEx(WSEX_TOPMOST | WSEX_NOACTIVATE | WSEX_TOOLWINDOW,
+                "STATIC", "", WSPOPUP, r.L, r.T, w, h, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+            if (_ovlWnd == IntPtr.Zero) { Log("thermal: could not create the overlay (err " + Marshal.GetLastWin32Error() + ")"); return; }
+            _ovlOldProc = SetWindowLongPtr(_ovlWnd, -4, Marshal.GetFunctionPointerForDelegate(_ovlProc));
+            ExcludeFromCapture(_ovlWnd);   // screen grabs see the RAW game - no feedback loop
+            SetWindowPos(_ovlWnd, _thZAfter, r.L, r.T, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            Log("thermal overlay up (" + w + "x" + h + ")");
+
+            int lastL = r.L, lastT = r.T, lastW = w, lastH = h;
+            bool shown = true;
+            long nextFollow = 0;
+            OVLMSG msg;
+            while (!_thStop)
+            {
+                while (PeekMessageW(out msg, IntPtr.Zero, 0, 0, 1)) { TranslateMessage(ref msg); DispatchMessageW(ref msg); }
+                if (_thStop) break;
+
+                long now = Environment.TickCount;
+                if (now >= nextFollow)
+                {
+                    nextFollow = now + 200;
+                    rw = RobloxWindow();
+                    if (rw == IntPtr.Zero) break;
+                    if (IsIconic(rw) || !RobloxFocused())
+                    {
+                        if (shown) { ShowWindow(_ovlWnd, 0); shown = false; }   // never cover other apps
+                    }
+                    else
+                    {
+                        if (!shown)
+                        {
+                            SetWindowPos(_ovlWnd, _thZAfter, lastL, lastT, lastW, lastH, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                            shown = true;
+                        }
+                        RECTW nr;
+                        if (GetWindowRect(rw, out nr) && (nr.L != lastL || nr.T != lastT || nr.R - nr.L != lastW || nr.B - nr.T != lastH))
+                        {
+                            lastL = nr.L; lastT = nr.T; lastW = nr.R - nr.L; lastH = nr.B - nr.T;
+                            SetWindowPos(_ovlWnd, _thZAfter, lastL, lastT, lastW, lastH, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                            if (lastW != _ovlW || lastH != _ovlH)
+                            {
+                                // resized: rebuild the frame buffer
+                                SelectObject(_ovlDc, _ovlOldObj);
+                                if (_ovlDib != IntPtr.Zero) { DeleteObject(_ovlDib); _ovlDib = IntPtr.Zero; }
+                                bi.h.biWidth = lastW; bi.h.biHeight = -lastH;
+                                _ovlDib = CreateDIBSection(_ovlDc, ref bi, 0, out _ovlBits, IntPtr.Zero, 0);
+                                if (_ovlDib == IntPtr.Zero) break;
+                                _ovlOldObj = SelectObject(_ovlDc, _ovlDib);
+                                _ovlW = lastW; _ovlH = lastH;
+                            }
+                        }
+                        else
+                            SetWindowPos(_ovlWnd, _thZAfter, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                    }
+                }
+                if (!shown) { Thread.Sleep(120); continue; }
+
+                IntPtr sdc = GetDC(IntPtr.Zero);
+                bool ok = BitBlt(_ovlDc, 0, 0, _ovlW, _ovlH, sdc, lastL, lastT, SRCCOPY2);
+                ReleaseDC(IntPtr.Zero, sdc);
+                if (ok)
+                {
+                    unsafe
+                    {
+                        int hh = _ovlH; byte* b0 = (byte*)_ovlBits;
+                        for (int y = 0; y < hh; y++)
+                        {
+                            byte* p = b0 + y * _ovlW * 4;
+                            for (int x = 0; x < _ovlW; x++)
+                            {
+                                int bb = p[0], gg = p[1], rr = p[2];
+                                if (gg >= 100 && gg - rr >= 35 && gg - bb >= 35)
+                                {
+                                    // teammate markers: the game's bright green indicators pass
+                                    // through the thermal unchanged (forced full green to pop)
+                                    p[0] = 0; p[1] = 255; p[2] = 0;
+                                }
+                                else
+                                {
+                                    int lum = (77 * rr + 150 * gg + 29 * bb) >> 8;
+                                    p[0] = _thLutB[lum]; p[1] = _thLutG[lum]; p[2] = _thLutR[lum];
+                                }
+                                p[3] = 255;
+                                p += 4;
+                            }
+                        }
+                    }
+                    InvalidateRect(_ovlWnd, IntPtr.Zero, false);
+                    UpdateWindow(_ovlWnd);
+                    SetCursor(IntPtr.Zero);   // keep it hidden even if something re-shows the arrow
+                    // OBS: publish a downscaled JPEG of this frame for /thermal.mjpg (the browser
+                    // overlay shows it while thermal is on). Half resolution keeps the encode
+                    // cheap (~5 ms) and 12 fps is plenty for a stream overlay.
+                    if ((_mjFrame++ & 1) == 0)
+                    {
+                        try
+                        {
+                            int w2 = _ovlW / 2, h2 = _ovlH / 2;
+                            if (w2 >= 8 && h2 >= 8)
+                            {
+                                using (Bitmap mb = new Bitmap(w2, h2, System.Drawing.Imaging.PixelFormat.Format32bppRgb))
+                                {
+                                    System.Drawing.Imaging.BitmapData md = mb.LockBits(new Rectangle(0, 0, w2, h2),
+                                        System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+                                    byte[] row = new byte[w2 * 4];
+                                    unsafe
+                                    {
+                                        byte* b0 = (byte*)_ovlBits;
+                                        for (int y = 0; y < h2; y++)
+                                        {
+                                            byte* src = b0 + (y * 2) * _ovlW * 4;
+                                            for (int x = 0; x < w2; x++)
+                                            {
+                                                row[x * 4] = src[x * 8];
+                                                row[x * 4 + 1] = src[x * 8 + 1];
+                                                row[x * 4 + 2] = src[x * 8 + 2];
+                                                row[x * 4 + 3] = 255;
+                                            }
+                                            System.Runtime.InteropServices.Marshal.Copy(row, 0,
+                                                new IntPtr(md.Scan0.ToInt64() + y * md.Stride), row.Length);
+                                        }
+                                    }
+                                    mb.UnlockBits(md);
+                                    using (MemoryStream ms = new MemoryStream())
+                                    {
+                                        System.Drawing.Imaging.ImageCodecInfo jpg = null;
+                                        foreach (System.Drawing.Imaging.ImageCodecInfo ci in System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders())
+                                            if (ci.FormatID == System.Drawing.Imaging.ImageFormat.Jpeg.Guid) jpg = ci;
+                                        if (jpg != null)
+                                        {
+                                            System.Drawing.Imaging.EncoderParameters ep = new System.Drawing.Imaging.EncoderParameters(1);
+                                            ep.Param[0] = new System.Drawing.Imaging.EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 55L);
+                                            mb.Save(ms, jpg, ep);
+                                            lock (_mjpegLock) { _mjpeg = ms.ToArray(); _mjpegAt = Environment.TickCount; }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                Thread.Sleep(2);
+            }
+        }
+        catch (Exception ex) { Log("thermal engine: " + ex.Message); }
+        finally
+        {
+            try { if (_ovlWnd != IntPtr.Zero) { ShowWindow(_ovlWnd, 0); DestroyWindow(_ovlWnd); _ovlWnd = IntPtr.Zero; } } catch { }
+            try { if (_ovlDib != IntPtr.Zero) { SelectObject(_ovlDc, _ovlOldObj); DeleteObject(_ovlDib); _ovlDib = IntPtr.Zero; } } catch { }
+            try { if (_ovlDc != IntPtr.Zero) { DeleteDC(_ovlDc); _ovlDc = IntPtr.Zero; } } catch { }
+            _ovlBits = IntPtr.Zero;
+            _ovlW = _ovlH = 0;
+        }
+    }
+
+    // The thermal overlay and the app's HUD are both TOPMOST windows: whoever is raised last
+    // wins. The overlay is inserted right BELOW the HUD form so the ladder stays readable.
     IntPtr ThermalZAfter()
     {
         try
@@ -531,36 +726,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         return new IntPtr(-1);   // HWND_TOPMOST
     }
 
-    // Keep the magnifier glued to the game window (moves, resizes, focus flips). Runs from the
-    // 20 ms HUD timer; it only touches Win32 when the rect changed or focus flipped.
-    void FollowThermal()
-    {
-        try
-        {
-            if (!_nightVision || _thermalHost == IntPtr.Zero) return;
-            if (Environment.TickCount - _thAt < 250) return;
-            _thAt = Environment.TickCount;
-            IntPtr rw = RobloxWindow();
-            if (rw == IntPtr.Zero) return;
-            if (IsIconic(rw) || !RobloxFocused()) { ShowWindow(_thermalHost, 0); return; }   // never cover other apps
-            IntPtr after = ThermalZAfter();
-            RECTW r; if (!GetWindowRect(rw, out r)) return;
-            if (r.L == _thL && r.T == _thT && r.R - r.L == _thW && r.B - r.T == _thH)
-            {
-                // same spot: just re-assert the z-order and re-show if a focus flip hid it
-                SetWindowPos(_thermalHost, after, 0, 0, 0, 0,
-                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-                return;
-            }
-            _thL = r.L; _thT = r.T; _thW = r.R - r.L; _thH = r.B - r.T;
-            SetWindowPos(_thermalHost, after, r.L, r.T, _thW, _thH, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-            SetWindowPos(_thermalWnd, IntPtr.Zero, 0, 0, _thW, _thH, SWP_NOACTIVATE);
-            IntPtr[] only = new IntPtr[] { rw };
-            MagSetWindowFilterList(_thermalWnd, MW_FILTERMODE_INCLUDE, 1, only);
-            MagSetWindowSource(_thermalWnd, r);
-        }
-        catch { }
-    }
+    // The overlay thread follows the game window itself (rect, focus, minimize) every 200 ms;
+    // the HUD timer has nothing left to do here.
+    void FollowThermal() { }
 
     // Hotkey + button entry point: flips the flag and drives the checkbox so both stay in sync.
     void ToggleNightVision()
@@ -1163,7 +1331,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // mid-list.
         var pnlUpd = new Panel();
         pnlUpd.BackColor = Color.FromArgb(28, 31, 37);
-        pnlUpd.SetBounds(x + 340, 68, w - 340, 472);
+        pnlUpd.SetBounds(x + 340, 68, w - 340, 556);
         Controls.Add(pnlUpd);
 
         var lblUpd = new Label();
@@ -1173,7 +1341,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         lblUpd.SetBounds(10, 8, w - 360, 16);
         pnlUpd.Controls.Add(lblUpd);
 
-        string[] updNames = { "roll gain", "pitch gain", "trees belief", "sky seen", "ground boost" };
+        string[] updNames = { "roll gain", "pitch gain", "trees belief", "sky seen", "ground boost", "horizon ID" };
         _updValue = new Label[updNames.Length];
         _updLast = new float[updNames.Length];
         _updFlashAt = new long[updNames.Length];
@@ -1183,7 +1351,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             ln.Text = updNames[i];
             ln.Font = new Font("Segoe UI", 9F);
             ln.ForeColor = Color.FromArgb(150, 155, 165);
-            ln.SetBounds(10, 40 + i * 84, w - 360, 16);
+            ln.SetBounds(10, 40 + i * 68, w - 360, 16);
             pnlUpd.Controls.Add(ln);
             var lv = new Label();
             lv.BackColor = Color.FromArgb(14, 15, 18);
@@ -1191,13 +1359,13 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             lv.BorderStyle = BorderStyle.FixedSingle;
             lv.TextAlign = ContentAlignment.MiddleCenter;
             lv.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
-            lv.SetBounds(10, 57 + i * 84, w - 360, 24);
+            lv.SetBounds(10, 57 + i * 68, w - 360, 24);
             pnlUpd.Controls.Add(lv);
             _updValue[i] = lv;
         }
         _updLast[0] = _kfRollGain; _updLast[1] = _kfPitGain;
         _updLast[2] = _hudTreeBelowSm * 100f; _updLast[3] = _hudDetSky * 100f;
-        _updLast[4] = _hudGndBoost;
+        _updLast[4] = _hudGndBoost; _updLast[5] = _hudIdPct;
         RefreshUpdates();
 
         numMinSpread = MkTune(x, y, "min colour", (decimal)_hudMinSpread, 0m, 40m, 1m, 0);
@@ -1206,7 +1374,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         numTexW.ValueChanged += delegate { _hudTexW = (float)numTexW.Value; SaveCfg(); };
         y += 28;
 
-        numThr = MkTune(x, y, "throttle", (decimal)_hudLeftPx, 0m, 120m, 2m, 0);
+        numThr = MkTune(x, y, "throttle", (decimal)_hudLeftPx, -120m, 120m, 2m, 0);
         numRollOff = MkTune(x + 168, y, "roll shift", (decimal)_hudRollOff, -180m, 180m, 1m, 0);
         numThr.ValueChanged += delegate { _hudLeftPx = (float)numThr.Value; SaveCfg(); };
         numRollOff.ValueChanged += delegate { _hudRollOff = (float)numRollOff.Value; SaveCfg(); };
@@ -1224,7 +1392,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         numFineP.ValueChanged += delegate { _hudFineP = (float)numFineP.Value; SaveCfg(); };
         y += 28;
 
-        numPitStick = MkTune(x, y, "stick pitch", (decimal)_hudPitStick, -350m, 350m, 10m, 0);
+        numPitStick = MkTune(x, y, "stick pitch", (decimal)_hudPitStick, -700m, 700m, 10m, 0);
         numRollStick = MkTune(x + 168, y, "stick tilt", (decimal)_hudRollStick, -80m, 80m, 5m, 0);
         numPitStick.ValueChanged += delegate { _hudPitStick = (float)numPitStick.Value; SaveCfg(); };
         numRollStick.ValueChanged += delegate { _hudRollStick = (float)numRollStick.Value; SaveCfg(); };
@@ -1255,16 +1423,38 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         y += 28;
 
         numSkyMin = MkTune(x, y, "sky min", (decimal)(_hudSkyMin * 100f), 0m, 80m, 1m, 0);
-        numGndBoost = MkTune(x + 168, y, "ground boost", (decimal)_hudGndBoost, 1m, 2.5m, 0.05m, 2);
+        numGndBoost = MkTune(x + 168, y, "ground boost", (decimal)_hudGndBoost, 1m, 4m, 0.1m, 2);
         numSkyMin.ValueChanged += delegate { _hudSkyMin = (float)numSkyMin.Value / 100f; SaveCfg(); };
         numGndBoost.ValueChanged += delegate { _hudGndBoost = (float)numGndBoost.Value; SaveCfg(); };
+        y += 28;
+
+        // side vote = weight of the COLOURLESS edge detector (SideHorizon) in the published line.
+        // 0 = record-only (it still runs and lands in the logs); it never overrides a ref match.
+        numSideVote = MkTune(x, y, "side vote", (decimal)(_hudSideW * 100f), 0m, 100m, 5m, 0);
+        numYawFade = MkTune(x + 168, y, "yaw fade", (decimal)(_hudYawFade * 100f), 0m, 100m, 5m, 0);
+        numSideVote.ValueChanged += delegate { _hudSideW = (float)numSideVote.Value / 100f; SaveCfg(); };
+        numYawFade.ValueChanged += delegate { _hudYawFade = (float)numYawFade.Value / 100f; SaveCfg(); };
+        y += 28;
+
+        // THE RESPONSIVENESS CONTROLS (these used to be hard-coded - this is the tuning that
+        // actually moves the line): corr speed = how fast a correction glides in; lock pull =
+        // guaranteed vision pull per measurement on a trustworthy frame; model drive = how hard
+        // the stick model is damped while the horizon ID is high.
+        numCorrSpeed = MkTune(x, y, "corr speed", (decimal)_hudCorrPx, 500m, 6000m, 100m, 0);
+        numLockPull = MkTune(x + 168, y, "lock pull", (decimal)(_hudLockPull * 100f), 0m, 60m, 5m, 0);
+        numCorrSpeed.ValueChanged += delegate { _hudCorrPx = (float)numCorrSpeed.Value; SaveCfg(); };
+        numLockPull.ValueChanged += delegate { _hudLockPull = (float)numLockPull.Value / 100f; SaveCfg(); };
+        y += 28;
+
+        numModelDrive = MkTune(x, y, "model drive", (decimal)(_hudModelDrive * 100f), 0m, 100m, 5m, 0);
+        numModelDrive.ValueChanged += delegate { _hudModelDrive = (float)numModelDrive.Value / 100f; SaveCfg(); };
         y += 28;
 
         // reload the reference photos ("base photos") without restarting
         btnReloadRefs = new Button();
         btnReloadRefs.Text = "reload refs";
         btnReloadRefs.SetBounds(x, y, 120, 24);
-        btnReloadRefs.Click += delegate { _refSigs.Clear(); _refGoodL.Clear(); _refEditL.Clear(); _refGroundL.Clear(); _refNames.Clear(); _refLine.Clear(); _refLoaded = false; LoadHudRefs(); };
+        btnReloadRefs.Click += delegate { _refSigs.Clear(); _refThmSigs.Clear(); _refGoodL.Clear(); _refEditL.Clear(); _refGroundL.Clear(); _refNames.Clear(); _refLine.Clear(); _refLoaded = false; LoadHudRefs(); };
         Controls.Add(btnReloadRefs);
 
         // CAPTURE REF: save THIS frame + its current horizon line as a labelled reference ("good").
@@ -1485,11 +1675,18 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         btnSetNight.Click += delegate { BeginCaptureKey(true); };
         Controls.Add(btnSetNight);
 
-        var lblNightHint = new Label();
-        lblNightHint.Text = "toggles the invert";
-        lblNightHint.SetBounds(x + 268, y + 4, 160, 20);
-        lblNightHint.ForeColor = Color.Silver;
-        Controls.Add(lblNightHint);
+        var lblPadThermal = new Label();
+        lblPadThermal.Text = "pad:";
+        lblPadThermal.SetBounds(x + 268, y + 4, 30, 20);
+        Controls.Add(lblPadThermal);
+
+        cmbPadThermal = new NoWheelCombo();
+        cmbPadThermal.DropDownStyle = ComboBoxStyle.DropDownList;
+        cmbPadThermal.SetBounds(x + 300, y, 110, 24);
+        foreach (string k in PAD.Keys) cmbPadThermal.Items.Add(k);
+        cmbPadThermal.SelectedItem = PAD.ContainsKey(_padThermal) ? _padThermal : "R3";
+        cmbPadThermal.SelectedIndexChanged += delegate { if (cmbPadThermal.SelectedItem != null) { _padThermal = cmbPadThermal.SelectedItem.ToString(); SaveCfg(); } };
+        Controls.Add(cmbPadThermal);
         y += 34;
 
         // ---- reconnect options ----
@@ -2059,11 +2256,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     void RefreshUpdates()
     {
         if (_updValue == null) return;
-        float[] cur = { _kfRollGain, _kfPitGain, _hudTreeBelowSm * 100f, _hudDetSky * 100f, _hudGndBoost };
-        float[] minFlash = { 0.005f, 0.005f, 1.5f, 1.5f, 0.005f };   // read-out jitter must not strobe the box
+        float[] cur = { _kfRollGain, _kfPitGain, _hudTreeBelowSm * 100f, _hudDetSky * 100f, _hudGndBoost, _hudIdPct };
+        float[] minFlash = { 0.005f, 0.005f, 1.5f, 1.5f, 0.005f, 1.0f };   // read-out jitter must not strobe the box
         for (int i = 0; i < _updValue.Length; i++)
         {
-            string txt = (i == 2 || i == 3) ? cur[i].ToString("0") + "%" : cur[i].ToString("0.00");
+            string txt = (i == 2 || i == 3 || i == 5) ? cur[i].ToString("0") + "%" : cur[i].ToString("0.00");
             if (_updValue[i].Text != txt) _updValue[i].Text = txt;
             if (Math.Abs(cur[i] - _updLast[i]) >= minFlash[i])
             {
@@ -2150,6 +2347,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             case "sky min": return "THROW THE FRAME AWAY if it has less verified sky than this (%). Banked hard looking down at ground/clutter there is no horizon to measure - discarding it stops a terrain edge becoming a false low line, and the estimator just coasts on the stick. 0 = never discard.";
             case "axis smooth": return "Low-pass time (s) on the detector measurement before the estimator uses it. Higher = steadier but laggier; 0 = raw.";
             case "axis weight": return "INFLUENCE of the new sky/ground colour axis (per-frame brightness-vs-blueness cue). 0 = off, 1 = default, higher pulls harder toward sky-above/ground-below.";
+            case "sky tex": return "How much SMOOTHER the region above the line must be than the region below (the sky is flat, the ground is busy). Higher = stricter against locks on canopy/roads.";
+            case "side vote": return "Weight of the COLOURLESS edge method (luminance + thermal-ref matching) in the published line. 0 = it only records; higher = it leads when it agrees.";
+            case "yaw fade": return "While you YAW (left stick X), the visual horizon legitimately slides over the terrain - this fades the vision's authority so the line leans on the gyro instead of chasing the treeline. 0 = off.";
+            case "corr speed": return "How fast a correction GLIDES the line onto the image horizon (px/s). Higher = snappier, lower = smoother. This is the main 'make it faster' dial.";
+            case "lock pull": return "Guaranteed vision pull per measurement when the frame is trustworthy (%). 0 = pure trims, 60 = the line lands on the measurement almost at once. Scales with the horizon ID.";
+            case "model drive": return "How hard the stick/gyro model is DAMPED while the horizon ID is high. Higher = the image owns the line when it sees well; 0 = the model always keeps full authority.";
             default: return null;
         }
     }
@@ -2596,34 +2799,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         if (_stepDrone && (_drone == "MAVIC" || _drone == "FPV") && !mapUp && !panelUp)
         {
             Log("3) switching drone to " + _drone + " (LOADOUT)...");
-            ClickPhraseVerified("LOADOUT", g);
-            if (WaitPhrase("SELECT DRONE", 3000, g))
-            {
-                InvalidateOcr();
-                if (DroneIs(_drone))
-                {
-                    Log("   " + _drone + " already selected");
-                }
-                else if (DroneIs("MAVIC") || DroneIs("FPV"))
-                {
-                    // we can POSITIVELY see the OTHER drone, so flipping is safe
-                    bool wantMavic = _drone == "MAVIC";
-                    string cur = DroneIs("MAVIC") ? "MAVIC" : "FPV";
-                    Log("   drone is " + cur + " -> clicking the " + (wantMavic ? "right" : "left") + " arrow");
-                    ClickDroneArrow(wantMavic, g);       // right = MAVIC, left = FPV
-                    Thread.Sleep(350);
-                    InvalidateOcr();
-                    Log(DroneIs(_drone) ? "   " + _drone + " selected" : "   could not confirm " + _drone);
-                }
-                else
-                {
-                    // We cannot read which drone is equipped. DO NOT click - this is exactly what
-                    // used to turn a chosen FPV into a MAVIC (both chevrons just toggle, so a
-                    // blind click flips it). Leave the loadout untouched.
-                    Log("   could not read the current drone - leaving the loadout untouched");
-                }
-            }
-            else Log("   SELECT DRONE panel did not open");
+            SwitchDroneLoadout(g);
             // If the LOADOUT click dropped us into a weapon "Return" page instead, back out with
             // the red Return so the nav DEPLOY is clickable again for step 4.
             if (PhraseOnScreen("Return")) ClickRedReturn();
@@ -3606,6 +3782,129 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         return false;
     }
 
+    // True when the pixels around (x,y) are mostly the maroon/red bar colour (colour-verified
+    // click target - never click a red thing on faith).
+    bool ClickLooksMaroon(int x, int y)
+    {
+        try
+        {
+            int W, H; int[] px = Grab(out W, out H);
+            int mar = 0, n = 0;
+            for (int dx = -60; dx <= 60; dx += 10)
+                for (int dy = -8; dy <= 8; dy += 4)
+                {
+                    int sx = x + dx, sy = y + dy;
+                    if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
+                    n++; if (HudMaroon(px[sy * W + sx])) mar++;
+                }
+            return n > 0 && 100 * mar / n >= 30;
+        }
+        catch { return false; }
+    }
+
+    // The LOADOUT weapons page has a BIG red Return at the TOP-LEFT of the weapon list. Clicking
+    // it goes back to the SELECT DRONE view. ClickRedReturn refuses anything outside the centre
+    // panel (that guard exists to stop the FEATURED misclick), so this one explicitly targets the
+    // top-left red bar - OCR-corroborated AND colour-verified, with RETRIES and a hold-still wait
+    // for the view to actually change (user report: it tried Return but moved away too quickly).
+    bool ClickLoadoutReturn(int g)
+    {
+        try
+        {
+            int SWp = Screen.PrimaryScreen.Bounds.Width, SHp = Screen.PrimaryScreen.Bounds.Height;
+            for (int attempt = 1; attempt <= 3 && Alive(g); attempt++)
+            {
+                InvalidateOcr();
+                List<Hit> h = FindPhraseAll("Return", null, OcrWords());
+                if (h.Count == 0) h = FindPhraseAll("Return", null, OcrWordsWhiten());
+                int ti = -1;
+                for (int i = 0; i < h.Count; i++)
+                {
+                    Hit hh = h[i];
+                    if (hh.X < SWp * 5 / 100 || hh.X > SWp * 34 / 100) continue;
+                    if (hh.Y < SHp * 8 / 100 || hh.Y > SHp * 45 / 100) continue;
+                    if (!ClickLooksMaroon(hh.X, hh.Y)) continue;
+                    ti = i; break;
+                }
+                if (ti < 0) return false;
+                Log("   LOADOUT weapons page: clicking the big red Return (attempt " + attempt + "/3)");
+                ClickPrimaryLogged(h[ti].X, h[ti].Y, "Return (loadout)");
+                // HOLD STILL and wait for the view to change before anything else moves the pointer
+                Thread.Sleep(700);
+                InvalidateOcr();
+                if (WaitPhrase("SELECT DRONE", 2200, g)) return true;
+                if (!PhraseOnScreen("Return")) return true;    // the page changed another way
+            }
+            return false;
+        }
+        catch { return false; }
+    }
+
+    // Click LOADOUT and switch the airframe to _drone (the step-3 logic, extracted so the
+    // wrong-payload back-out can reuse it). Returns true when the wanted drone is confirmed.
+    bool SwitchDroneLoadout(int g)
+    {
+        try
+        {
+            ClickPhraseVerified("LOADOUT", g);
+            bool selUp = WaitPhrase("SELECT DRONE", 3000, g);
+            if (!selUp)
+            {
+                // WEAPONS PAGE (user report): the LOADOUT tab can open the weapons list with the
+                // big red Return at the top-left - click it and the SELECT DRONE view comes up.
+                if (ClickLoadoutReturn(g))
+                {
+                    Thread.Sleep(600);
+                    InvalidateOcr();
+                    selUp = WaitPhrase("SELECT DRONE", 2500, g);
+                }
+            }
+            if (selUp)
+            {
+                InvalidateOcr();
+                if (DroneIs(_drone))
+                {
+                    Log("   " + _drone + " already selected");
+                    return true;
+                }
+                else if (DroneIs("MAVIC") || DroneIs("FPV"))
+                {
+                    // we can POSITIVELY see the OTHER drone, so flipping is safe
+                    bool wantMavic = _drone == "MAVIC";
+                    string cur = DroneIs("MAVIC") ? "MAVIC" : "FPV";
+                    Log("   drone is " + cur + " -> clicking the " + (wantMavic ? "right" : "left") + " arrow");
+                    ClickDroneArrow(wantMavic, g);       // right = MAVIC, left = FPV
+                    Thread.Sleep(350);
+                    InvalidateOcr();
+                    bool ok = DroneIs(_drone);
+                    if (!ok)
+                    {
+                        // one more try - a swallowed click used to leave the WRONG drone and the
+                        // flow then deployed it ("could not confirm MAVIC" -> wrong airframe)
+                        Log("   not confirmed yet - clicking the arrow once more");
+                        ClickDroneArrow(wantMavic, g);
+                        Thread.Sleep(400);
+                        InvalidateOcr();
+                        ok = DroneIs(_drone);
+                    }
+                    Log(ok ? "   " + _drone + " selected" : "   could not confirm " + _drone);
+                    return ok;
+                }
+                else
+                {
+                    // We cannot read which drone is equipped. DO NOT click - this is exactly what
+                    // used to turn a chosen FPV into a MAVIC (both chevrons just toggle, so a
+                    // blind click flips it). Leave the loadout untouched.
+                    Log("   could not read the current drone - leaving the loadout untouched");
+                    return false;
+                }
+            }
+            Log("   SELECT DRONE panel did not open");
+            return false;
+        }
+        catch { return false; }
+    }
+
     // The TEAM BASE / map panels have a red "Return" button. When the flow cannot find what it
     // expects, pressing it backs out of the panel instead of leaving the run stuck.
     // Wrong loadout: return out of the panel, wait for the LOADOUT screen, open it so the drone +
@@ -3633,9 +3932,15 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             int spent = 0;
             while (Alive(g) && spent < 2500 && !PhraseOnScreen("LOADOUT"))
             { InvalidateOcr(); Thread.Sleep(200); spent += 200; }
-            // Do NOT open the LOADOUT tab to hunt for a drone selector: on these maps it just shows
-            // the WEAPONS list and the flow sat there. Backing out is enough - the resume-aware AUTO
-            // re-plans from the DEPLOY tab.
+            // CLICK LOADOUT AND ACTUALLY SWITCH THE AIRFRAME (user report): backing out alone left
+            // the WRONG drone equipped, so the re-plan reached the same warhead mismatch and the
+            // loop breaker stopped the run - the user had to press LOADOUT manually. Do it here.
+            if (WaitPhrase("LOADOUT", 2500, g))
+            {
+                SwitchDroneLoadout(g);
+                if (PhraseOnScreen("Return")) ClickRedReturn();   // weapon page: back to the nav
+                Thread.Sleep(300);
+            }
             Thread.Sleep(500);
         }
         catch { }
@@ -5206,38 +5511,46 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     static int _grabW = 0, _grabH = 0;
     static DateTime _grabTime = DateTime.MinValue;
 
+    static readonly object _grabLock = new object();
     static int[] Grab(out int w, out int h)
     {
-        // the blob search and the loading-screen check both grab the whole screen and
-        // usually run back to back - reuse a capture that is at most 250ms old
-        if (_grabCache != null && (DateTime.Now - _grabTime).TotalMilliseconds < 45)
+        // THREAD SAFETY (AUTO-at-team-select failure, 07:5x): the AUTO flow, the HUD reader and
+        // the OCR all call Grab() from different threads, and two racing threads hit the SAME
+        // _grabBmp/_grabG ("Object is currently in use elsewhere" - 3494 log lines, and the flow
+        // died with state "unknown" because every region read threw). Serialize the capture.
+        lock (_grabLock)
         {
-            w = _grabW; h = _grabH;
-            return _grabCache;
-        }
+            // the blob search and the loading-screen check both grab the whole screen and
+            // usually run back to back - reuse a capture that is at most 250ms old
+            if (_grabCache != null && (DateTime.Now - _grabTime).TotalMilliseconds < 45)
+            {
+                w = _grabW; h = _grabH;
+                return _grabCache;
+            }
 
-        Rectangle b = Screen.PrimaryScreen.Bounds;
-        w = b.Width; h = b.Height;
-        // ONE persistent buffer + bitmap, refilled each grab. Allocating an 8.3MB int[] (and a bitmap)
-        // on EVERY capture put ~180MB/s of large-object-heap garbage through the GC and eventually
-        // threw OutOfMemory - which WinForms paints as the red-X-on-white screen. Never allocate the
-        // whole-screen capture repeatedly; reuse it. (Valid only until the next Grab - every caller
-        // uses it immediately.)
-        if (_grabBuf == null || _grabBuf.Length != w * h || _grabBmp == null || _grabBmp.Width != w || _grabBmp.Height != h)
-        {
-            if (_grabG != null) { try { _grabG.Dispose(); } catch { } _grabG = null; }
-            if (_grabBmp != null) { try { _grabBmp.Dispose(); } catch { } _grabBmp = null; }
-            _grabBuf = new int[w * h];
-            _grabBmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            _grabG = Graphics.FromImage(_grabBmp);
+            Rectangle b = Screen.PrimaryScreen.Bounds;
+            w = b.Width; h = b.Height;
+            // ONE persistent buffer + bitmap, refilled each grab. Allocating an 8.3MB int[] (and a bitmap)
+            // on EVERY capture put ~180MB/s of large-object-heap garbage through the GC and eventually
+            // threw OutOfMemory - which WinForms paints as the red-X-on-white screen. Never allocate the
+            // whole-screen capture repeatedly; reuse it. (Valid only until the next Grab - every caller
+            // uses it immediately.)
+            if (_grabBuf == null || _grabBuf.Length != w * h || _grabBmp == null || _grabBmp.Width != w || _grabBmp.Height != h)
+            {
+                if (_grabG != null) { try { _grabG.Dispose(); } catch { } _grabG = null; }
+                if (_grabBmp != null) { try { _grabBmp.Dispose(); } catch { } _grabBmp = null; }
+                _grabBuf = new int[w * h];
+                _grabBmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                _grabG = Graphics.FromImage(_grabBmp);
+            }
+            _grabG.CopyFromScreen(b.X, b.Y, 0, 0, new Size(w, h), CopyPixelOperation.SourceCopy);
+            System.Drawing.Imaging.BitmapData bd = _grabBmp.LockBits(new Rectangle(0, 0, w, h),
+                System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            Marshal.Copy(bd.Scan0, _grabBuf, 0, _grabBuf.Length);
+            _grabBmp.UnlockBits(bd);
+            _grabCache = _grabBuf; _grabW = w; _grabH = h; _grabTime = DateTime.Now;
+            return _grabBuf;
         }
-        _grabG.CopyFromScreen(b.X, b.Y, 0, 0, new Size(w, h), CopyPixelOperation.SourceCopy);
-        System.Drawing.Imaging.BitmapData bd = _grabBmp.LockBits(new Rectangle(0, 0, w, h),
-            System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        Marshal.Copy(bd.Scan0, _grabBuf, 0, _grabBuf.Length);
-        _grabBmp.UnlockBits(bd);
-        _grabCache = _grabBuf; _grabW = w; _grabH = h; _grabTime = DateTime.Now;
-        return _grabBuf;
     }
 
     // save the current screen next to the exe, for diagnosing a mis-detected panel
@@ -5995,6 +6308,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // and this 50Hz watchdog is what clears it (the reconnect/STOP HUD flash, field).
             OverlayHub.I.SetHud(false, "", "", "", 0f, 0f, false, 0f, 0f);
             OverlayHub.I.SetFlight(false, 0f, 0);
+            // WATCH FINDING (live watch session): with the HUD off, the last published ID/side
+            // values kept sitting in /state and both viewers - it LOOKED like the finder was still
+            // matching the deploy menu at "14%". Zero the published values and any pending
+            // corrections so an idle app reads as idle, and the next flight starts clean.
+            _hudIdPct = 0f;
+            _kfPitCorr = 0f; _kfRollCorr = 0f;
+            OverlayHub.I.SetSide(0f, 0f, 0f, 0f);
+            OverlayHub.I.SetAppear(0f, false);
             if (_hudForm != null) StopHud();
             return;
         }
@@ -6074,7 +6395,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // "ground boost" dial scales the extra lift (1.00 = off).
         bool groundEye = (_groundRefAt != 0 && Environment.TickCount - _groundRefAt < 1500) ||
                          !(_hudDetValid && (Environment.TickCount - _hudDetAt) < 2000);
-        float pitStickEff = _hudPitStick * (groundEye ? _hudGndBoost : 1f);
+        // HORIZON-IN-VIEW GATE (user rule): while the finder has a horizon (ID% up) the direct
+        // stick->pitch offset fades OUT - the image owns the line and the pitch stick must not
+        // drag it. With no horizon it returns at full strength (with the ground boost).
+        float pitchIdGate = 1f - Smooth01(_hudIdPct, 8f, 45f);
+        float pitStickEff = _hudPitStick * (groundEye ? _hudGndBoost : 1f) * pitchIdGate;
         float stickPitchTarget = -syS * pitStickEff;
         float pv = 1f - (float)Math.Pow(0.5, dt / 0.22f);      // ~0.22s glide
         _hudPitStickSm += (stickPitchTarget - _hudPitStickSm) * pv;
@@ -6082,7 +6407,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // RIGHT stick X as a DIRECT bank, the same way the pitch gets a direct lift - without it the
         // roll only had the slow gyro rate, so fine tilt input lagged (why pitch felt right and tilt
         // did not). Bounded + glided, so holding the stick holds the bank and releasing returns it.
-        float stickRollTarget = -sxS * _hudRollStick;
+        float stickRollTarget = -sxS * _hudRollStick * pitchIdGate;
         _hudRollStickSm += (stickRollTarget - _hudRollStickSm) * pv;
         float stickRoll = _hudRollStickSm;
 
@@ -6173,6 +6498,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
         string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
         OverlayHub.I.SetHud(true, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudRoll, _hudPitch, _hudStyleUav, _hudV1, _hudV2);
+        OverlayHub.I.SetSide(_sideRoll, _sidePitch, _sideConf, _hudIdPct);
         OverlayHub.I.SetDials(_hudDpp, _hudShear, _hudLen, _hudRungTilt, _hudMaxTilt, _hudSpreadAmt, _hudSpreadAccel, _hudSpreadSm, _hudStairSm);
 
         if (_hudForm == null) EnsureHud();          // UI thread - safe to create here
@@ -6330,7 +6656,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         if (!conn)
         {
             lblPadStatus.Text = "no controller";
-            _padRejoinWasDown = _padAutoWasDown = _padSwapWasDown = false;
+            _padRejoinWasDown = _padAutoWasDown = _padSwapWasDown = _padThermalWasDown = false;
             return;
         }
 
@@ -6416,6 +6742,17 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 SwapFav();
             }
             _padSwapWasDown = d;
+        }
+
+        {
+            ushort m = PAD.ContainsKey(_padThermal) ? PAD[_padThermal] : (ushort)0;
+            bool d = m != 0 && (buttons & m) != 0;
+            if (d && !_padThermalWasDown)
+            {
+                Log("controller " + _padThermal + " pressed -> thermal");
+                ToggleNightVision();
+            }
+            _padThermalWasDown = d;
         }
     }
 
@@ -6736,6 +7073,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "activeFav") _activeFav = v;
             else if (k == "padSwap") _padSwap = v;
             else if (k == "padSwapOn") _padSwapOn = v == "1";
+            else if (k == "padThermal") _padThermal = v;
                 else if (k == "hoverMs") { _hoverBase = int.Parse(v); _hoverMs = _hoverBase; }
                 else if (k == "autoAfterRejoin") _autoAfterRejoin = v == "1";
                 else if (k == "autoAfterRejoinMs") _autoAfterRejoinMs = int.Parse(v);
@@ -6760,7 +7098,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudPitOff") _hudPitOff = ParseF(v);
             else if (k == "hudThr") _hudLeftPx = ParseF(v);
             else if (k == "hudPStick") _hudPitStick = ParseF(v);
-            else if (k == "hudGndBoost") _hudGndBoost = ParseF(v);
+            else if (k == "hudGndBoost") { _hudGndBoost = ParseF(v); if (_hudGndBoost < 1f) _hudGndBoost = 1f; if (_hudGndBoost > 4f) _hudGndBoost = 4f; }
+            else if (k == "hudSideW") { _hudSideW = ParseF(v); if (_hudSideW < 0f) _hudSideW = 0f; if (_hudSideW > 1f) _hudSideW = 1f; }
+            else if (k == "hudYawFade") { _hudYawFade = ParseF(v); if (_hudYawFade < 0f) _hudYawFade = 0f; if (_hudYawFade > 1f) _hudYawFade = 1f; }
+            else if (k == "hudCorrPx") { _hudCorrPx = ParseF(v); if (_hudCorrPx < 500f) _hudCorrPx = 500f; if (_hudCorrPx > 6000f) _hudCorrPx = 6000f; }
+            else if (k == "hudLockPull") { _hudLockPull = ParseF(v); if (_hudLockPull < 0f) _hudLockPull = 0f; if (_hudLockPull > 0.6f) _hudLockPull = 0.6f; }
+            else if (k == "hudModelDrive") { _hudModelDrive = ParseF(v); if (_hudModelDrive < 0f) _hudModelDrive = 0f; if (_hudModelDrive > 1f) _hudModelDrive = 1f; }
             else if (k == "hudTexW") _hudTexW = ParseF(v);
             else if (k == "hudAccPitch") _hudAccPitch = ParseF(v);
             else if (k == "hudAccRoll") _hudAccRoll = ParseF(v);
@@ -6831,6 +7174,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 "favFAsDrone=" + (_favFAsDrone ? "1" : "0"),
                 "activeFav=" + _activeFav,
                 "padSwap=" + _padSwap, "padSwapOn=" + (_padSwapOn ? "1" : "0"),
+                "padThermal=" + _padThermal,
                 "hoverMs=" + _hoverBase,
                 "autoAfterRejoin=" + (_autoAfterRejoin ? "1" : "0"),
                 "autoAfterRejoinMs=" + _autoAfterRejoinMs,
@@ -6868,6 +7212,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudThr=" + _hudLeftPx.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPStick=" + _hudPitStick.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudGndBoost=" + _hudGndBoost.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudSideW=" + _hudSideW.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudYawFade=" + _hudYawFade.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudCorrPx=" + _hudCorrPx.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudLockPull=" + _hudLockPull.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudModelDrive=" + _hudModelDrive.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudTexW=" + _hudTexW.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAccPitch=" + _hudAccPitch.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAccRoll=" + _hudAccRoll.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -7387,6 +7736,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f; _hudStairSm = 0f; _hudTreeBelowSm = 0f; _expK = 0f; _expSeeded = false; _pubContraN = 0; _offWas = false; _offWait = false; _offAt = 0;           // reset the weighted average
             _kfSeeded = false; _kfRollV = 0f; _kfPitV = 0f; _kfRollOb = 0f; _kfPitOb = 0f; _kfMeasAt = 0;                 // reset the estimator
             _kfRollGain = 1f; _kfPitGain = 1f; _kfRollP = 25f; _kfPitP = 25f; _kfRollZAt = 0; _kfPitZAt = 0; _lgRTot = 0; _lgPTot = 0;
+        _geoPrevTheta = float.NaN; _geoPrevAlt = float.NaN; _geoPrevKf = float.NaN; _altApplied = float.NaN;
+        _geoSA = 0; _geoSAT = 0; _geoN = 0;
             _kfSmSeeded = false; _kfSmRoll = 0f; _kfSmPit = 0f;
             _hudSolid = 0; _hugSm = 0f; _hugDisR = 0; _hugDisP = 0; _hugSignR = 0; _hugSignP = 0; _hugLogged = false;
             _hudLockedOnce = false; _hudBigRn = 0; _hudBigPn = 0; _hudBigRat = 0; _hudBigPat = 0; _hudBigRsg = 0; _hudBigPsg = 0;
@@ -7541,6 +7892,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                             }
                             if (shown && droneEv && !menuEv)
                             {
+                                _droneViewAt = Environment.TickCount;   // recorder gate: rows only in a real drone view
                                 ReadHudTop();             // heading + AGL
                                 DetectHorizon();          // bank the artificial horizon
                                 int st = DroneStyle();    // 1 MAVIC / 0 FPV / -1 - only a positive read may flip
@@ -7602,10 +7954,21 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
                     // ---- horizon measurement (~3x/s) + spawn lock. The smooth 50fps fusion runs
                     // in HudTick on the UI thread so it can drive the layered repaint. ----
-                    if (shown && Environment.TickCount - lastDet >= 45)
+                    if (shown && Environment.TickCount - lastDet >= 24)
                     {
                         lastDet = Environment.TickCount;
+                        long tDet = Environment.TickCount;
                         DetectHorizon();
+                        _detMs = _detMs * 0.8f + (Environment.TickCount - tDet) * 0.2f;
+                        if (Environment.TickCount - _detLogAt >= 5000)
+                        {
+                            _detLogAt = Environment.TickCount;
+                            Log("detector: " + _detMs.ToString("0") + "ms/pass (~" +
+                                (1000f / Math.Max(1f, _detMs)).ToString("0") + " fps ceiling)  [grab " +
+                                _detGrabMs.ToString("0.0") + "ms  map " + _detMapMs.ToString("0.0") + "ms  stage3 " +
+                                _detScoreMs.ToString("0.0") + "ms  rest " +
+                                Math.Max(0f, _detMs - _detGrabMs - _detMapMs - _detScoreMs).ToString("0.0") + "ms]");
+                        }
                     }
                     // SETTLE first: the drone spawns in odd poses (sometimes under the map), so one
                     // first frame is not trustworthy. While settling we only COLLECT samples; the
@@ -7806,7 +8169,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 // our own username is on every menu and never on the drone OSD
                 if (_userName.Length >= 4 && Norm(t).IndexOf(Norm(_userName)) >= 0) return true;
                 if (t.IndexOf("JOINING") >= 0 || t.IndexOf("CONNECTING") >= 0 ||
-                    t.IndexOf("RESPAWN") >= 0 || t.IndexOf("SPECTAT") >= 0) return true;
+                    t.IndexOf("RESPAWN") >= 0 || t.IndexOf("SPECTAT") >= 0 ||
+                    // DISCONNECT SCREEN (field bug: the app sat on it for an hour, kept detecting
+                    // its UI at conf 0.93 and the recorder banked a 640 s file of junk that the
+                    // tuner then tried to fit)
+                    t.IndexOf("DISCONNECT") >= 0 || t.IndexOf("LOST CONNECTION") >= 0 ||
+                    t.IndexOf("RECONNECTING") >= 0) return true;
             }
         }
         catch { }
@@ -8584,8 +8952,93 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         return s;
     }
 
+    // SIDE METHOD signature: the reference photo run through the SAME thermal LUT the overlay
+    // shows (block mean luminance -> LUT -> RGB). Live frames build the identical shape from the
+    // downsampled maps (SigThermalFromBlocks). Measured on the ref library: self-matches at
+    // 0.000, different scenes >= 0.035 apart - so the match gate is tight and margin-checked.
+    static float[] SigThermalFromBitmap(Bitmap bmp)
+    {
+        ThBuildLuts();
+        float[] baseS = SigFromBitmap(bmp);
+        for (int b = 0; b < 36; b++)
+        {
+            int o = b * 3;
+            float lum = (baseS[o] * 0.299f + baseS[o + 1] * 0.587f + baseS[o + 2] * 0.114f) * 255f;
+            int li = (int)lum; if (li < 0) li = 0; if (li > 255) li = 255;
+            baseS[o] = _thLutR[li] / 255f; baseS[o + 1] = _thLutG[li] / 255f; baseS[o + 2] = _thLutB[li] / 255f;
+        }
+        return baseS;
+    }
+
+    // Live-frame side signature: 6x6 block means of the downsampled LUMINANCE -> thermal LUT.
+    static float[] SigThermalFromBlocks(float[] imL, int gw, int gh)
+    {
+        ThBuildLuts();
+        float[] s = new float[108];
+        for (int by = 0; by < 6; by++)
+            for (int bx = 0; bx < 6; bx++)
+            {
+                int x0 = bx * gw / 6, x1 = (bx + 1) * gw / 6; if (x1 <= x0) x1 = x0 + 1;
+                int y0 = by * gh / 6, y1 = (by + 1) * gh / 6; if (y1 <= y0) y1 = y0 + 1;
+                double l = 0; int c = 0;
+                for (int y = y0; y < y1 && y < gh; y++)
+                    for (int x = x0; x < x1 && x < gw; x++) { l += imL[y * gw + x]; c++; }
+                int o = (by * 6 + bx) * 3;
+                int li = c > 0 ? (int)(l / c) : 0;
+                if (li < 0) li = 0; if (li > 255) li = 255;
+                s[o] = _thLutR[li] / 255f; s[o + 1] = _thLutG[li] / 255f; s[o + 2] = _thLutB[li] / 255f;
+            }
+        return s;
+    }
+
     // Load every image in "<exe>\hudref\" once. File name decides the label: contains "bad", "no_"
     // or "false" -> BAD example; anything else -> GOOD example. e.g.  bad-ground.png, sky01.png
+    // ---- REF-DERIVED SKY/GROUND PALETTE (user idea) ------------------------------------------
+    // palgen scans every ref: the most common colours BELOW each marked line are this game's
+    // ground, the ones ABOVE are its sky. Loaded on every ref reload; the detector uses it as a
+    // colour veto ("if it's a ground colour it's probably not the sky"). Absent file = feature off.
+    float[] _palG = new float[0], _palS = new float[0];
+    bool _palOk = false;
+    void LoadGroundPalette(string dir)
+    {
+        try
+        {
+            string pf = Path.Combine(dir, "palette.txt");
+            if (!File.Exists(pf)) { _palOk = false; _palG = new float[0]; _palS = new float[0]; return; }
+            var gl = new List<float>(); var sl = new List<float>();
+            bool ground = true;
+            foreach (string ln in File.ReadAllLines(pf))
+            {
+                string t = ln.Trim();
+                if (t.Length == 0 || t.StartsWith("#")) continue;
+                if (t.Equals("ground", StringComparison.OrdinalIgnoreCase)) { ground = true; continue; }
+                if (t.Equals("sky", StringComparison.OrdinalIgnoreCase)) { ground = false; continue; }
+                string[] p = t.Split(',');
+                if (p.Length < 3) continue;
+                float r, g, b;
+                if (!float.TryParse(p[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out r)) continue;
+                if (!float.TryParse(p[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out g)) continue;
+                if (!float.TryParse(p[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out b)) continue;
+                if (ground) { gl.Add(r); gl.Add(g); gl.Add(b); } else { sl.Add(r); sl.Add(g); sl.Add(b); }
+            }
+            _palG = gl.ToArray(); _palS = sl.ToArray();
+            _palOk = _palG.Length >= 9;
+            Log("ground palette: " + (_palG.Length / 3) + " ground colours, " + (_palS.Length / 3) + " sky colours" + (_palOk ? "" : " - not enough, veto off"));
+        }
+        catch (Exception e) { _palOk = false; Log("ground palette load failed: " + e.Message); }
+    }
+    static float PalScore(float r, float g, float b, float[] pal)
+    {
+        float best = 0f;
+        for (int i = 0; i + 2 < pal.Length; i += 3)
+        {
+            float d = Math.Abs(r - pal[i]) + Math.Abs(g - pal[i + 1]) + Math.Abs(b - pal[i + 2]);
+            float s = 1f - d / 150f;
+            if (s > best) best = s;
+        }
+        return best < 0f ? 0f : best;
+    }
+
     void LoadHudRefs()
     {
         _refLoaded = true;
@@ -8600,6 +9053,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 return;
             }
             string[] fs = Directory.GetFiles(dir);
+            LoadGroundPalette(dir);
             int ng = 0, nb = 0;
             for (int i = 0; i < fs.Length; i++)
             {
@@ -8612,6 +9066,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         string nm = Path.GetFileName(fs[i]).ToLowerInvariant();
                         bool good = nm.IndexOf("bad") < 0 && nm.IndexOf("no_") < 0 && nm.IndexOf("false") < 0;
                         _refSigs.Add(SigFromBitmap(b));
+                        _refThmSigs.Add(SigThermalFromBitmap(b));
                         _refGoodL.Add(good);
                         _refEditL.Add(nm.IndexOf("-edit") >= 0);
                         _refGroundL.Add(nm.IndexOf("-ground") >= 0);
@@ -8699,6 +9154,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 System.Runtime.InteropServices.Marshal.Copy(buf, 0, bd.Scan0, buf.Length);
                 b.UnlockBits(bd);
                 sig = SigFromBitmap(b);
+                _refThmSigs.Add(SigThermalFromBitmap(b));
                 b.Save(Path.Combine(dir, baseName + ".png"), System.Drawing.Imaging.ImageFormat.Png);
             }
             float rr = _hudDetValid ? _hudMRoll : _hudFRoll;
@@ -8786,6 +9242,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 System.Runtime.InteropServices.Marshal.Copy(buf, 0, bd.Scan0, buf.Length);
                 b.UnlockBits(bd);
                 sig = SigFromBitmap(b);
+                _refThmSigs.Add(SigThermalFromBitmap(b));
                 b.Save(Path.Combine(dir, baseName + ".png"), System.Drawing.Imaging.ImageFormat.Png);
             }
             File.WriteAllText(Path.Combine(dir, baseName + ".hzn"),
@@ -8826,6 +9283,32 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         return best;
     }
 
+    // SIDE METHOD matcher: same RMSE over the THERMAL signature list, plus the runner-up distance
+    // so the caller can demand a clear margin (thermal distances are compressed: true matches sit
+    // at ~0.000, different scenes start at 0.035).
+    float MatchRefsThm(float[] sig, out bool good, out float[] line, out string name, out bool ground, out float second)
+    {
+        good = true; line = null; name = ""; ground = false;
+        float best = 9f, b2 = 9f; int bi = -1;
+        for (int i = 0; i < _refThmSigs.Count; i++)
+        {
+            float[] r = _refThmSigs[i];
+            float d = 0f;
+            for (int k = 0; k < 108; k++) { float e = sig[k] - r[k]; d += e * e; }
+            d = (float)Math.Sqrt(d / 108.0);
+            if (i < _refEditL.Count && _refEditL[i]) d *= 0.85f;
+            if (d < best) { b2 = best; best = d; good = i < _refGoodL.Count ? _refGoodL[i] : true; bi = i; }
+            else if (d < b2) b2 = d;
+        }
+        if (bi >= 0)
+        {
+            if (bi < _refLine.Count) line = _refLine[bi];
+            if (bi < _refNames.Count) { name = _refNames[bi]; ground = bi < _refGroundL.Count ? _refGroundL[bi] : false; }
+        }
+        second = b2;
+        return best;
+    }
+
     // System ID. Compare the rate the IMAGE shows with the rate the stick COMMANDED, and nudge the
     // gain toward it. Guarded hard: only while the stick is clearly commanding, ratio sanity-gated,
     // and clamped - so a single bad frame can never wind the gain away.
@@ -8839,7 +9322,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // fight it - that is the visible "jump". Clamped tight (0.5..1.8) and very slow.
             // trust here is the MEASUREMENT quality passed in by the caller (see HudFuse), not the
             // stick-dependent vision trust.
-            if (trust < 0.30f || Math.Abs(stick) < minStick) { lastAt = 0; return; }
+            // SEVERE conditions reset the reference window; MARGINAL ones only skip this call.
+            // (The old reset-on-any-dip meant one trust wobble restarted the 0.10 s window, so
+            // over real flight the learner collected 0-1 samples EVER - "it doesn't learn".)
+            if (trust < 0.12f || Math.Abs(stick) < minStick * 0.5f) { lastAt = 0; return; }
+            if (trust < 0.20f || Math.Abs(stick) < minStick) return;
             if (lastAt == 0) { lastZ = z; lastAt = now; return; }
             float dtZ = (now - lastAt) / 1000f;
             // HOLD THE REFERENCE until the measurement has had time to actually update. This runs
@@ -8847,7 +9334,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // permanently ~0.02 s, so the window below was unreachable and the gain NEVER LEARNED.
             // (Changing only the threshold was not enough - the refresh itself had to move.)
             if (dtZ < 0.10f) return;
-            if (dtZ < 0.70f)
+            if (dtZ > 3.0f) { lastZ = z; lastAt = now; return; }   // too stale: re-reference only
+            // WIDE WINDOW (field data): with the detector at ~1.4 accepted updates/s during
+            // maneuvers, a 0.70 s window missed most pairs and the learner stayed at n~1 for days.
+            // A ratio measured over up to 1.5 s is still a valid rate comparison.
+            if (dtZ < 1.5f)
             {
                 float measRate = (z - lastZ) / dtZ;
                 if (Math.Abs(cmdRate) > 4f)
@@ -8876,9 +9367,36 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // With no usable frame it simply coasts at the last rate, which is exactly "hold where the
     // horizon would be". Two slow learners ride along: the constant offset (the detector's bias)
     // and the stick->rate gain (system ID).
+    bool TryParseAgl(out float v)
+    {
+        string s = _hudAgl;
+        if (s == _aglCacheStr && !float.IsNaN(_aglCacheVal)) { v = _aglCacheVal; return true; }
+        _aglCacheStr = s;
+        float p;
+        if (s != null && s.Length > 0 && float.TryParse(s, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out p) && p > -50f && p < 1500f)
+        { _aglCacheVal = p; v = p; return true; }
+        _aglCacheVal = float.NaN; v = 0f; return false;
+    }
+
     void HudFuse(float dt, float sxS, float syS, long now)
     {
         if (dt <= 0f) return;
+        // no fresh measurement for 450 ms -> no horizon ID at all. (Was 2 s: during a pull-up or a
+        // dive the detector discards all-sky/all-ground frames, and the stale ID kept the model
+        // damped / the finder scaled back while the GYRO was the only thing that knew the horizon
+        // was sweeping off screen - that is the "it loses the horizon so badly" report.)
+        bool idFresh = _hudDetValid && now - _hudDetAt < 450;
+        if (!idFresh && _hudIdPct > 0f)
+        {
+            // FADE, don't snap: with the detector at ~5 fps over forest, brief gaps between
+            // usable frames (weak/separated rejects) used to blink the ID to 0 - and every
+            // blink flipped the finder stand-down and the model authority ("the id jumping
+            // between a number and 0 a lot"). Half-life ~0.22 s: still gone within ~1 s of
+            // real blindness (the pull-up behaviour stays), but no flicker on hiccups.
+            _hudIdPct *= (float)Math.Pow(0.5, dt / 0.22);
+            if (_hudIdPct < 1.5f) _hudIdPct = 0f;
+        }
         // While the spawn pose is settling, HOLD the ladder: no stick integration and no vision.
         // (The drone can be falling / under the map for a moment, and integrating that would throw
         // the horizon away before the settle has even finished.)
@@ -8914,13 +9432,24 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _kfPitX = seedFromMeas ? HudPxToDeg(_hudMPitch) : (float)(Math.Atan(_hudFPitch / f) * 180.0 / Math.PI);
             _kfRollV = 0f; _kfPitV = 0f;
             _kfRollOb = 0f; _kfPitOb = 0f;
+            _kfRollCorr = 0f; _kfPitCorr = 0f;
             _kfRollP = 25f; _kfPitP = 25f;
             _hudCoastMs = 0f;
         }
 
         // ---- PREDICT (control model) ----
-        float rollCmd = -sxS * _hudRollRate * _kfRollGain;          // deg/s
-        float pitCmd = -syS * HudPitchRateDeg() * _kfPitGain;       // deg/s
+        // MODEL AUTHORITY FADES WITH THE HORIZON ID (user rule): when the finder is solid the
+        // stick model must not keep driving the line - the image leads and the gyro only bridges
+        // between fixes. At high ID the command rates are damped by up to 45%; below the 8%
+        // stand-down the model is at full authority (the sticks rule the ground).
+        float idHigh0 = Smooth01(_hudIdPct, 45f, 85f);
+        float modelAuth = 1f - _hudModelDrive * idHigh0;
+        // HARD LOCK (user rule): at 90%+ the finder is certain - the gyro drops to a whisper
+        // (12% authority) and the corrections below take the FULL innovation, so the line sits
+        // ON the horizon instead of trailing the model.
+        if (_hudIdPct >= 90f) modelAuth = Math.Min(modelAuth, 0.12f);
+        float rollCmd = -sxS * _hudRollRate * _kfRollGain * modelAuth;          // deg/s
+        float pitCmd = -syS * HudPitchRateDeg() * _kfPitGain * modelAuth;       // deg/s
         float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);    // the stick->rate lag
         _kfRollV += (rollCmd - _kfRollV) * av;
         _kfPitV += (pitCmd - _kfPitV) * av;
@@ -8952,6 +9481,38 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         }
         _kfRollX += _kfRollV * dt;
         _kfPitX += _kfPitV * dt;
+        // ALTITUDE PARALLAX (the off-screen fallback keeping the right direction): when a fresh
+        // AGL reading arrives and the range is known, shift the boundary pitch by -dAlt/R so a
+        // climb/dive moves the predicted boundary exactly like the real one would. Ignored for
+        // OCR glitches (<25 m jumps) and while the range is unlearned.
+        {
+            float aglNow;
+            if (TryParseAgl(out aglNow))
+            {
+                if (!float.IsNaN(_altApplied) && _terrRange > 25f)
+                {
+                    float dAlt = aglNow - _altApplied;
+                    if (Math.Abs(dAlt) > 0.05f && Math.Abs(dAlt) < 25f)
+                        _kfPitX += (float)(-dAlt / _terrRange * 57.29578);
+                }
+                _altApplied = aglNow;
+            }
+        }
+        // SMOOTH CORRECTION GLIDE: the step computed from the last measurement is drained here at
+        // a capped speed (1100 px/s pitch, 55 deg/s roll) on every tick - one continuous glide
+        // back onto the horizon instead of a lump that looks like a jump, then a pause.
+        if (_kfPitCorr != 0f)
+        {
+            float mc = _hudCorrPx * dt;
+            float st = _kfPitCorr; if (st > mc) st = mc; if (st < -mc) st = -mc;
+            _kfPitX += st; _kfPitCorr -= st;
+        }
+        if (_kfRollCorr != 0f)
+        {
+            float mc = (_hudCorrPx / 20f) * dt;   // 2200 px/s == 110 deg/s roll
+            float st = _kfRollCorr; if (st > mc) st = mc; if (st < -mc) st = -mc;
+            _kfRollX += st; _kfRollCorr -= st;
+        }
         _kfRollP += _hudManeuver * dt;      // uncertainty grows; faster while coasting
         _kfPitP += _hudManeuver * dt;
         // Cap the growth: an unbounded P would make the gain (and the gate) run away after a long
@@ -8988,12 +9549,120 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             while (zr - _kfRollX > 180f) zr -= 360f;                // unwrap (roll is periodic)
             while (zr - _kfRollX < -180f) zr += 360f;
             float zp = HudPxToDeg(_kfSmPit) - _kfPitOb;
+            // ---- APPEARANCE MODEL: what SHOULD the view look like from where we think we point? ----
+            // Sky fraction is a monotone function of pitch (nose down = ground fills the frame, nose
+            // up = sky). Learn it per 10-deg bucket from frames that AGREE with the model (so a wrong
+            // lock cannot poison the curve), then predict from the fused pitch - which stays right
+            // even while a bad detection lies - and de-trust any detection whose claimed sky
+            // contradicts the prediction. A "lock" claiming 60% sky while we are 40 deg nose-down is
+            // a wrong lock; it must not correct the ladder or feed the learner.
+            int skyB = (int)((_kfPitX + 90f) / 10f);
+            if (skyB < 0) skyB = 0; if (skyB > 18) skyB = 18;
+            bool appearBad = false;
+            if (_hudMConf > 0.45f && Math.Abs(zp - _kfPitX) < 8f)
+            {
+                int lb = (int)((zp + 90f) / 10f);
+                if (lb < 0) lb = 0; if (lb > 18) lb = 18;
+                _skyByPit[lb] += 0.04f * (_hudDetSky - _skyByPit[lb]);
+                if (_skyByN[lb] < 100000) _skyByN[lb]++;
+            }
+            if (_skyByN[skyB] > 20 && _hudMConf > 0.35f)
+            {
+                float expect = _skyByPit[skyB];
+                if (Math.Abs(_hudDetSky - expect) > 0.45f)
+                {
+                    appearBad = true;
+                    if (Environment.TickCount - _appearLogAt >= 3000)
+                    {
+                        _appearLogAt = Environment.TickCount;
+                        Log("appearance: sky " + (_hudDetSky * 100f).ToString("0") + "% measured vs " +
+                            (expect * 100f).ToString("0") + "% expected at " + _kfPitX.ToString("0") +
+                            " deg - detection de-trusted (likely wrong lock)");
+                    }
+                }
+            }
+            _hudSkyExpect = _skyByPit[skyB];
+            try { OverlayHub.I.SetAppear(_hudSkyExpect, appearBad); } catch { }
+            // ---- ALTITUDE-COUPLED TERRAIN MODEL ----------------------------------------------------
+            // Learn the RANGE to the boundary from (dAlt, dBoundary) pairs and check the current
+            // measurement against (model attitude change + geometry). Attitude change does not
+            // correlate with altitude change, so the LS slope over a flight still recovers -1/R.
+            bool geoBad = false;
+            float aglF;
+            if (TryParseAgl(out aglF) && _hudMConf > 0.35f)
+            {
+                if (!float.IsNaN(_geoPrevTheta))
+                {
+                    float dTh = zp - _geoPrevTheta;
+                    float dAl = aglF - _geoPrevAlt;
+                    if (Math.Abs(dTh) < 12f && Math.Abs(dAl) > 0.4f && Math.Abs(dAl) < 30f)
+                    {
+                        double dRad = dTh * 0.0174533;
+                        _geoSA += dAl * dAl; _geoSAT += dAl * dRad; _geoN++;
+                        if (_geoN >= 40 && _geoSA > 1e-6)
+                        {
+                            double slope = _geoSAT / _geoSA;
+                            if (slope < -1e-4)
+                            {
+                                float r = (float)(-1.0 / slope);
+                                if (r > 20f && r < 4000f)
+                                {
+                                    if (_terrRange < 1f)
+                                    {
+                                        _terrRange = r;
+                                        if (Environment.TickCount - _geoLogAt >= 2000)
+                                        {
+                                            _geoLogAt = Environment.TickCount;
+                                            Log("terrain model: learned boundary range " + r.ToString("0") + " m (n=" + _geoN + ")");
+                                        }
+                                    }
+                                    else _terrRange += (r - _terrRange) * 0.01f;
+                                }
+                            }
+                        }
+                        // GEOMETRY CHECK: measurement should equal model attitude change + the
+                        // altitude drop. A big leftover during a real climb/dive is a wrong lock.
+                        if (_terrRange > 25f && Math.Abs(dAl) > 1f && _hudMConf > 0.4f)
+                        {
+                            float expD = (float)(-dAl / _terrRange * 57.29578);
+                            float attD = _kfPitX - _geoPrevKf;
+                            float resid = dTh - (attD + expD);
+                            if (Math.Abs(resid) > 4.5f)
+                            {
+                                geoBad = true;
+                                if (Environment.TickCount - _geoLogAt >= 3000)
+                                {
+                                    _geoLogAt = Environment.TickCount;
+                                    Log("geometry: lock moved " + dTh.ToString("0.0") + " deg while model+altitude say " +
+                                        (attD + expD).ToString("0.0") + " (dAlt " + dAl.ToString("0.0") + " m, range " +
+                                        _terrRange.ToString("0") + " m) - de-trusted");
+                                }
+                            }
+                        }
+                    }
+                }
+                _geoPrevTheta = zp; _geoPrevAlt = aglF; _geoPrevKf = _kfPitX;
+            }
+            try { OverlayHub.I.SetGeo(_terrRange); } catch { }
             float ir = zr - _kfRollX;
             float ip = zp - _kfPitX;
 
             // trust: confident frame, sky in view, and the stick NOT yanking (anti-false-flag)
             float skyT = Smooth01(_hudSkySm, 0.04f, 0.20f);
             float actT = Smooth01(Math.Max(Math.Abs(sxS), Math.Abs(syS)), 0.15f, 0.30f);
+            // HORIZON ID %: what the image finder thinks it is seeing, as ONE number (conf x how
+            // much sky is actually in view). Shown in the UPDATES panel, /state and the recorder.
+            _hudIdPct = 100f * ((appearBad || geoBad) ? Math.Min(_hudMConf, 0.55f) : _hudMConf) * (0.5f + 0.5f * skyT);
+            if (_hudIdPct >= 90f && !_idLocked && Environment.TickCount - _idLogAt >= 2000)
+            {
+                _idLocked = true; _idLogAt = Environment.TickCount;
+                Log("horizon id " + _hudIdPct.ToString("0") + "% - HARD LOCKED to the image finder");
+            }
+            else if (_idLocked && _hudIdPct < 80f && Environment.TickCount - _idLogAt >= 2000)
+            {
+                _idLocked = false; _idLogAt = Environment.TickCount;
+                Log("horizon id " + _hudIdPct.ToString("0") + "% - hard lock released");
+            }
             // SOFTER WHILE FLYING: once the stick is working the frames are far more random (the dive,
             // turns, the ground rushing past), so the image gets LESS say than it did at the spawn
             // baseline. The damping was 0.45; at 0.75 a worked stick leaves the estimator largely to
@@ -9003,7 +9672,20 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // now gets ~5% say instead of 25%, leaving the turn to the control model; the vision resumes
             // as the stick comes back. This is what stops a hard turn throwing the line.
             float trust = (0.55f + 0.45f * _hudMConf) * (0.40f + 0.60f * skyT) * (1f - 0.95f * actT);
+            // SMART: a high-confidence measurement does NOT need the anti-stick throttle. The stick
+            // term exists so NOISY frames cannot yank the line mid-maneuver - an exact match (ref or
+            // side hit, conf >= 0.75) is the opposite of noise. This is what lets the helpers keep
+            // FIXING THE OFFSET while the right stick is worked, which is the observed drift.
+            if (_hudMConf >= 0.75f) trust = Math.Max(trust, 0.28f * (0.40f + 0.60f * skyT));
+            // STEEP BANK (field: "horizon goes in the corners when I fly up and bank"): a banked
+            // frame is legitimately diagonal and often sky-poor - the anti-stick throttle was
+            // starving the ONLY reliable roll source exactly mid-bank. A decent match at a real
+            // bank angle keeps a floor of authority.
+            if (Math.Abs(_hudMRoll) > 28f && _hudMConf >= 0.58f)
+                trust = Math.Max(trust, 0.20f * (0.40f + 0.60f * skyT));
             if (trust < 0.03f) trust = 0.03f;
+            if (appearBad) trust *= 0.35f;    // the view disagrees with where we know we point
+            if (geoBad) trust *= 0.40f;       // the lock moved against model+altitude geometry
 
             float Rr = _hudMRollVar / trust;                        // deg^2
             float Rp = _hudMPitchVar * 3282.8f / (f * f) / trust;   // px^2 -> deg^2
@@ -9038,6 +9720,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // needs to be then it should be there". The slew limit still caps how fast anything
             // can physically move, so this cannot teleport; it just adheres fast.
             if (_hudMConf >= 0.75f && _hudDetSky >= 0.15f) gainCap = Math.Max(gainCap, 0.45f);
+            // ref/side-strength hits get an even stiffer position pull (the slew limit still caps
+            // how fast anything can physically move, so this cannot teleport)
+            if (_hudMConf >= 0.88f && _hudDetSky >= 0.15f) gainCap = Math.Max(gainCap, 0.65f);
             if (aR > gainCap) aR = gainCap;
             if (aP > gainCap) aP = gainCap;
             // RE-ACQUIRE FLOOR. The gain above can come out TINY - aP = P/(P+Rp) with Rp inflated
@@ -9077,6 +9762,15 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else _hudBigPn = 0;
             if (aR < floorR) aR = floorR;
             if (aP < floorP) aP = floorP;
+            // HORIZON ID SCALING (user rule): the image finder's authority scales with the ID%.
+            // By ~45% it has its full pull - the finder LEADS, the model only carries between
+            // fixes; below 8% it stands down entirely (hard gate just below).
+            float idScale = Smooth01(_hudIdPct, 8f, 45f);
+            // RE-ACQUIRE EXEMPTION: when the finder returns after a real blind stretch (the end of
+            // a pull-up/dive) it must LAND the line, not be scaled back by a low ID while the
+            // horizon sweeps back into view.
+            if (coastBefore > 800f) idScale = 1f;
+            aR *= idScale; aP *= idScale;
             // PERSISTENT-DIVERGENCE RESCUE (field, from a flight recording): the filter can LATCH -
             // the model integrates a held stick while the tree/hug de-value mutes the vision, runs
             // to the clamp, and then the innovation gate rejects EVERY honest measurement because
@@ -9085,13 +9779,13 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // persists for 3 measurements is the model being wrong - give the vision its full pull.
             bool resR = _hudBigRn >= 3 || railR;
             bool resP = _hudBigPn >= 3 || railP;
-            if (resP && Math.Abs(ip) > 4f && Environment.TickCount - _hudLogAt >= 2000)
+            if (_hudIdPct >= 8f && resP && Math.Abs(ip) > 4f && Environment.TickCount - _hudLogAt >= 2000)
             {
                 _hudLogAt = Environment.TickCount;
                 Log("horizon fuse: persistent PITCH error " + (int)HudDegToPx(ip) + "px" +
                     (railP ? " (on the rail)" : "") + " - full vision pull");
             }
-            if (resR && Math.Abs(ir) > 4f && Environment.TickCount - _hudLogAt >= 2000)
+            if (_hudIdPct >= 8f && resR && Math.Abs(ir) > 4f && Environment.TickCount - _hudLogAt >= 2000)
             {
                 _hudLogAt = Environment.TickCount;
                 Log("horizon fuse: persistent ROLL error " + ir.ToString("0") + " deg" +
@@ -9106,7 +9800,21 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float treeW = _hudTreeBelowSm;
             if (treeW > 1f) treeW = 1f; if (treeW < 0f) treeW = 0f;
             float visionW = 1f - 0.75f * treeW;
+            // YAW FADE: while the yaw stick is deflected the visual "horizon" (treeline over
+            // finite terrain) legitimately slides - leaning on the gyro model through the yaw
+            // stops the line from chasing it. Dial "yaw fade", 0 = off.
+            if (_hudYawFade > 0f)
+            {
+                float yf = 1f - _hudYawFade * Math.Min(1f, Math.Abs(_padLx) / 0.6f);
+                if (yf < 0.05f) yf = 0.05f;
+                visionW *= yf;
+            }
             if (visionW < 0.15f) visionW = 0.15f;
+            // same smartening for the tree/yaw de-value: those exist to mute NOISY frames, not
+            // exact ones - a confident match keeps its authority through canopy and yaw.
+            float mq0 = _hudMConf * (0.5f + 0.5f * skyT);
+            if (mq0 > 0.75f && visionW < 0.55f) visionW = 0.55f;
+            if (mq0 > 0.88f && visionW < 0.70f) visionW = 0.70f;
             if (!resR) aR *= visionW;
             if (!resP) aP *= visionW;
             if (treeW > 0.5f && Environment.TickCount - _treeLogAt >= 5000)
@@ -9160,14 +9868,28 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (_hugSm > 0.5f && !_hugLogged) { _hugLogged = true; Log("   horizon: LOCKED (" + _hudSolid + " solid fixes) - hugging the location"); }
             if (_hugSm < 0.2f) _hugLogged = false;
 
-            // hug = trust the model; only ~25% of the vision gain gets through
-            float hg = 1f - 0.75f * _hugSm;
+            // hug = trust the model; only ~25% of the vision gain gets through - BUT a high
+            // horizon ID means the finder has proven reliable, so the hug's cut relaxes with it
+            // (at full ID the vision keeps ~89% of its already-strong pull).
+            float idHigh = Smooth01(_hudIdPct, 45f, 80f);
+            float hg = 1f - 0.75f * _hugSm * (1f - 0.85f * idHigh);
             // v2.9.32: once the lock is mature and nothing is moving, the vision pull fades
             // further - it only TRIMS the controls. Stick input (the hug drops itself) or a
             // sustained divergence (releases the hug) brings the full trim back.
             if (_hudLockedOnce && _hugSm > 0.9f && stickNow < 0.12f) hg *= 0.55f;
             if (!resR) aR *= hg;
             if (!resP) aP *= hg;
+            // HARD MINIMUM AFTER ALL THE MUTING (field bug, from the flight recording: the floors
+            // set earlier were then multiplied by visionW and the hug, so a confident frame ended
+            // up correcting at ~0.2% - the fused pitch sat FROZEN at the screen centre while the
+            // horizon was 200+ px away: "it goes up into the sky"). A trustworthy frame always
+            // gets a real pull now, and it scales with the horizon ID.
+            float aMin = 0.05f + _hudLockPull * idScale;
+            if (mq0 > 0.45f)
+            {
+                if (!resR && aR < aMin) aR = aMin;
+                if (!resP && aP < aMin) aP = aMin;
+            }
 
             // Mahalanobis-style gate: reject a frame that jumps further than a real horizon could in
             // one step. Grounded in the measurement noise so a clean lock gets a tighter gate.
@@ -9193,6 +9915,23 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (resP) gP = 1e9f;
             bool okR = Math.Abs(ir) <= gR;
             bool okP = Math.Abs(ip) <= gP;
+            // STICKS HAVE FULL CONTROL below 8% (user rule): at that level the finder is not
+            // seeing a horizon (ground fill, wipe, pure canopy) - no correction at all, the
+            // stick model owns the line.
+            if (_hudIdPct < 8f && coastBefore < 800f)
+            {
+                okR = false; okP = false;
+                if (!_idBelow && Environment.TickCount - _idLogAt >= 2000)
+                {
+                    _idBelow = true; _idLogAt = Environment.TickCount;
+                    Log("horizon id " + _hudIdPct.ToString("0") + "% (<8%) - image finder STANDS DOWN, sticks have full control");
+                }
+            }
+            else if (_idBelow && _hudIdPct >= 12f && Environment.TickCount - _idLogAt >= 2000)
+            {
+                _idBelow = false; _idLogAt = Environment.TickCount;
+                Log("horizon id " + _hudIdPct.ToString("0") + "% - image finder back in control");
+            }
 
             // SLEW LIMIT (v2.9.40, field request): the horizon cannot move faster than the model
             // can fly it. A detection demanding more is physically impossible - clamp the step to
@@ -9201,17 +9940,25 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float maxStepR = 1.7f * _hudRollRate * dt;
             float maxStepP = 1.7f * HudPitchRateDeg() * dt;
             if (coastBefore > 1200f) { maxStepR = 1e9f; maxStepP = 1e9f; }
+            // CONFIDENT FRAMES ARE NOT SLEW-LIMITED (user: "almost instant, within the second").
+            // 1.7x-rate on a 20 ms dt clamped an honest 400 px correction to ~11 px per
+            // measurement - at 33 measurements/s that is a ~360 px/s crawl. High-confidence frames
+            // now ride the GLIDE cap instead (2200 px/s, 110 deg/s), which is still smooth because
+            // it is a constant-velocity drain, not a jump.
+            if (_hudMConf >= 0.75f) { maxStepR = 1e9f; maxStepP = 1e9f; }
             if (okR)
             {
-                float stepR = aR * ir;
+                float stepR = (_hudIdPct >= 90f) ? ir : aR * ir;   // hard lock: full innovation
                 if (stepR > maxStepR) stepR = maxStepR; if (stepR < -maxStepR) stepR = -maxStepR;
-                _kfRollX += stepR; _kfRollP = (1f - aR) * _kfRollP;
+                _kfRollCorr = stepR;               // glided in on the 50 Hz ticks
+                _kfRollP = (1f - aR) * _kfRollP;
             }
             if (okP)
             {
-                float stepP = aP * ip;
+                float stepP = (_hudIdPct >= 90f) ? ip : aP * ip;   // hard lock: full innovation
                 if (stepP > maxStepP) stepP = maxStepP; if (stepP < -maxStepP) stepP = -maxStepP;
-                _kfPitX += stepP; _kfPitP = (1f - aP) * _kfPitP;
+                _kfPitCorr = stepP;                // glided in on the 50 Hz ticks
+                _kfPitP = (1f - aP) * _kfPitP;
             }
 
             // COAST ENVELOPE (field): with no vision the model integrates the sticks freely - over
@@ -9234,8 +9981,15 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // consistent little residual). A large residual is a WRONG LOCK - learning it in would
             // bake the mistake in, so it is never learned. Clamped so it can never run away.
             float learnK = 1f - 0.85f * _hugSm;    // a locked horizon barely re-learns its offset
-            if (okR && trust > 0.45f && Math.Abs(ir) < 2.5f) { _kfRollOb += 0.010f * ir * learnK; }
-            if (okP && trust > 0.45f && Math.Abs(ip) < 2.0f) { _kfPitOb += 0.010f * ip * learnK; }
+            // SMARTENED: this gate used to demand trust > 0.45, but trust DIES when the stick moves
+            // - so the offset introduced by the right stick was never learned exactly when it
+            // appeared. Learning now keys off measurement QUALITY (stick-free), opens while the
+            // stick is actually worked, and accepts a slightly wider residual. Still small-residual
+            // only: a wrong lock is never baked in.
+            float mqL = _hudMConf * (0.5f + 0.5f * skyT);
+            float offK = 0.010f * (1f + 2f * Smooth01(Math.Max(Math.Abs(sxS), Math.Abs(syS)), 0.20f, 0.70f));
+            if (okR && mqL > 0.50f && Math.Abs(ir) < 4f) { _kfRollOb += offK * ir * learnK; }
+            if (okP && mqL > 0.50f && Math.Abs(ip) < 3.5f) { _kfPitOb += offK * ip * learnK; }
             if (_kfRollOb > 6f) _kfRollOb = 6f; if (_kfRollOb < -6f) _kfRollOb = -6f;
             if (_kfPitOb > 6f) _kfPitOb = 6f; if (_kfPitOb < -6f) _kfPitOb = -6f;
 
@@ -9251,8 +10005,18 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // state; it never touched the measurement this learner reads). The old gate made it
             // stop exactly when the lock was good, i.e. barely ever. The learned gains and the
             // sample counts are logged so the fine-tuning is visible.
-            if (okR) LearnGain(ref _kfRollGain, ref _kfRollZ, ref _kfRollZAt, zr, -sxS * _hudRollRate, sxS, now, 0.30f, mq, ref _lgRTot);
-            if (okP) LearnGain(ref _kfPitGain, ref _kfPitZ, ref _kfPitZAt, zp, -syS * HudPitchRateDeg(), syS, now, 0.30f, mq, ref _lgPTot);
+            // LEARNING READS THE MEASUREMENT, NOT THE CORRECTION GATES. okR/okP answer "may the
+            // state move this frame" - including the ID<8% stick stand-down - and gating the
+            // learner on them starved it (0-1 lifetime samples in the log). The measurement z is
+            // valid regardless; the learner's own mq/ratio clamps keep it honest.
+            // LEARNER TRUST = raw measurement confidence. The sky term is for CORRECTIONS; over
+            // dark forest skyT ~0 halves it and starved learning (field flight: max conf 0.63,
+            // avg 0.27, gains stayed at 1.000 with n=1). minStick 0.15 so gentle stick work
+            // teaches too - the old 0.25 gate was above the flight's max deflection (0.23).
+            float mqLearn = _hudMConf;
+            LearnGain(ref _kfRollGain, ref _kfRollZ, ref _kfRollZAt, zr, -sxS * _hudRollRate, sxS, now, 0.15f, appearBad ? mqLearn * 0.3f : mqLearn, ref _lgRTot);
+            LearnGain(ref _kfPitGain, ref _kfPitZ, ref _kfPitZAt, zp, -syS * HudPitchRateDeg(), syS, now, 0.15f, appearBad ? mqLearn * 0.3f : mqLearn, ref _lgPTot);
+            try { OverlayHub.I.SetLearn(_kfPitGain, _kfRollGain, _lgPTot, _lgRTot); } catch { }
             if ((_lgRTot + _lgPTot) > 0 && Environment.TickCount - _lgLogAt >= 8000)
             {
                 _lgLogAt = Environment.TickCount;
@@ -9382,6 +10146,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
     // ---- detector working set (downsampled) ----
     float[] _hdL, _hdBR, _hdT, _hdR, _hdG, _hdB;
+    float[] _hdPG, _hdPS;                        // per-cell match to the ref-derived ground/sky palettes
     int _hdW = 0, _hdH = 0;
     const int HD_DS = 6;                  // downsample factor: 6 -> 320x180 at 1080p
 
@@ -9390,6 +10155,31 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _skySdL = 30f, _skySdB = 30f;   // how tight that model is
     bool _skyModelOk = false;
     float _hudSkyTex = 8f;                // dial "sky tex": how much smoother the region above must be
+    // ---- COLOURLESS SIDE DETECTOR (dial "side vote") -----------------------------------------
+    // Second opinion from LUMINANCE EDGES only: no colour model, no refs. It sees the same
+    // boundary on a thermal/inverted frame where the colour pipeline is blind.
+    float _hudSideW = 0.35f;              // 0..1 - weight of the side estimate in the published line
+    float _hudYawFade = 0.5f;             // 0..1 - how hard yaw (left stick X) fades vision authority
+    // HORIZON ID %: one number for "how sure is the image finder about a horizon". conf x sky
+    // presence. Below 8% the finder STANDS DOWN completely - the sticks have full control (the
+    // user rule for ground-fill frames); above it the finder's authority ramps up to full ~45%.
+    float _hudIdPct = 0f;
+    long _idLogAt = 0; bool _idBelow = false; bool _idLocked = false;
+    // Responsiveness dials (these were hard-coded; "the tuning doesnt do enough" - now they ARE
+    // the tuning): corr speed = the glide cap (px/s), lock pull = the guaranteed vision pull on a
+    // trustworthy frame (0..60%), model drive = how hard the gyro is damped when the ID is high.
+    float _hudCorrPx = 2200f, _hudLockPull = 0.30f, _hudModelDrive = 0.45f;
+    int _sideTick = 0;                    // the Hough side pass runs every 3rd detector pass
+    float _detMs = 0f; long _detLogAt = 0; // detector pass time (throughput read-out)
+    float _detGrabMs = 0f, _detMapMs = 0f, _detScoreMs = 0f; // sub-stage read-out (grab / map / stage-3)
+    float _sideRoll = 0f, _sidePitch = 0f, _sideConf = 0f;
+    long _sideAt = 0;                     // when the side estimate was last computed (freshness gate)
+    readonly List<float> _sideX = new List<float>();
+    readonly List<float> _sideY = new List<float>();
+    readonly List<float> _sideM = new List<float>();
+    readonly List<float> _sideGX = new List<float>();
+    readonly List<float> _sideGY = new List<float>();
+    float[] _sideBin = new float[512];
 
     // ---- last accepted line, NORMAL FORM ----
     // theta = inclination in degrees (this IS the camera roll); m = tan(theta); k = signed
@@ -9408,6 +10198,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         {
             _hdL = new float[n]; _hdBR = new float[n]; _hdT = new float[n];
             _hdR = new float[n]; _hdG = new float[n]; _hdB = new float[n];
+            _hdPG = new float[n]; _hdPS = new float[n];
             _hdW = dw; _hdH = dh;
         }
         for (int gy = 0; gy < dh; gy++)
@@ -9436,6 +10227,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 _hdL[i] = 0.299f * fr + 0.587f * fg + 0.114f * fb;
                 _hdBR[i] = fb - fr;
                 _hdT[i] = tc > 0 ? td / (float)tc : 0f;     // mean |dL/dx|: sky smooth, ground busy
+                if (_palOk)
+                {
+                    _hdPG[i] = PalScore(fr, fg, fb, _palG);
+                    _hdPS[i] = PalScore(fr, fg, fb, _palS);
+                }
+                else { _hdPG[i] = 0f; _hdPS[i] = 0f; }
             }
         return true;
     }
@@ -9492,9 +10289,25 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     {
         try
         {
+            // ARCHIVE the previous flight so the offline tuner can fit across MANY flights
+            // instead of only the last one (the file is truncated per flight, and one flight's
+            // 65-73 fresh points are not enough for a stable fit on their own).
+            try
+            {
+                string hp = Path.Combine(_appDir, "hudphys.csv");
+                // size window: >40KB = a real flight; <5MB = sanity (a 56MB file once meant the
+                // recorder had been logging a disconnect screen for hours - never archive that)
+                if (File.Exists(hp) && new FileInfo(hp).Length > 40000 && new FileInfo(hp).Length < 5000000)
+                {
+                    string ad = Path.Combine(_appDir, "hudrec");
+                    if (!Directory.Exists(ad)) Directory.CreateDirectory(ad);
+                    File.Copy(hp, Path.Combine(ad, "phys-" + DateTime.Now.ToString("HHmmss") + ".csv"), true);
+                }
+            }
+            catch { }
             _physT0 = Environment.TickCount; _physAt = 0;
             File.WriteAllText(Path.Combine(_appDir, "hudphys.csv"),
-                "t_ms,sx,sy,lx,ly,vision,detRoll,detPitch,conf,fuseRoll,fusePitch,mRoll,mPitch,modelRollRate,modelPitchRate,rollGain,pitchGain,alt,agl\r\n");
+                "t_ms,sx,sy,lx,ly,vision,detRoll,detPitch,conf,sideRoll,sidePitch,sideConf,fuseRoll,fusePitch,mRoll,mPitch,modelRollRate,modelPitchRate,rollGain,pitchGain,alt,agl\r\n");
             Log("physics log: fresh recording for this flight (" + why + ")");
         }
         catch { }
@@ -9504,6 +10317,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     {
         try
         {
+            // RECORDER GATE (field bug): rows were banked on the disconnect/menu screens too, so
+            // the "flight recording" turned into 640 s of UI junk the tuner tried to fit. Only
+            // record while the RF loop has positively seen a drone view in the last 3 s.
+            if (Environment.TickCount - _droneViewAt > 3000) return;
             long tn = Environment.TickCount;
             if (tn - _physAt < 18) return;              // ~50 Hz
             _physAt = tn;
@@ -9519,6 +10336,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
              .Append(_hudDetRoll.ToString("0.00", ci)).Append(',')
              .Append(_hudDetPitch.ToString("0.0", ci)).Append(',')
              .Append(_hudDetConf.ToString("0.000", ci)).Append(',')
+             .Append(_sideRoll.ToString("0.00", ci)).Append(',')
+             .Append(_sidePitch.ToString("0.0", ci)).Append(',')
+             .Append(_sideConf.ToString("0.000", ci)).Append(',')
              .Append(_hudFRoll.ToString("0.00", ci)).Append(',')
              .Append(_hudFPitch.ToString("0.0", ci)).Append(',')
              .Append(_hudMRoll.ToString("0.00", ci)).Append(',')
@@ -9539,6 +10359,19 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // hands the estimator. roll = degrees; pitch = PERPENDICULAR pixels from centre, + = below.
     void HudPublish(float roll, float pitch, float skyFrac, float conf, float pitchVar, float rollVar)
     {
+        // SIDE VOTE (dial "side vote"): the colourless edge method nudges the measurement.
+        // Capped, freshness-gated, and skipped for strong ref lines (human truth, not an opinion).
+        // It only joins when it AGREES with the main line (12 deg / 250 px): measured on the 44
+        // marked refs, its wrong answers are always a different tree edge, so a disagreement gate
+        // is what stops it from ever dragging the line onto one. Agreement = it averages out noise.
+        if (_hudSideW > 0f && conf < 0.90f && _sideAt != 0 && Environment.TickCount - _sideAt < 600
+            && Math.Abs(_sideRoll - roll) <= 12f && Math.Abs(_sidePitch - pitch) <= 250f)
+        {
+            float a = _hudSideW * _sideConf;
+            if (a > 0.45f) a = 0.45f;
+            roll = roll * (1f - a) + _sideRoll * a;
+            pitch = pitch * (1f - a) + _sidePitch * a;
+        }
         float mw = conf;
         if (!_hudSmSeeded)
         {
@@ -9634,10 +10467,13 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // height (the thing the pixel stage gets wrong in forests). Without this it chased shadow
         // bands on the ground and made DIAGONAL lines (-27 deg) on hazy high views.
         int pa0 = (int)Math.Round(thetaPrior);
-        for (int a = pa0 - 6; a <= pa0 + 6; a += 2)
+        // SPEED (the 5 fps ceiling): the coarse grid is only the SEED for the refinement below -
+        // step 3 instead of 2 on both axes cuts it from ~570 to ~270 full-frame evaluations with
+        // no loss at the refinement stage (and the onset stage does the final fine height).
+        for (int a = pa0 - 6; a <= pa0 + 6; a += 3)
         {
             float m = (float)Math.Tan(a * Math.PI / 180.0);
-            for (float kk = -mh * 0.45f; kk <= mh * 0.45f; kk += 2f)
+            for (float kk = -mh * 0.45f; kk <= mh * 0.45f; kk += 3f)
             {
                 float s = HudSectionScore(m, kk, bs0, muL, sdL, muB, sdB, guL, gsdL, guB, gsdB, muT);
                 if (s > bestSc) { bestSc = s; bestM = m; bestK = kk; }
@@ -9651,7 +10487,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             for (int a = -2; a <= 2; a++)
             {
                 float mm = (float)Math.Tan((baseA + a) * Math.PI / 180.0);
-                for (float dk = -b * 1.5f; dk <= b * 1.5f; dk += 1f)
+                // coarse sizes step 2 - a 16 px section moves the line in 16 px quanta anyway
+                for (float dk = -b * 1.5f; dk <= b * 1.5f; dk += (b >= 8 ? 2f : 1f))
                 {
                     float s = HudSectionScore(mm, kk + dk, b, muL, sdL, muB, sdB, guL, gsdL, guB, gsdB, muT);
                     if (s > bestSc) { bestSc = s; bestM = mm; bestK = kk + dk; }
@@ -9788,27 +10625,39 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         return (float)Math.Sqrt((aL - bL) * (aL - bL) + 0.6 * (aB - bB) * (aB - bB));
     }
 
-    // save the frame into hwatch\ when the passive vote strongly disagrees with what we published
-    void SaveWatchFrame(float pubPitch, float colPitch)
+    // save the frame into hwatch\ when the passive vote strongly disagrees with what we published.
+    // It uses the ALREADY-GRABBED detector frame and does the PNG encode on a background thread -
+    // this used to re-grab and encode inline on the detector thread, which added 100-150 ms to
+    // every disagreement pass (caught by the detector pass-time logger: 121 ms spikes).
+    void SaveWatchFrame(float pubPitch, float colPitch, int[] srcPx, int W, int H)
     {
         try
         {
-            if (Environment.TickCount - _watchAt < 4000) return;
+            if (Environment.TickCount - _watchAt < 15000) return;
             _watchAt = Environment.TickCount;
             string dir = Path.Combine(System.Windows.Forms.Application.StartupPath, "hwatch");
             System.IO.Directory.CreateDirectory(dir);
-            int W, H; int[] px = Grab(out W, out H);
-            using (Bitmap bmp = new Bitmap(W, H, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            int[] px = (int[])srcPx.Clone();
+            string nm = "vote_" + DateTime.Now.ToString("HHmmss") +
+                "_pub" + ((int)pubPitch) + "_col" + ((int)colPitch) + ".png";
+            Thread tb = new Thread(delegate ()
             {
-                System.Drawing.Imaging.BitmapData bd = bmp.LockBits(new Rectangle(0, 0, W, H),
-                    System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-                Marshal.Copy(px, 0, bd.Scan0, px.Length);
-                bmp.UnlockBits(bd);
-                string nm = "vote_" + DateTime.Now.ToString("HHmmss") +
-                    "_pub" + ((int)pubPitch) + "_col" + ((int)colPitch) + ".png";
-                bmp.Save(Path.Combine(dir, nm), System.Drawing.Imaging.ImageFormat.Png);
-                Log("hwatch frame saved: published " + ((int)pubPitch) + "px vs vote " + ((int)colPitch) + "px (" + nm + ")");
-            }
+                try
+                {
+                    using (Bitmap bmp = new Bitmap(W, H, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+                    {
+                        System.Drawing.Imaging.BitmapData bd = bmp.LockBits(new Rectangle(0, 0, W, H),
+                            System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                        Marshal.Copy(px, 0, bd.Scan0, px.Length);
+                        bmp.UnlockBits(bd);
+                        bmp.Save(Path.Combine(dir, nm), System.Drawing.Imaging.ImageFormat.Png);
+                        Log("hwatch frame saved: published " + ((int)pubPitch) + "px vs vote " + ((int)colPitch) + "px (" + nm + ")");
+                    }
+                }
+                catch { }
+            });
+            tb.IsBackground = true;
+            tb.Start();
         }
         catch { }
     }
@@ -9848,6 +10697,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             {
                 _recDir = Path.Combine(System.Windows.Forms.Application.StartupPath, "hudrec", DateTime.Now.ToString("HHmmss"));
                 System.IO.Directory.CreateDirectory(_recDir);
+                // Per-frame metadata for the offline replay: everything the detector saw and did
+                // on that exact frame, so a re-scored run can be diffed against what happened live.
+                File.WriteAllText(Path.Combine(_recDir, "frames.csv"),
+                    "n,evt,t_ms,detRoll,detPitch,detConf,sideRoll,sidePitch,sideConf,idpct,fuseRoll,fusePitch,skyFrac,clutter,treeBelow,skyOk,skyMuL,skyMuB,skySdL,skySdB,refName,refD,sx,sy,gyroRoll,gyroPitch,alt,agl\r\n");
             }
             if (evt == 0) { _recTick++; if ((_recTick & 7) != 0) return; }
             _recN++;
@@ -9869,13 +10722,269 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         b.SetPixel(x, y, Color.FromArgb(l, br, tx));
                     }
                 b.Save(Path.Combine(_recDir, _recN.ToString("D5") + (evt == 1 ? "p" : "") + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+                System.Globalization.CultureInfo ci = System.Globalization.CultureInfo.InvariantCulture;
+                StringBuilder rb = new StringBuilder();
+                rb.Append(_recN).Append(',').Append(evt).Append(',')
+                  .Append((Environment.TickCount - _physT0)).Append(',')
+                  .Append(_hudDetRoll.ToString("0.00", ci)).Append(',')
+                  .Append(_hudDetPitch.ToString("0.0", ci)).Append(',')
+             .Append(_hudDetConf.ToString("0.000", ci)).Append(',')
+             .Append(_sideRoll.ToString("0.00", ci)).Append(',')
+             .Append(_sidePitch.ToString("0.0", ci)).Append(',')
+             .Append(_sideConf.ToString("0.000", ci)).Append(',')
+                  .Append(_hudIdPct.ToString("0.0", ci)).Append(',')
+                  .Append(_hudFRoll.ToString("0.00", ci)).Append(',')
+                  .Append(_hudFPitch.ToString("0.0", ci)).Append(',')
+                  .Append(_hudDetSky.ToString("0.000", ci)).Append(',')
+                  .Append(_hudClutter.ToString("0.000", ci)).Append(',')
+                  .Append(_hudTreeBelowSm.ToString("0.00", ci)).Append(',')
+                  .Append(_skyModelOk ? "1" : "0").Append(',')
+                  .Append(_skyMuL.ToString("0.0", ci)).Append(',')
+                  .Append(_skyMuB.ToString("0.0", ci)).Append(',')
+                  .Append(_skySdL.ToString("0.0", ci)).Append(',')
+                  .Append(_skySdB.ToString("0.0", ci)).Append(',')
+                  .Append((_refName ?? "").Replace(",", "_")).Append(',')
+                  .Append(_refD.ToString("0.000", ci)).Append(',')
+                  .Append(_lastSxS.ToString("0.00", ci)).Append(',')
+                  .Append(_lastSyS.ToString("0.00", ci)).Append(',')
+                  .Append(_kfRollV.ToString("0.0", ci)).Append(',')
+                  .Append(_kfPitV.ToString("0.0", ci)).Append(',')
+                  .Append((_hudAlt ?? "").Replace(",", "")).Append(',')
+                  .Append((_hudAgl ?? "").Replace(",", ""))
+                  .Append("\r\n");
+                File.AppendAllText(Path.Combine(_recDir, "frames.csv"), rb.ToString());
             }
         }
         catch { }
     }
 
+    // COLOURLESS SIDE DETECTOR. Hough-style: every strong luminance edge votes for the
+    // (angle, offset) lines it lies on, weighted by how PERPENDICULAR it is to the line
+    // (align^2). Result: roll in degrees + perpendicular offset in the SAME convention as the
+    // main detector (+ pitch = line below centre). Runs on the downsampled maps only - two reads
+    // per cell - and early-returns on frames without enough edges. It is deliberately not
+    // precise, only independent: the value is that it works where the colour model does not.
+    void SideHorizon()
+    {
+        _sideConf = 0f;
+        if (_hdL == null) return;
+        int dw = _hdW, dh = _hdH;
+        float cx = dw * 0.5f, cy = dh * 0.5f;
+        _sideX.Clear(); _sideY.Clear(); _sideM.Clear(); _sideGX.Clear(); _sideGY.Clear();
+        float totalMag = 0f;
+        for (int y = 1; y < dh - 1; y++)
+            for (int x = 1; x < dw - 1; x++)
+            {
+                int i = y * dw + x;
+                float gx = _hdL[i + 1] - _hdL[i - 1];
+                float gy = _hdL[i + dw] - _hdL[i - dw];
+                float mag = (gx < 0 ? -gx : gx) + (gy < 0 ? -gy : gy);
+                if (mag < 12f) continue;
+                _sideX.Add(x); _sideY.Add(y); _sideM.Add(mag); _sideGX.Add(gx); _sideGY.Add(gy);
+                totalMag += mag;
+            }
+        int ne = _sideM.Count;
+        if (ne < 40 || totalMag < 400f) return;
+        const int NTH2 = 41;
+        const float TH0 = -80f, TH1 = 80f, KS = 2f;
+        float bestScore = 0f, bestSmin = 0f, bestNorm = 1f, bestM = 0f;
+        int bestT = -1, bestI = -1;
+        for (int t = 0; t < NTH2; t++)
+        {
+            float thDeg = TH0 + (TH1 - TH0) * t / (NTH2 - 1f);
+            float m = (float)Math.Tan(thDeg * Math.PI / 180.0);
+            float norm = (float)Math.Sqrt(1f + m * m);
+            float smin = 1e9f, smax = -1e9f;
+            for (int i = 0; i < ne; i++)
+            {
+                float s = ((_sideX[i] - cx) * m - (_sideY[i] - cy)) / norm;
+                if (s < smin) smin = s;
+                if (s > smax) smax = s;
+            }
+            int nb = (int)((smax - smin) / KS) + 2;
+            if (nb > _sideBin.Length) nb = _sideBin.Length;
+            Array.Clear(_sideBin, 0, nb);
+            for (int i = 0; i < ne; i++)
+            {
+                float s = ((_sideX[i] - cx) * m - (_sideY[i] - cy)) / norm;
+                int bi = (int)((s - smin) / KS);
+                if (bi < 0) bi = 0;
+                if (bi >= nb) bi = nb - 1;
+                float al = (m * _sideGX[i] - _sideGY[i]) / (norm * _sideM[i]);
+                if (al < 0) al = -al;
+                _sideBin[bi] += _sideM[i] * al * al;
+            }
+            for (int bi = 0; bi < nb; bi++)
+                if (_sideBin[bi] > bestScore) { bestScore = _sideBin[bi]; bestT = t; bestI = bi; bestSmin = smin; bestNorm = norm; bestM = m; }
+        }
+        if (bestT < 0) return;
+        float k = bestSmin + (bestI + 0.5f) * KS;
+        float th = TH0 + (TH1 - TH0) * bestT / (NTH2 - 1f);
+        float above = 0f, below = 0f, texA = 0f, texB = 0f;
+        int na = 0, nb2 = 0;
+        for (int y = 0; y < dh; y++)
+            for (int x = 0; x < dw; x++)
+            {
+                float s = ((x - cx) * bestM - (y - cy)) / bestNorm;
+                int i = y * dw + x;
+                if (s > k + 2f) { above += _hdL[i]; texA += _hdT[i]; na++; }
+                else if (s < k - 2f) { below += _hdL[i]; texB += _hdT[i]; nb2++; }
+            }
+        if (na < 50 || nb2 < 50) return;
+        // CONFIDENCE from the two orientation-free physical cues, calibrated on the 44 marked refs:
+        //  - contrast   : how different the two sides are in luminance (weak cue, 20..80 px)
+        //  - asymmetry  : ground must be BUSIER than sky (mean |dL/dx| below minus above, 0.5..3.5)
+        // "share of edge energy" was tried and is useless - trees drown it. With these two the
+        // side estimate is within ~2 deg / ~25 px of the marked line when it is confident.
+        float contrast = Math.Abs(above / na - below / nb2);
+        float asym = texB / nb2 - texA / na;
+        // SNOW MAP (user note): the ground is WHITE - in thermal/luminance both sides read bright
+        // (in a literal thermal view both would be black), so brightness contrast all but vanishes
+        // THERE. The TEXTURE asymmetry is brightness-free and still separates the flat overcast sky
+        // from the textured snow ground, so on a classified snow scene the contrast bar drops and
+        // the texture carries the confidence.
+        float c2;
+        if (_hudScene == "snow") c2 = Smooth01(contrast, 4f, 20f) * Smooth01(asym, 0.5f, 3.5f);
+        else c2 = Smooth01(contrast, 20f, 80f) * Smooth01(asym, 0.5f, 3.5f);
+        if (c2 > 1f) c2 = 1f;
+        if (c2 <= 0f) return;   // no belief, no vote (it still recorded nothing - same as coasting)
+        _sideRoll = th; _sidePitch = -k * HD_DS; _sideConf = c2; _sideAt = Environment.TickCount;
+    }
+
+    // ---- DXGI DESKTOP DUPLICATION GRAB (GPU capture for the detector) ------------------------
+    // Verified standalone before wiring it in: ~99 fps with 3.5 ms of REAL work per frame
+    // (QI + CopyResource + Map + convert + Unmap + releases) against ~15 ms for GDI
+    // CopyFromScreen. The vtable slot numbers are empirical (verified against the SDK headers
+    // and a native probe): EnumAdapters1=12, EnumOutputs=7, DuplicateOutput=22,
+    // AcquireNextFrame=8, ReleaseFrame=14, device CreateTexture2D=5, context Map=14,
+    // Unmap=15, CopyResource=47. Any failure falls back to the old GDI grab automatically.
+    static class DxGrab
+    {
+        [DllImport("dxgi.dll", ExactSpelling = true)] static extern int CreateDXGIFactory1(ref Guid riid, out IntPtr factory);
+        [DllImport("d3d11.dll", ExactSpelling = true)] static extern int D3D11CreateDevice(IntPtr adapter, int driverType, IntPtr software, uint flags, IntPtr featureLevels, uint featureLevelCount, uint sdkVersion, out IntPtr device, out int featureLevel, out IntPtr context);
+        static readonly Guid IID_Factory1 = new Guid("770aae78-f26f-4dba-a829-253c83d1b387");
+        static readonly Guid IID_Output1 = new Guid("00cddea8-939b-4b83-a340-a685226666cc");
+        static readonly Guid IID_Tex2D = new Guid("6f15aaf2-d208-4e89-9ab4-489535d34f9c");
+        const int DXGI_ERROR_WAIT_TIMEOUT = unchecked((int)0x887A0027);
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct TEXDESC { public uint Width, Height, MipLevels, ArraySize, Format, SampleCount, SampleQuality, Usage, BindFlags, CPUAccessFlags, MiscFlags; }
+        [StructLayout(LayoutKind.Sequential)]
+        struct MAPSUB { public IntPtr pData; public uint RowPitch, DepthPitch; }
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int Del_Enum(IntPtr self, uint index, out IntPtr obj);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int Del_DupOut(IntPtr self, IntPtr device, out IntPtr dup);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int Del_CreateTex(IntPtr self, ref TEXDESC desc, IntPtr init, out IntPtr tex);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int Del_Map(IntPtr self, IntPtr res, uint sub, uint type, uint flags, out MAPSUB m);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void Del_Unmap(IntPtr self, IntPtr res, uint sub);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void Del_CopyRes(IntPtr self, IntPtr dst, IntPtr src);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int Del_Acquire(IntPtr self, uint timeout, IntPtr info, out IntPtr res);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int Del_ReleaseFrame(IntPtr self);
+        static T GetDel<T>(IntPtr o, int slot) where T : class
+        {
+            return (T)(object)Marshal.GetDelegateForFunctionPointer(Marshal.ReadIntPtr(Marshal.ReadIntPtr(o), slot * IntPtr.Size), typeof(T));
+        }
+
+        public static string Status = null;
+        public static bool InitTried = false;
+        static bool _ready = false;
+        static readonly object _lk = new object();
+        static IntPtr _context = IntPtr.Zero, _dupe = IntPtr.Zero, _staging = IntPtr.Zero, _frameInfo = IntPtr.Zero;
+        static Del_Map _map; static Del_Unmap _unmap; static Del_CopyRes _copy;
+        static Del_Acquire _acq; static Del_ReleaseFrame _rel;
+        static int[] _px = new int[1920 * 1080];
+        static int _w = 1920, _h = 1080;
+
+        static void Init()
+        {
+            IntPtr factory = IntPtr.Zero, adapter = IntPtr.Zero, output = IntPtr.Zero, output1 = IntPtr.Zero, device = IntPtr.Zero;
+            try
+            {
+                Guid iid = IID_Factory1;
+                if (CreateDXGIFactory1(ref iid, out factory) < 0) { Status = "DXGI factory failed - using the GDI grab"; return; }
+                if (GetDel<Del_Enum>(factory, 12)(factory, 0, out adapter) < 0) { Status = "DXGI adapter failed - using the GDI grab"; return; }
+                if (GetDel<Del_Enum>(adapter, 7)(adapter, 0, out output) < 0) { Status = "DXGI output failed - using the GDI grab"; return; }
+                Guid iidOut = IID_Output1;
+                if (Marshal.QueryInterface(output, ref iidOut, out output1) < 0) { Status = "DXGI output1 QI failed - using the GDI grab"; return; }
+                int level;
+                if (D3D11CreateDevice(IntPtr.Zero, 1, IntPtr.Zero, 0, IntPtr.Zero, 0, 7, out device, out level, out _context) < 0)
+                { Status = "D3D11 device failed - using the GDI grab"; return; }
+                if (GetDel<Del_DupOut>(output1, 22)(output1, device, out _dupe) < 0)
+                { Status = "DXGI duplication refused - using the GDI grab"; return; }
+                TEXDESC d = new TEXDESC();
+                d.Width = (uint)_w; d.Height = (uint)_h; d.MipLevels = 1; d.ArraySize = 1; d.Format = 87;
+                d.SampleCount = 1; d.Usage = 3; d.CPUAccessFlags = 0x20000;
+                if (GetDel<Del_CreateTex>(device, 5)(device, ref d, IntPtr.Zero, out _staging) < 0)
+                { Status = "DXGI staging texture failed - using the GDI grab"; return; }
+                _map = GetDel<Del_Map>(_context, 14);
+                _unmap = GetDel<Del_Unmap>(_context, 15);
+                _copy = GetDel<Del_CopyRes>(_context, 47);
+                _acq = GetDel<Del_Acquire>(_dupe, 8);
+                _rel = GetDel<Del_ReleaseFrame>(_dupe, 14);
+                _frameInfo = Marshal.AllocHGlobal(64);
+                _ready = true;
+                Status = "DXGI duplication up (GPU capture)";
+            }
+            catch (Exception e)
+            {
+                Status = "DXGI init error (" + e.Message + ") - using the GDI grab";
+                _ready = false;
+            }
+            finally
+            {
+                if (adapter != IntPtr.Zero) Marshal.Release(adapter);
+                if (output != IntPtr.Zero) Marshal.Release(output);
+                if (output1 != IntPtr.Zero) Marshal.Release(output1);
+                if (factory != IntPtr.Zero) Marshal.Release(factory);
+                if (!_ready && device != IntPtr.Zero) Marshal.Release(device);
+            }
+        }
+
+        // Returns the primary screen as int[] (0x00RRGGBB, same layout as the GDI Grab), or null
+        // when there is no fresh frame right now (caller falls back / skips).
+        public static int[] Try(out int W, out int H)
+        {
+            W = _w; H = _h;
+            lock (_lk)
+            {
+                if (!_ready) { if (InitTried) return null; InitTried = true; Init(); if (!_ready) return null; }
+                IntPtr res;
+                int hr = _acq(_dupe, 8, _frameInfo, out res);
+                if (hr == DXGI_ERROR_WAIT_TIMEOUT) return null;
+                if (hr < 0) { _ready = false; InitTried = false; Status = "dxgi access lost - re-initialising"; return null; }
+                IntPtr tex; Guid iid = IID_Tex2D;
+                if (Marshal.QueryInterface(res, ref iid, out tex) < 0) { _rel(_dupe); return null; }
+                _copy(_context, _staging, tex);
+                Marshal.Release(tex);
+                MAPSUB m;
+                if (_map(_context, _staging, 0, 1, 0, out m) >= 0)
+                {
+                    unsafe
+                    {
+                        byte* b0 = (byte*)m.pData;
+                        int n = _w * _h;
+                        for (int y = 0; y < _h; y++)
+                        {
+                            byte* row = b0 + y * (int)m.RowPitch;
+                            int o = y * _w;
+                            for (int x = 0; x < _w; x++)
+                            {
+                                int b = row[x * 4], g = row[x * 4 + 1], r = row[x * 4 + 2];
+                                _px[o + x] = (r << 16) | (g << 8) | b;
+                            }
+                        }
+                    }
+                    _unmap(_context, _staging, 0);
+                }
+                else { _rel(_dupe); return null; }
+                _rel(_dupe);
+                return _px;
+            }
+        }
+    }
+
     void DetectHorizon()
     {
+        _detPass++;
         try
         {
             // NOT-USEFUL FRAMES: a menu / loading screen has no horizon in it, and feeding one to the
@@ -9888,11 +10997,21 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 return;
             }
 
-            int W, H; int[] px = Grab(out W, out H);
+            System.Diagnostics.Stopwatch sub = System.Diagnostics.Stopwatch.StartNew();
+            int W, H; int[] px = DxGrab.Try(out W, out H);
+            if (px == null) px = Grab(out W, out H);
+            if (DxGrab.Status != null) { Log("detector capture: " + DxGrab.Status); DxGrab.Status = null; }
             _hudFrameH = H;
+            _detGrabMs = _detGrabMs * 0.8f + (float)sub.Elapsed.TotalMilliseconds * 0.2f;
+            sub.Restart();
             if (!HudBuildMaps(px, W, H)) { _hudDetValid = false; return; }
+            _detMapMs = _detMapMs * 0.8f + (float)sub.Elapsed.TotalMilliseconds * 0.2f;
             int dw = _hdW, dh = _hdH, N = dw * dh;
             float cx = dw * 0.5f, cy = dh * 0.5f;
+            // The Hough side pass is the expensive half of the detector: run it every 3rd pass
+            // (~11-16 Hz) and keep the last estimate in between - the thermal-ref match below
+            // runs EVERY pass, so the accurate path is never delayed by this.
+            if ((_sideTick++ % 3) == 0) SideHorizon();
             RecFrame(0);   // replay harness: periodic working frames (every 8th detector call)
 
             // ---- FRAME QUALITY: a frame that is one flat tone has no horizon in it --------------
@@ -9947,6 +11066,51 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // took 10s. Now the median publishes AND the scorer runs in the same frame; the first
             // solid scorer fix takes over (it publishes with its own, higher confidence), and
             // after the cold window things are exactly as they were: scorer only.
+            // ---- SIDE METHOD: THERMAL-DOMAIN REF MATCH -------------------------------------------
+            // The colourless method: transform the frame LUMINANCE with the same thermal LUT the
+            // overlay shows, then match it against THERMAL copies of the reference photos. A hit
+            // publishes the stored line and LEADS the frame; no hit -> the colour pipeline runs.
+            // Gate is tight (0.022) plus a margin over the runner-up: measured on the ref library,
+            // true matches sit at ~0.000 and the closest different scene starts at 0.035.
+            if (!_refLoaded) LoadHudRefs();
+            if (_refThmSigs.Count > 0)
+            {
+                float tsecond;
+                bool tgood; float[] tline; string tname; bool tground;
+                float td = MatchRefsThm(SigThermalFromBlocks(_hdL, dw, dh), out tgood, out tline, out tname, out tground, out tsecond);
+                if (tline != null && tgood && td <= 0.022f)
+                {
+                    float tcos = (float)Math.Cos(tline[0] * Math.PI / 180.0);
+                    if (Math.Abs(tcos) < 0.2f) tcos = 0.2f;
+                    if (tground)
+                    {
+                        _groundRefAt = Environment.TickCount;   // ground-eye boost without publishing
+                    }
+                    else if ((tsecond - td) >= 0.008f)
+                    {
+                        float tConf = 0.93f;
+                        if (tname.IndexOf("-sky-none") >= 0) tConf = 0.60f;
+                        else if (tname.IndexOf("-sky-med") >= 0) tConf = 0.82f;
+                        else if (tname.IndexOf("-sky-low") >= 0) tConf = 0.70f;
+                        HudPublish(tline[0], tline[1] / tcos, 0.5f, tConf, 9f, 0.25f);
+                        _hudDetValid = true; _hudDetAt = Environment.TickCount;
+                        _hnOk = true; _hnTheta = tline[0];
+                        _hnM = (float)Math.Tan(tline[0] * Math.PI / 180.0);
+                        _hnK = -(tline[1] / tcos) / HD_DS;
+                        _refName = "thm:" + tname; _refD = td; _refGood = true; _refBestLine = tline;
+                        RecFrame(1);   // published frame for the replay harness
+                        if (Environment.TickCount - _hudLogAt >= 2000)
+                        {
+                            _hudLogAt = Environment.TickCount;
+                            Log("horizon det: SIDE thermal ref " + tname + " (d " + td.ToString("0.000") +
+                                ", margin " + (tsecond - td).ToString("0.000") + ") - roll " + tline[0].ToString("0.0") +
+                                " deg, pitch " + (tline[1] / tcos).ToString("0") + "px");
+                        }
+                        return;
+                    }
+                }
+            }
+
             bool coldMedian = false;
             if (Environment.TickCount < _hudColdUntil)
             {
@@ -10032,6 +11196,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // For each angle, project every pixel onto the line's normal and histogram it. Every
             // candidate offset is then just a split of that histogram, so the whole frame is scored
             // at every angle in one pass.
+            sub.Restart();
             const int NTH = 41;   // +-80 deg sweep: hard acro banks (measured 68 deg live) are INSIDE the range
             const int NBI = 400;
             const float TH0 = -80f, TH1 = 80f, KSTEP = 1.5f;
@@ -10039,15 +11204,23 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float[] thAL = new float[NTH], thBL = new float[NTH];
             float[] thMul = new float[NTH];
 
-            int[] hn = new int[NBI], ht = new int[NBI];
-            double[] hsL = new double[NBI], hsB = new double[NBI], hsT = new double[NBI];
-            double[] hsL2 = new double[NBI], hsB2 = new double[NBI];
+        int[] hn = new int[NBI], ht = new int[NBI];
+        double[] hsL = new double[NBI], hsB = new double[NBI], hsT = new double[NBI];
+        double[] hsL2 = new double[NBI], hsB2 = new double[NBI];
+        // GROUND-COLOUR VETO channels (user idea): a sky region is never strongly GREEN (foliage)
+        // and never strongly WARM/BROWN (soil). Above-the-line means of (g-r) and (r-b) veto a
+        // candidate whose "sky side" is vegetation or dirt - the "detecting ground as the horizon"
+        // failure. Cheap: derived from the existing _hdG/_hdR/_hdB maps.
+        double[] hsG = new double[NBI], hsW = new double[NBI];
+        double[] hsPG = new double[NBI], hsPS = new double[NBI];
 
             float axW = _hudAxisW;        // dial "axis weight": how hard blueness pulls the separation
             float texNeed = _hudSkyTex;   // dial "sky tex"
             float texW = _hudTexW;        // dial "texture": 0 = ignore the smoothness cue
             if (texNeed < 1f) texNeed = 1f;
-            int minN = (int)(N * 0.04f);  // each region must be at least 4% of the frame
+            int minN = (int)(N * 0.01f);  // each region must be >=4% of the frame - and the sweep
+                                          // below samples every 2nd cell, so the counts are ~N/4
+            int NS = ((dw + 1) / 2) * ((dh + 1) / 2);   // sampled cell count for the same reason
             float bestScore = -1f, bestK = 0f; int bestTh = -1;
             float bestTmL = 1f, bestMmL = 1f, bestTopL = 1f;
 
@@ -10067,12 +11240,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 Array.Clear(hn, 0, nb); Array.Clear(ht, 0, nb);
                 Array.Clear(hsL, 0, nb); Array.Clear(hsB, 0, nb); Array.Clear(hsT, 0, nb);
                 Array.Clear(hsL2, 0, nb); Array.Clear(hsB2, 0, nb);
+                Array.Clear(hsG, 0, nb); Array.Clear(hsW, 0, nb);
+                Array.Clear(hsPG, 0, nb); Array.Clear(hsPS, 0, nb);
 
-                for (int y = 0; y < dh; y++)
+                for (int y = 0; y < dh; y += 2)
                 {
                     float yy = y - cy;
                     int row = y * dw;
-                    for (int x = 0; x < dw; x++)
+                    for (int x = 0; x < dw; x += 2)
                     {
                         float s = ((x - cx) * m - yy) / norm;
                         int b = (int)((s - smin) / KSTEP);
@@ -10080,22 +11255,35 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         int i = row + x;
                         hn[b]++; hsL[b] += _hdL[i]; hsB[b] += _hdBR[i]; hsT[b] += _hdT[i];
                         hsL2[b] += _hdL[i] * _hdL[i]; hsB2[b] += _hdBR[i] * _hdBR[i];
+                        hsG[b] += _hdG[i] - _hdR[i]; hsW[b] += _hdR[i] - _hdB[i];
+                        hsPG[b] += _hdPG[i]; hsPS[b] += _hdPS[i];
                         if (y == 0) ht[b]++;                      // the top row, for the "reaches the top" test
                     }
                 }
 
-                double totL = 0, totB = 0, totT = 0, totL2 = 0, totB2 = 0;
+                double totL = 0, totB = 0, totT = 0, totL2 = 0, totB2 = 0, totPG = 0, totPS = 0;
                 for (int b = 0; b < nb; b++)
-                { totL += hsL[b]; totB += hsB[b]; totT += hsT[b]; totL2 += hsL2[b]; totB2 += hsB2[b]; }
+                { totL += hsL[b]; totB += hsB[b]; totT += hsT[b]; totL2 += hsL2[b]; totB2 += hsB2[b];
+                  totPG += hsPG[b]; totPS += hsPS[b]; }
 
-                double an = 0, aL = 0, aB = 0, aT = 0, aL2 = 0, aB2 = 0, aTop = 0;
+                double an = 0, aL = 0, aB = 0, aT = 0, aL2 = 0, aB2 = 0, aTop = 0, aG = 0, aW = 0, aPG = 0, aPS = 0;
                 float bScore = -1f; int bIdx = -1;
                 for (int b = nb - 1; b >= 1; b--)
                 {
                     an += hn[b]; aL += hsL[b]; aB += hsB[b]; aT += hsT[b];
                     aL2 += hsL2[b]; aB2 += hsB2[b]; aTop += ht[b];
-                    int nA = (int)an, nB = N - nA;   // nA is the region ABOVE the line: the sky side
-                    if (nA < minN || nB < minN) continue;
+                    aG += hsG[b]; aW += hsW[b]; aPG += hsPG[b]; aPS += hsPS[b];
+                    int nA = (int)an, nB = NS - nA;   // nA is the region ABOVE the line: the sky side
+                    // CORNER RELIEF ("horizon in the corners when I fly up and bank"): when the
+                    // boundary sits in the outer 12% of the frame its small side is legitimately a
+                    // sliver - demanding 1% of the whole frame there starved the lock exactly in
+                    // banked pitch-ups. Let the edge-hugging side go down to a third.
+                    int minA = minN, minB2 = minN;
+                    float kC0 = smin + (b + 0.5f) * KSTEP;
+                    float spanK = smax - smin; if (spanK < 1f) spanK = 1f;
+                    if (kC0 - smin < spanK * 0.12f) minA = minN / 3;
+                    if (smax - kC0 < spanK * 0.12f) minB2 = minN / 3;
+                    if (nA < minA || nB < minB2) continue;
 
                     double muAL = aL / nA, muBL = (totL - aL) / nB;
                     double muAB = aB / nA, muBB = (totB - aB) / nB;
@@ -10121,7 +11309,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         mm = 0.5f + 0.5f * Smooth01(dBm - dA, 0f, 1.2f);   // one global sky colour is too tight for a sky that changes with heading - a preference, never a veto
                     }
                     // and the region ABOVE must REACH THE TOP of the frame
-                    float topFrac = (float)(aTop / dw);
+                    float topFrac = (float)(aTop / (dw * 0.5f));
                     float tpm = Smooth01(topFrac, 0.45f, 0.90f);
 
                     // TEMPORAL PRIOR: prefer to stay on the edge we were already tracking.
@@ -10142,7 +11330,28 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         float dk = kCand - _hnK;
                         prior = 1f / (1f + (dk * dk) / (sig * sig));
                     }
-                    float sc = (float)fisher * tm * mm * tpm * (0.3f + 0.7f * prior);
+                    // GROUND-COLOUR VETO: the region ABOVE must not be vegetation (green) or soil
+                    // (warm brown). Sky is pale/blue: g-r near 0 or negative, r-b strongly negative.
+                    // A candidate whose sky side is green or warm is a ground edge, not a horizon.
+                    float aboveGreen = (float)(aG / nA);
+                    float aboveWarm = (float)(aW / nA);
+                    float grVeto = 1f - 0.85f * Smooth01(aboveGreen, 8f, 26f);
+                    float wmVeto = 1f - 0.85f * Smooth01(aboveWarm, 20f, 48f);
+                    float gVeto = grVeto * wmVeto;
+                    // REF-DERIVED PALETTE VETO (user idea): above must look like the game's SKY
+                    // colours and below like its GROUND colours, as learned from every ref line.
+                    float palVeto = 1f, palGood = 1f;
+                    if (_palOk)
+                    {
+                        float aboveGround = (float)(aPG / nA);
+                        float aboveSky = (float)(aPS / nA);
+                        float belowGnd = (float)((totPG - aPG) / nB);
+                        palVeto = 1f - 0.85f * Smooth01(aboveGround, 0.35f, 0.70f);
+                        palGood = (0.55f + 0.45f * Smooth01(aboveSky, 0.20f, 0.60f)) *
+                                  (0.55f + 0.45f * Smooth01(belowGnd, 0.20f, 0.55f));
+                    }
+                    if (gVeto * palVeto < 0.08f) continue;           // basically ground above - toss
+                    float sc = (float)fisher * tm * mm * tpm * (0.3f + 0.7f * prior) * gVeto * palVeto * palGood;
                     if (sc >= bScore) { bScore = sc; bIdx = b; bestTmL = tm; bestMmL = mm; bestTopL = tpm; }
                 }
                 if (bIdx < 0) { thScore[t] = 0f; continue; }
@@ -10192,8 +11401,16 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // the coarse line when they are confident; the onset stage below still does the final
             // 1x1 sharpening. This is the tree-line fix: the canopy files as NEITHER, and the haze
             // band under it matches SKY, so any line above the true horizon collects contradictions.
+            // SPEED: in the field the parser loses the vote-referee on nearly every frame
+            // ("parser override REJECTED" floods the log), so run it every 3rd pass and reuse the
+            // last result on the others - saves ~60-80 ms on two passes out of three.
             float thetaS, kS, scoreS;
-            HudSectionParse(theta, out thetaS, out kS, out scoreS, out _hudTreeBelow);
+            if ((_detPass % 3) == 0 || !_parserCacheOk)
+            {
+                HudSectionParse(theta, out thetaS, out kS, out scoreS, out _hudTreeBelow);
+                _parserTh = thetaS; _parserKs = kS; _parserSc = scoreS; _parserCacheOk = true;
+            }
+            else { thetaS = _parserTh; kS = _parserKs; scoreS = _parserSc; }
             _hudParserScore = scoreS;
             _hudParserK = kS;
             // passive test instrumentation: the 3-centre-column vote, computed but never used to
@@ -10326,7 +11543,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                             double acc = 0; int cc = 0;
                             for (int i = 0; i < onN; i++) if (Math.Abs(oks[i] - kOnt) <= 6f) { acc += oks[i]; cc++; }
                             float rm = cc >= 16 ? (float)(acc / cc) : kOnt;
-                            if (Math.Abs(rm - kHist) <= dh * 0.40f)
+                            // REFINEMENT, NOT A RE-LOCK (field evidence): the onset vote was
+                            // yanking the answer +-200..400px during maneuvers ("onset vote moved
+                            // the line -200px up" in the flight log) - those jumps are what the
+                            // fusion then had to chase. Cap it at a genuine refinement distance.
+                            if (Math.Abs(rm - kHist) <= dh * 0.13f)
                             {
                                 if (Math.Abs(rm - kHist) > 2f && Environment.TickCount - _hudLogAt >= 2000)
                                 {
@@ -10346,13 +11567,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                             {
                                 _hudLogAt = Environment.TickCount;
                                 Log("horizon det: onset vote blocked - cluster is " + (Math.Abs(rm - kHist) * HD_DS).ToString("0") +
-                                    "px from the pixel line (limit " + (dh * 0.40f * HD_DS).ToString("0") + "px)");
+                                    "px from the pixel line (limit " + (dh * 0.13f * HD_DS).ToString("0") + "px)");
                             }
                         }
                     }
                 }
             }
 
+            _detScoreMs = _detScoreMs * 0.8f + (float)sub.Elapsed.TotalMilliseconds * 0.2f;
             // ---- measurement ---------------------------------------------------------------------
             float pitchPerp = -kFinal * HD_DS;          // PERPENDICULAR px, + = line below centre
             int skyN = 0;
@@ -10586,7 +11808,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             {
                 float pubPitch = -kFinal * HD_DS;
                 float colPitch = -_hudColK * HD_DS;
-                if (_hudColOk && Math.Abs(pubPitch - colPitch) > 40f) SaveWatchFrame(pubPitch, colPitch);
+                if (_hudColOk && Math.Abs(pubPitch - colPitch) > 40f) SaveWatchFrame(pubPitch, colPitch, px, W, H);
             }
             if (Environment.TickCount - _hudLogAt >= 2000)
             {
@@ -10773,6 +11995,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         bool _hud = false;               // draw the FPV/UAV HUD in the stream overlay
         string _hdg = "", _spd = "", _agl = "";
         float _roll = 0f, _pit = 0f;
+        float _r2 = 0f, _p2 = 0f, _c2 = 0f, _idp = 0f;   // colourless side detector + horizon ID%
+        bool _nightOn = false;                            // thermal on -> /thermal.mjpg streams
         bool _uav = false;
         float _v1 = 0f, _v2 = 0f;
         float _dpp = 8f, _shear = 0.9f, _len = 1f, _rungTilt = 0f, _maxTilt = 30f, _spread = 2.2f, _spreadAccel = 0f;
@@ -10826,6 +12050,17 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         }
         public void SetHud(bool on, string hdg, string spd, string agl, float roll, float pit, bool uav, float v1, float v2)
         { lock (_lock) { _hud = on; _hdg = hdg ?? ""; _spd = spd ?? ""; _agl = agl ?? ""; _roll = roll; _pit = pit; _uav = uav; _v1 = v1; _v2 = v2; } }
+        public void SetSide(float roll2, float pit2, float conf2, float idpct)
+        { lock (_lock) { _r2 = roll2; _p2 = pit2; _c2 = conf2; _idp = idpct; } }
+        float _lgP = 1f, _lgR = 1f; int _lgPn = 0, _lgRn = 0;
+        public void SetLearn(float gP, float gR, int nP, int nR)
+        { lock (_lock) { _lgP = gP; _lgR = gR; _lgPn = nP; _lgRn = nR; } }
+        float _skyE = 0.5f; long _appearAt = 0;
+        public void SetAppear(float skyE, bool bad)
+        { lock (_lock) { _skyE = skyE; if (bad) _appearAt = Environment.TickCount; } }
+        float _rngM = 0f;
+        public void SetGeo(float m) { lock (_lock) { _rngM = m; } }
+        public void SetNight(bool on) { lock (_lock) { _nightOn = on; } }
         public void SetDials(float dpp, float shear, float len, float rungTilt, float maxTilt, float spread, float spreadAccel, float spreadStick, float stairStick)
         { lock (_lock) { _dpp = dpp; _shear = shear; _len = len; _rungTilt = rungTilt; _maxTilt = maxTilt; _spread = spread; _spreadAccel = spreadAccel; _spreadStick = spreadStick; _stairStick = stairStick; } }
         void Step() { lock (_lock) { _progress += (_target - _progress) * 0.12f; if (Math.Abs(_target - _progress) < 0.002f) _progress = _target; } }
@@ -10861,6 +12096,18 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     sb.Append(",\"agl\":\"").Append(Esc(_agl)).Append("\"");
                     sb.Append(",\"roll\":").Append(_roll.ToString("0.#"));
                     sb.Append(",\"pit\":").Append(_pit.ToString("0.#"));
+                    sb.Append(",\"roll2\":").Append(_r2.ToString("0.#"));
+                    sb.Append(",\"pit2\":").Append(_p2.ToString("0.#"));
+                    sb.Append(",\"c2\":").Append(_c2.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"idpct\":").Append(_idp.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"gainP\":").Append(_lgP.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"gainR\":").Append(_lgR.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"gainPn\":").Append(_lgPn);
+                    sb.Append(",\"gainRn\":").Append(_lgRn);
+                    sb.Append(",\"skyE\":").Append(_skyE.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"appear\":").Append((Environment.TickCount - _appearAt < 1500) ? "true" : "false");
+                    sb.Append(",\"range\":").Append(_rngM.ToString("0", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"night\":").Append(_nightOn ? "true" : "false");
                     sb.Append(",\"uav\":").Append(_uav ? "true" : "false");
                     sb.Append(",\"plx\":").Append(_plx.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"ply\":").Append(_ply.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
@@ -10925,6 +12172,37 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 }
                 catch { }
                 body = "ok"; ctype = "text/plain";
+            }
+            else if (path == "/thermal.mjpg")
+            {
+                // MJPEG feed of the thermal view for the OBS browser source (shown as an <img>).
+                // Streams only while thermal is ON; when it stops the stream closes and the page
+                // hides the element. Full response is handled here.
+                try
+                {
+                    c.Response.ContentType = "multipart/x-mixed-replace; boundary=frame";
+                    c.Response.Headers["Cache-Control"] = "no-store";
+                    System.IO.Stream outs = c.Response.OutputStream;
+                    byte[] tail = System.Text.Encoding.ASCII.GetBytes("\r\n");
+                    while (_nightOn)
+                    {
+                        byte[] jpg;
+                        lock (_mjpegLock) jpg = _mjpeg;
+                        if (jpg == null || Environment.TickCount - _mjpegAt > 1000) { Thread.Sleep(80); continue; }
+                        try
+                        {
+                            byte[] h1 = System.Text.Encoding.ASCII.GetBytes("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + jpg.Length + "\r\n\r\n");
+                            outs.Write(h1, 0, h1.Length);
+                            outs.Write(jpg, 0, jpg.Length);
+                            outs.Write(tail, 0, tail.Length);
+                            outs.Flush();
+                        }
+                        catch { break; }
+                        Thread.Sleep(80);
+                    }
+                }
+                catch { }
+                return;
             }
             else
             {

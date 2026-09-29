@@ -7,6 +7,7 @@ using System.Windows.Forms;
 class RefEditor : Form
 {
     ListBox list;
+    CheckBox chkUnedit, chkEdit;            // list category filters: reviewed vs never-reviewed
     PictureBox pic;
     NumericUpDown numRoll, numPitch;
     Label lblInfo;
@@ -44,6 +45,22 @@ class RefEditor : Form
         list.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Bottom;
         list.SelectedIndexChanged += delegate { LoadRef(); };
         Controls.Add(list);
+
+        // LIST CATEGORY FILTERS (field request): review the edited refs and the never-reviewed
+        // ones separately. Exactly one ticked = show only that set; both or neither = show all.
+        chkUnedit = new CheckBox();
+        chkUnedit.Text = "unedited";
+        chkUnedit.SetBounds(8, Height - 78, 100, 24);
+        chkUnedit.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+        chkUnedit.CheckedChanged += delegate { RefreshList(); };
+        Controls.Add(chkUnedit);
+
+        chkEdit = new CheckBox();
+        chkEdit.Text = "edit";
+        chkEdit.SetBounds(112, Height - 78, 70, 24);
+        chkEdit.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+        chkEdit.CheckedChanged += delegate { RefreshList(); };
+        Controls.Add(chkEdit);
 
         pic = new PictureBox();
         pic.SetBounds(336, 34, Width - 560, Height - 116);
@@ -211,10 +228,15 @@ class RefEditor : Form
         if (!Directory.Exists(dir)) return;
         string[] fs = Directory.GetFiles(dir, "*.png");
         Array.Sort(fs);
+        bool wantEdit = chkEdit != null && chkEdit.Checked;
+        bool wantUn = chkUnedit != null && chkUnedit.Checked;
+        bool filter = wantEdit != wantUn;          // exactly one ticked = filter to that set
         foreach (string f in fs)
         {
             string nm = Path.GetFileName(f).ToLowerInvariant();
             if (nm.IndexOf("bad") >= 0 || nm.IndexOf("no_") >= 0 || nm.IndexOf("false") >= 0) continue;
+            bool isEdit = nm.IndexOf("-edit") >= 0;
+            if (filter && isEdit != wantEdit) continue;
             list.Items.Add(Path.GetFileName(f));
         }
         if (list.Items.Count > 0) list.SelectedIndex = 0;

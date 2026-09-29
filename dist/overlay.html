@@ -32,6 +32,7 @@
 </style>
 </head>
 <body>
+  <img id="thm" src="" style="position:fixed; inset:0; width:100%; height:100%; object-fit:cover; display:none; background:#000;">
   <canvas id="noise"></canvas>
   <canvas id="hud"></canvas>
   <div id="bg"></div>
@@ -393,6 +394,15 @@ function tick() {
     nc.style.opacity = showStatic ? op : 0;
 
     drawHud(s, gl);
+
+    // THERMAL FEED (OBS): while night vision is on, show the live thermal MJPEG as the base
+    // layer under the OSD. The stream closes itself when thermal switches off.
+    var thm = document.getElementById('thm');
+    if (s.night) {
+      if (thm.style.display === 'none') { thm.style.display = 'block'; thm.src = 'http://localhost:8730/thermal.mjpg?t=' + Date.now(); }
+    } else if (thm.style.display !== 'none') {
+      thm.style.display = 'none'; thm.src = '';
+    }
 
     home.style.display = 'none';   // no big bottom-right HOME readout anymore
   }).catch(function(){});
