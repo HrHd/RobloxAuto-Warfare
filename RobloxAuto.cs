@@ -266,6 +266,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _prevFPit = 0f;                         // previous tick's fused pitch, for the accumulation above
     bool _expSeeded = false;
     int _pubContraN = 0, _pubContraAt = 0, _pubContraSg = 0;   // publish-vs-stick-model contradiction persistence
+    bool _offWas = false; int _offAt = 0; float _offExpK = 0f, _offK0 = 0f;   // off-screen traverse calibration
+    bool _offWait = false; int _offReturnAt = 0;
     int _lgRTot = 0, _lgPTot = 0;                 // stick fine-tune sample counts (per flight, log)
     int _lgLogAt = 0;                             // fine-tune log throttle
     float _hudColK = 0f;                          // last 3-centre-column vote line (working px)
@@ -5834,6 +5836,40 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _prevFPit = _hudFPitch; _expSeeded = true;
         }
         else { _expK = 0f; _expSeeded = false; }
+
+        // OFF-SCREEN TRAVERSE CALIBRATION (field): while the horizon is off screen the model is
+        // the ONLY thing moving the line - and a long traverse is the best calibration sample
+        // there is (huge displacement, no vision to hide behind). When it comes back, compare
+        // where it ACTUALLY reappeared against the model's prediction and nudge the pitch gain
+        // toward the truth: this is "the speed at which it should move" being measured, not guessed.
+        bool offNow = Math.Abs(_hudPitch) > 780f;
+        if (offNow && !_offWas) { _offAt = Environment.TickCount; _offExpK = 0f; _offK0 = _hnK; }
+        if (offNow && _expSeeded) _offExpK = _expK;
+        if (!offNow && _offWas && _offAt != 0)
+        {
+            _offWait = true;
+            _offReturnAt = Environment.TickCount;
+        }
+        _offWas = offNow;
+        if (_offWait && _hudDetValid && _hudDetAt > _offReturnAt)
+        {
+            _offWait = false;
+            float dtOff = Math.Max(0.3f, (_offReturnAt - _offAt) / 1000f);
+            _offAt = 0;
+            float actual = _hnK - _offK0;
+            if (Math.Abs(_offExpK) > 8f && Math.Abs(actual) > 8f)
+            {
+                float ratio = actual / _offExpK;
+                if (ratio > 0.5f && ratio < 2.0f)
+                {
+                    _kfPitGain += 0.06f * (ratio - _kfPitGain);
+                    if (_kfPitGain < 0.15f) _kfPitGain = 0.15f; if (_kfPitGain > 3f) _kfPitGain = 3f;
+                    Log("   off-screen traverse " + dtOff.ToString("0.0") + "s: model " + ((int)(_offExpK * HD_DS)) +
+                        "px, came back " + ((int)(actual * HD_DS)) + "px (x" + ratio.ToString("0.00") +
+                        ") - pitch gain now " + _kfPitGain.ToString("0.000"));
+                }
+            }
+        }
         if (_physLog) PhysLogLine();                       // 50 Hz: fast stick work included
 
         // Simulated FPV pack voltage. It starts at half, rises with throttle (left stick Y up), and
@@ -7065,7 +7101,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
             _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
             _hudPitchVel = 0f; _hudRollVel = 0f; _hudPitStickSm = 0f; _hudRollStickSm = 0f; _hudSkySm = 1f;   // start each flight clean
-            _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f; _hudStairSm = 0f; _hudTreeBelowSm = 0f; _expK = 0f; _expSeeded = false; _pubContraN = 0;           // reset the weighted average
+            _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f; _hudStairSm = 0f; _hudTreeBelowSm = 0f; _expK = 0f; _expSeeded = false; _pubContraN = 0; _offWas = false; _offWait = false; _offAt = 0;           // reset the weighted average
             _kfSeeded = false; _kfRollV = 0f; _kfPitV = 0f; _kfRollOb = 0f; _kfPitOb = 0f; _kfMeasAt = 0;                 // reset the estimator
             _kfRollGain = 1f; _kfPitGain = 1f; _kfRollP = 25f; _kfPitP = 25f; _kfRollZAt = 0; _kfPitZAt = 0; _lgRTot = 0; _lgPTot = 0;
             _kfSmSeeded = false; _kfSmRoll = 0f; _kfSmPit = 0f;
