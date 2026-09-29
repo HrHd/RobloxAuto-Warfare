@@ -84,8 +84,12 @@ class RefEditor : Form
         bn.Click += delegate { if (list.SelectedIndex < list.Items.Count - 1) list.SelectedIndex++; }; Controls.Add(bn);
         Button bd = new Button(); bd.Text = "DELETE (Del)"; bd.SetBounds(944, Height - 78, 108, 28);
         bd.Click += delegate { DeleteRef(); }; Controls.Add(bd);
+        Button bg = new Button(); bg.Text = "GROUND (G)"; bg.SetBounds(1060, Height - 78, 112, 28);
+        bg.Click += delegate { GroundRef(); }; Controls.Add(bg);
+        Button bt = new Button(); bt.Text = "TREES (T)"; bt.SetBounds(1178, Height - 78, 100, 28);
+        bt.Click += delegate { TreesRef(); }; Controls.Add(bt);
 
-        lblInfo = new Label(); lblInfo.SetBounds(1062, Height - 74, Width - 1082, 44);
+        lblInfo = new Label(); lblInfo.SetBounds(1286, Height - 74, Width - 1306, 44);
         lblInfo.Anchor = AnchorStyles.Top | AnchorStyles.Right | AnchorStyles.Bottom;
         lblInfo.Text = Hint();
         Controls.Add(lblInfo);
@@ -98,6 +102,8 @@ class RefEditor : Form
             else if (e.KeyCode == Keys.Right) { roll += 0.5f; Refresh(); MarkDirty(); }
             else if (e.KeyCode == Keys.S) SaveRef();
             else if (e.KeyCode == Keys.Delete) DeleteRef();
+            else if (e.KeyCode == Keys.G) GroundRef();
+            else if (e.KeyCode == Keys.T) TreesRef();
             else if (e.KeyCode == Keys.A && list.SelectedIndex > 0) list.SelectedIndex--;
             else if (e.KeyCode == Keys.D && list.SelectedIndex < list.Items.Count - 1) list.SelectedIndex++;
             else if (e.KeyCode == Keys.PageDown && list.SelectedIndex < list.Items.Count - 1) list.SelectedIndex++;
@@ -112,7 +118,7 @@ class RefEditor : Form
     string Hint()
     {
         return "refs " + list.Items.Count + "/" + REF_CAP +
-            "  |  WHITE centre dot = move up/down | CYAN side dot = tilt | arrows = nudge | S = save | Del = delete | A/D = prev/next";
+            "  |  WHITE dot = height | CYAN dot = tilt | S save | G ground | T trees | Del delete | A/D prev/next";
     }
 
     void MarkDirty()
@@ -253,6 +259,68 @@ class RefEditor : Form
             e.Graphics.FillEllipse(b1, h1x - 8, h1y - 8, 16, 16);
             e.Graphics.FillEllipse(b2, h2x - 8, h2y - 8, 16, 16);
         }
+    }
+
+    void TreesRef()
+    {
+        // TRI-STATE tree marker: none -> "-trees" (this scene is forest, the app should DE-VALUE
+        // vision here) -> "-clear" (clean scene, no trees) -> none. The app turns the marker into
+        // the tree-belief the moment the ref matches.
+        string f = CurPath();
+        if (f == null) return;
+        try
+        {
+            string bn = Path.GetFileNameWithoutExtension(f);
+            string nb, msg;
+            if (bn.IndexOf("-trees") >= 0) { nb = bn.Replace("-trees", "-clear"); msg = "marked CLEAR (no trees)"; }
+            else if (bn.IndexOf("-clear") >= 0) { nb = bn.Replace("-clear", ""); msg = "tree marker removed"; }
+            else { nb = bn + "-trees"; msg = "marked TREES - app will de-value vision on this scene"; }
+            string nf = Path.Combine(dir, nb + ".png");
+            if (img != null) { img.Dispose(); img = null; }
+            File.Move(f, nf);
+            string ohz = Path.ChangeExtension(f, ".hzn");
+            if (File.Exists(ohz)) File.Move(ohz, Path.ChangeExtension(nf, ".hzn"));
+            try { img = new Bitmap(nf); } catch { }
+            lblSaved.Text = msg;
+            lblSaved.ForeColor = Color.FromArgb(255, 170, 60);
+            string nowName = Path.GetFileName(nf);
+            int i2 = list.SelectedIndex;
+            RefreshList();
+            int ix = list.Items.IndexOf(nowName);
+            if (ix >= 0) list.SelectedIndex = ix;
+            else if (i2 < list.Items.Count) list.SelectedIndex = i2;
+        }
+        catch (Exception ex) { lblInfo.Text = "tree mark failed: " + ex.Message; }
+    }
+
+    void GroundRef()
+    {
+        // Toggle the "-ground" marker: a GROUND ref tells the app this scene has NO horizon, so
+        // matching frames COAST instead of locking (no line is enforced from it). Toggle again to
+        // turn it back into a normal ref.
+        string f = CurPath();
+        if (f == null) return;
+        try
+        {
+            string bn = Path.GetFileNameWithoutExtension(f);
+            bool isG = bn.IndexOf("-ground") >= 0;
+            string nb = isG ? bn.Replace("-ground", "") : bn + "-ground";
+            string nf = Path.Combine(dir, nb + ".png");
+            if (img != null) { img.Dispose(); img = null; }
+            File.Move(f, nf);
+            string ohz = Path.ChangeExtension(f, ".hzn");
+            if (File.Exists(ohz)) File.Move(ohz, Path.ChangeExtension(nf, ".hzn"));
+            try { img = new Bitmap(nf); } catch { }
+            lblSaved.Text = isG ? "GROUND marker removed" : "MARKED AS GROUND - matching frames will coast";
+            lblSaved.ForeColor = Color.FromArgb(255, 170, 60);
+            string nowName = Path.GetFileName(nf);
+            int i2 = list.SelectedIndex;
+            RefreshList();
+            int ix = list.Items.IndexOf(nowName);
+            if (ix >= 0) list.SelectedIndex = ix;
+            else if (i2 < list.Items.Count) list.SelectedIndex = i2;
+        }
+        catch (Exception ex) { lblInfo.Text = "ground mark failed: " + ex.Message; }
     }
 
     void DeleteRef()

@@ -225,6 +225,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // (a real sky/ground line) and a near match boosts the lock. This is how you TEACH it.
     List<float[]> _refSigs = new List<float[]>();
     List<bool> _refGoodL = new List<bool>();
+    List<bool> _refEditL = new List<bool>();   // "-edit" = a HUMAN verified/adjusted this line: higher priority
+    List<bool> _refGroundL = new List<bool>(); // "-ground" = no horizon here; matching frame must coast
+    List<string> _refNames = new List<string>();
     // Each reference may carry its OWN horizon line (a .hzn sidecar written by "capture ref"). When
     // the live frame matches such a reference VERY closely we have seen exactly this before and
     // know the answer, so we adopt its line - that is the "trained on your photos" part.
@@ -244,6 +247,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _refDist = 0.16f;               // dial "ref match": L2 threshold (0..1) for a match
     float _refD = 9f;                     // last frame's nearest-reference distance
     bool _refGood = true;                 // last frame's nearest-reference label
+    string _refName = "";                 // last frame's nearest-reference file name (log)
+    bool _refGround = false;              // the nearest ref is a GROUND scene ("-ground"): no horizon
     // Raw robust measurement from the detector (BEFORE smoothing) - what the estimator consumes.
     float _hudMRoll = 0f, _hudMPitch = 0f;        // deg, px offset from centre
     float _hudAxisW = 1f;                          // dial "axis weight": influence of the sky/ground colour axis cue
@@ -1055,7 +1060,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         btnReloadRefs = new Button();
         btnReloadRefs.Text = "reload refs";
         btnReloadRefs.SetBounds(x, y, 120, 24);
-        btnReloadRefs.Click += delegate { _refSigs.Clear(); _refGoodL.Clear(); _refLine.Clear(); _refLoaded = false; LoadHudRefs(); };
+        btnReloadRefs.Click += delegate { _refSigs.Clear(); _refGoodL.Clear(); _refEditL.Clear(); _refGroundL.Clear(); _refNames.Clear(); _refLine.Clear(); _refLoaded = false; LoadHudRefs(); };
         Controls.Add(btnReloadRefs);
 
         // CAPTURE REF: save THIS frame + its current horizon line as a labelled reference ("good").
@@ -8370,6 +8375,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         bool good = nm.IndexOf("bad") < 0 && nm.IndexOf("no_") < 0 && nm.IndexOf("false") < 0;
                         _refSigs.Add(SigFromBitmap(b));
                         _refGoodL.Add(good);
+                        _refEditL.Add(nm.IndexOf("-edit") >= 0);
+                        _refGroundL.Add(nm.IndexOf("-ground") >= 0);
+                        _refNames.Add(nm);
                         // optional sidecar with the horizon line captured at the same moment
                         float[] ln = null;
                         try
@@ -8462,6 +8470,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 "\r\npitch=" + pp.ToString(System.Globalization.CultureInfo.InvariantCulture));
             _refSigs.Add(sig);
             _refGoodL.Add(true);
+            _refEditL.Add(false);
             _refLine.Add(new float[] { rr, pp });
             _refLoaded = true;
             Log("capture ref: saved " + baseName + " at roll " + rr.ToString("0.0") + " deg / pitch " + pp.ToString("0") + " px (" + _refSigs.Count + " refs)");
@@ -8546,6 +8555,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 "\r\npitch=" + _autoSavePitch.ToString(System.Globalization.CultureInfo.InvariantCulture));
             _refSigs.Add(sig);
             _refGoodL.Add(true);
+            _refEditL.Add(false);
             _refLine.Add(new float[] { _autoSaveRoll, _autoSavePitch });
             _refLoaded = true;
             Log("   deploy ref saved: " + baseName + " at roll " + _autoSaveRoll.ToString("0.0") +
@@ -8554,19 +8564,27 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         catch (Exception e) { Log("   deploy ref save failed: " + e.Message); }
     }
 
-    // Nearest reference by signature distance (0 = identical). Returns the distance and the label.
-    float MatchRefs(float[] sig, out bool good, out float[] line)
+    // Nearest reference by signature distance (0 = identical). Returns the EFFECTIVE distance and
+    // the label. HUMAN-VERIFIED refs ("-edit", set in RefEditor) rank higher: their distance is
+    // scaled 0.85 for comparison, so when a live frame is close to both an automatic and a
+    // hand-adjusted ref, the human one wins - and its line is the one that gets enforced.
+    float MatchRefs(float[] sig, out bool good, out float[] line, out string name, out bool ground)
     {
-        good = true; line = null; float best = 9f; int bi = -1;
+        good = true; line = null; name = ""; ground = false; float best = 9f; int bi = -1;
         for (int i = 0; i < _refSigs.Count; i++)
         {
             float[] r = _refSigs[i];
             float d = 0f;
             for (int k = 0; k < 108; k++) { float e = sig[k] - r[k]; d += e * e; }
             d = (float)Math.Sqrt(d / 108.0);
+            if (i < _refEditL.Count && _refEditL[i]) d *= 0.85f;
             if (d < best) { best = d; good = _refGoodL[i]; bi = i; }
         }
-        if (bi >= 0 && bi < _refLine.Count) line = _refLine[bi];
+        if (bi >= 0)
+        {
+            if (bi < _refLine.Count) line = _refLine[bi];
+            if (bi < _refNames.Count) { name = _refNames[bi]; ground = _refGroundL[bi]; }
+        }
         return best;
     }
 
@@ -10230,7 +10248,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (_refSigs.Count > 0)
             {
                 float[] rl;
-                refD = MatchRefs(SigFromBlocks(_hdR, _hdG, _hdB, dw, dh), out refGood, out rl);
+                refD = MatchRefs(SigFromBlocks(_hdR, _hdG, _hdB, dw, dh), out refGood, out rl, out _refName, out _refGround);
                 _refD = refD; _refGood = refGood; _refBestLine = rl;
                 if (rl != null && refGood && refD <= _refDist * 0.6f)
                 {
@@ -10239,6 +10257,30 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     if (Math.Abs(c2) < 0.2f) c2 = 0.2f;
                     HudPublish(rl[0], rl[1] / c2, skyFrac2, 0.95f, 9f, 0.25f);
                     refHit = true;
+                    // HUMAN TREE MARKER: a "-trees" ref says this scene is forest (de-value the
+                    // vision HERE, now); a "-clear" ref says it is clean. Overrides the classifier.
+                    if (_refName.IndexOf("-trees") >= 0)
+                    {
+                        _hudTreeBelowSm = 0.7f;
+                        if (Environment.TickCount - _hudLogAt >= 2000)
+                        { _hudLogAt = Environment.TickCount; Log("horizon det: matched TREES reference " + _refName + " - vision de-valued for this scene"); }
+                    }
+                    else if (_refName.IndexOf("-clear") >= 0)
+                    {
+                        _hudTreeBelowSm = 0.05f;
+                    }
+                }
+                else if (refGood && _refGround && refD <= _refDist * 0.6f)
+                {
+                    // GROUND reference matched (marked in RefEditor): this scene has NO horizon by
+                    // definition - never keep a lock here, coast on the model. The ref name is in
+                    // the log so it is obvious which picture did it.
+                    _hudDetValid = false;
+                    if (Environment.TickCount - _hudLogAt >= 2000)
+                    {
+                        _hudLogAt = Environment.TickCount;
+                        Log("horizon det: matched GROUND reference " + _refName + " - no horizon here, coasting");
+                    }
                 }
             }
 
@@ -10262,7 +10304,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     (_skyModelOk ? "on" : "none") + ", scene " + _hudScene +
                     ", parser " + _hudParserScore.ToString("0.00") + "@" + (-_hudParserK * HD_DS).ToString("0") + "px" +
                     ", colvote " + (_hudColOk ? (-_hudColK * HD_DS).ToString("0") + "px/" + _hudColAgree : "no/" + _hudColAgree) +
-                    (refHit ? "  REF-ANSWER" : ""));
+                    (refHit ? "  REF-ANSWER " + _refName : ""));
             }
         }
         catch { }
