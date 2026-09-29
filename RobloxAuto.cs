@@ -2601,7 +2601,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     if (ClickDeployAsDrone(g)) ok = true;
                     Thread.Sleep(900);
                     InvalidateOcr();
-                    bool still = PhraseOnScreen("TEAM BASE") || PhraseOnScreenWhiten("TEAM BASE");
+                    bool still = TeamBasePhraseUp(OcrWords());   // corroborated - see TeamBasePhraseUp
                     if (!still) { ok = true; break; }        // the panel closed - we are away
                     ok = false;
                     if (depTry < 4) Log("   Deploy As Drone: TEAM BASE panel still open (try " + (depTry + 1) + "/4) - clicking again");
@@ -2993,7 +2993,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // the panel has several unique labels - accept ANY of them, because "TEAM BASE" is
             // white over bright green and the OCR often misses it, which made the flow think the
             // panel never opened (and bail) while it was actually right there.
-            if (PhraseOnScreen("TEAM BASE") || PhraseOnScreenWhiten("TEAM BASE")) return true;
+            // CORROBORATED: the bare phrase can be faked by the MAP screen (the nav bar has
+            // "CHANGE TEAM" and the map has its own "Base" label), which made the flow skip the
+            // whole Base step. See TeamBasePhraseUp.
+            if (TeamBasePhraseUp(OcrWords())) return true;
             if (PhraseOnScreen("DEPLOY AS DRONE") || PhraseOnScreenWhiten("DEPLOY AS DRONE")) return true;
             if (PhraseOnScreen("WARHEAD") || PhraseOnScreenWhiten("WARHEAD")) return true;
             InvalidateOcr();
@@ -3268,7 +3271,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         try
         {
             // Only act on a CONFIRMED TEAM BASE panel - never guess on another screen.
-            bool onBase = PhraseOnScreen("TEAM BASE") || PhraseOnScreenWhiten("TEAM BASE") || BasePanelVisual();
+            // CORROBORATED. This guard is what let the gold hunt run on the MAP screen: the map
+            // can satisfy the bare phrase, so it went looking for the gold Deploy As Drone button
+            // and found the OBJECTIVES instead - their reward amounts (150$ / 210$ / 100$) are
+            // drawn in the SAME GOLD. That is the "it keeps clicking Get 14 headshots with AS Val".
+            bool onBase = TeamBasePhraseUp(OcrWords());
             if (!onBase) { Log("   Deploy As Drone: not on TEAM BASE - not clicking blindly"); return false; }
 
             // PRIMARY: the panel's own two OPAQUE bars (green Deploy + maroon Return) give the button
