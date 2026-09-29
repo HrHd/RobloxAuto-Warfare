@@ -229,9 +229,11 @@ function drawHud(s, glitching) {
     if (af <= 0.02) continue;
     var half = (d === 0 ? 150 : 70) * sc * lscale * (1 + 0.4 * tilt);
     var ay = cy + yy;
-    // BOUND the bank term (tan is unbounded - a hard bank used to fling the rungs off screen)
-    var shAng = rad, shMax = 55 * Math.PI / 180;
-    if (shAng > shMax) shAng = shMax; if (shAng < -shMax) shAng = -shMax;
+    // The staircase is driven by the RIGHT STICK (stairStick), not the detected roll: the stick
+    // fans the rungs out when the pilot asks, detection wobble can never slide them.
+    var st = (typeof s.stairStick === 'number') ? Math.max(-1, Math.min(1, s.stairStick))
+                                                 : Math.max(-0.96, Math.min(0.96, rad / (55 * Math.PI / 180)));
+    var shAng = st * 55 * Math.PI / 180;
     var shOff = Math.tan(shAng) * yy * shear;
     var shLim = cx * 1.6;
     if (shOff > shLim) shOff = shLim; if (shOff < -shLim) shOff = -shLim;
