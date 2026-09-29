@@ -2360,10 +2360,22 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // Give the map time to finish opening after the DEPLOY click. Panning or zooming a
             // still-loading screen does nothing, so acting too early finds no Base and gives up.
             // Wait for the map to actually be up (POINT / Base on screen), capped.
+            //
+            // HEX SEARCH FIRST (field request): the Base icon is drawn in the player's own team
+            // colour, and one screen grab is enough to find it - no OCR, no zooming, no panning.
+            // The colour scan is verified on real frames (red and blue team, clean and overlapped),
+            // so it runs first every pass; OCR and the zoom/pan passes are only the fallback.
+            int htx, hty;
             Thread.Sleep(300);
             long mapWait = Environment.TickCount;
             while ((Environment.TickCount - mapWait) < 10000 && Alive(g))
             {
+                if (FindBaseTent(out htx, out hty))
+                {
+                    sawBase = true; baseX = htx; baseY = hty;
+                    Log("   Base tent found by colour at (" + baseX + "," + baseY + ") - no scanning needed");
+                    break;
+                }
                 List<Hit> probe = FindPhraseAll("Base", null, OcrWordsWhiten());
                 if (probe.Count == 0) probe = FindPhraseAll("Base", null, OcrWords());
                 if (probe.Count > 0)
@@ -8755,6 +8767,13 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             }
 
             // ---- COLD START: the plain median of the image until the flight settles -------------
+            // QUICK GRAB AT DEPLOY (field request): the median gives an instant line, but it must
+            // NOT block the real scorer - the old code RETURNED here every frame, so on a weak
+            // scene (fog) the scorer never ran until the whole cold window expired and the lock
+            // took 10s. Now the median publishes AND the scorer runs in the same frame; the first
+            // solid scorer fix takes over (it publishes with its own, higher confidence), and
+            // after the cold window things are exactly as they were: scorer only.
+            bool coldMedian = false;
             if (Environment.TickCount < _hudColdUntil)
             {
                 float cSl, cIc, cSky; int cN;
@@ -8767,15 +8786,15 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     HudPublish(cRoll, cPitch, cSky, 0.55f, 400f, 4f);
                     _hnOk = true; _hnTheta = cRoll; _hnM = cSl; _hnK = -cPitch / HD_DS;
                     HudLearnSky(cSl, _hnK, cNorm);
+                    coldMedian = true;
                     if (!_hudColdLogged || Environment.TickCount - _hudLogAt >= 2000)
                     {
                         _hudLogAt = Environment.TickCount; _hudColdLogged = true;
-                        Log("horizon det: COLD START median line - roll " + cRoll.ToString("0") + " deg, sky " +
+                        Log("horizon det: COLD START median line (quick grab) - roll " + cRoll.ToString("0") + " deg, sky " +
                             (cSky * 100f).ToString("0") + "%, " + cN + " onset columns");
                     }
-                    return;
+                    // do NOT return - let the scorer try to beat it this very frame
                 }
-                // no usable median this frame -> fall through to the full scorer
             }
 
             // ---- STAGE 2: keep the sky model current, from the LAST ACCEPTED line --------------
@@ -9025,22 +9044,29 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // comes with it. That is the "it gets lost". Coast instead.
             if (bestScore < 0.5f || (bestScore < 2.5f && (skyFrac2 > 0.90f || skyFrac2 < 0.05f)))
             {
-                _hudDetValid = false;
+                // a scorer miss during the cold start must NOT wipe the median's quick-grab line
+                if (!coldMedian)
+                {
+                    _hudDetValid = false;
+                    if (Environment.TickCount - _hudLogAt >= 2000)
+                    { _hudLogAt = Environment.TickCount; Log("horizon det: no usable sky/ground separation (sep " + bestScore.ToString("0.0") + ") - coasting"); }
+                }
                 _hudNoSkyFrames++;
-                if (Environment.TickCount - _hudLogAt >= 2000)
-                { _hudLogAt = Environment.TickCount; Log("horizon det: no usable sky/ground separation (sep " + bestScore.ToString("0.0") + ") - coasting"); }
                 return;
             }
             if (skyFrac2 < _hudSkyMin)
             {
-                _hudDetValid = false;
-                _hudNoSkyFrames++;
-                if (Environment.TickCount - _hudLogAt >= 2000)
+                if (!coldMedian)
                 {
-                    _hudLogAt = Environment.TickCount;
-                    Log("horizon det: frame DISCARDED - only " + (skyFrac2 * 100f).ToString("0") +
-                        "% verified sky (min " + (_hudSkyMin * 100f).ToString("0") + "%), coasting on stick model");
+                    _hudDetValid = false;
+                    if (Environment.TickCount - _hudLogAt >= 2000)
+                    {
+                        _hudLogAt = Environment.TickCount;
+                        Log("horizon det: frame DISCARDED - only " + (skyFrac2 * 100f).ToString("0") +
+                            "% verified sky (min " + (_hudSkyMin * 100f).ToString("0") + "%), coasting on stick model");
+                    }
                 }
+                _hudNoSkyFrames++;
                 return;
             }
 
