@@ -8879,6 +8879,23 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     }
                 }
             }
+            // ---- SPAWN-DIVE PRIOR -------------------------------------------------------------------
+            // We spawn HIGH and DIVE for speed, so for the first seconds of a flight the nose is
+            // down and the horizon sits HIGH in the frame - the view is mostly ground. A lock that
+            // lands LOW in that window is nearly always a ground edge (a road, a field boundary)
+            // rather than the horizon, so reject it and coast until the dive levels out. Once the
+            // settle window ends the constraint disappears and the normal logic governs.
+            if (_hudSettling && (slope * (W / 2f) + icept) > H * 0.72f)
+            {
+                _hudDetValid = false;
+                _hudDetAt = Environment.TickCount;
+                if (Environment.TickCount - _hudLogAt >= 2000)
+                {
+                    _hudLogAt = Environment.TickCount;
+                    Log("horizon det: LOW lock during the spawn dive (horizon should be high) - rejected, coasting");
+                }
+                return;
+            }
             // GROUND-AS-HORIZON GATE (dial "sky flat"): the band above the line was busy, so what
             // looked like a horizon is really a boundary inside the ground. Throw the frame away.
             if (noSky)
