@@ -6956,6 +6956,29 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // Words that ONLY ever appear on the nav bar, the lobby, the loadout, the map or the panels -
     // NEVER on the drone OSD. Seeing any one of them is proof we are not flying, so the HUD comes
     // down immediately; the 30s timeout only covers the case where the OSD simply reads blank.
+    // Is the screen a menu / loading screen? A frame like that has no horizon and must never be
+    // fed to the estimator. Uses ONLY the cached OCR word list - calling a fresh OCR from the
+    // detector thread would stall it, so a null cache just returns false and the frame is allowed.
+    bool MenuishFrame()
+    {
+        try
+        {
+            List<string[]> ws = _ocrCache;
+            if (ws == null) return false;
+            foreach (string[] w in ws)
+            {
+                string t = (w[4] ?? "").ToUpperInvariant();
+                if (t.Length < 3) continue;
+                // our own username is on every menu and never on the drone OSD
+                if (_userName.Length >= 4 && Norm(t).IndexOf(Norm(_userName)) >= 0) return true;
+                if (t.IndexOf("JOINING") >= 0 || t.IndexOf("CONNECTING") >= 0 ||
+                    t.IndexOf("RESPAWN") >= 0 || t.IndexOf("SPECTAT") >= 0) return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
     // The team score bar runs across the very top: a saturated BLUE block on the left and a
     // saturated RED block on the right of the timer. It is on the soldier view and every menu,
     // but NOT on the drone OSD - so its presence means we are on foot and the HUD must not show.
@@ -8082,6 +8105,18 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     {
         try
         {
+            // NOT-USEFUL FRAMES: a menu / loading screen has no horizon in it, and feeding one to the
+            // estimator poisons it. Our own profile strip (the username is printed on EVERY menu) and
+            // the "Joining server / connecting" loading lines are the give-aways. This reads the
+            // CACHED OCR only - it never triggers a fresh (slow) OCR from the detector thread.
+            if (MenuishFrame())
+            {
+                _hudDetValid = false;
+                if (Environment.TickCount - _hudLogAt >= 2000)
+                { _hudLogAt = Environment.TickCount; Log("horizon det: menu/loading frame (username or Joining on screen) - discarded"); }
+                return;
+            }
+
             int W, H; int[] px = Grab(out W, out H);
             _hudFrameH = H;
             int yTop = H / 12, yBot = H * 80 / 100;
