@@ -1104,7 +1104,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 try
                 {
                     File.WriteAllText(Path.Combine(_appDir, "hudphys.csv"),
-                        "t_ms,sx,sy,lx,ly,vision,detRoll,detPitch,conf,fuseRoll,fusePitch,mRoll,mPitch,modelRollRate,modelPitchRate\r\n");
+                        "t_ms,sx,sy,lx,ly,vision,detRoll,detPitch,conf,fuseRoll,fusePitch,mRoll,mPitch,modelRollRate,modelPitchRate,rollGain,pitchGain\r\n");
                 }
                 catch { }
                 Log("physics log ON - writing hudphys.csv (shaped stick + the horizon the detector measured)");
@@ -8344,6 +8344,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
              .Append(_hudMPitch.ToString("0.0", ci)).Append(',')
              .Append(_kfRollV.ToString("0.00", ci)).Append(',')
              .Append(_kfPitV.ToString("0.00", ci))
+             .Append(',').Append(_kfRollGain.ToString("0.000", ci)).Append(',')
+             .Append(_kfPitGain.ToString("0.000", ci))
              .Append("\r\n");
             File.AppendAllText(Path.Combine(_appDir, "hudphys.csv"), b.ToString());
         }
@@ -8532,7 +8534,25 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     float topFrac = (float)(aTop / dw);
                     float tpm = Smooth01(topFrac, 0.45f, 0.90f);
 
-                    float sc = (float)fisher * tm * mm * tpm;
+                    // TEMPORAL PRIOR: prefer to stay on the edge we were already tracking.
+                    // Without it the detector RE-LOCKS between different terrain edges on busy
+                    // ground and the measurement jumps ~200 px between frames - which is
+                    // physically impossible (a 2000 px/s slew moves 20 px in 10 ms). Those jumps
+                    // are why the pitch measurement is useless on a high, cluttered horizon, and
+                    // why the horizon "messes up a lot" when flying forward. The tolerance grows
+                    // while we have had no accepted frame, so a genuine fast move still gets
+                    // through after a coast.
+                    float prior = 1f;
+                    if (_hnOk)
+                    {
+                        float since = (Environment.TickCount - _hudDetAt) / 1000f;
+                        if (since < 0f) since = 0f; if (since > 2f) since = 2f;
+                        float sig = 45f + 260f * since;
+                        float kCand = smin + (b + 0.5f) * KSTEP;
+                        float dk = kCand - _hnK;
+                        prior = 1f / (1f + (dk * dk) / (sig * sig));
+                    }
+                    float sc = (float)fisher * tm * mm * tpm * (0.3f + 0.7f * prior);
                     if (sc >= bScore) { bScore = sc; bIdx = b; bestTmL = tm; bestMmL = mm; bestTopL = tpm; }
                 }
                 if (bIdx < 0) { thScore[t] = 0f; continue; }
