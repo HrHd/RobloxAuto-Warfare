@@ -230,6 +230,16 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     List<float[]> _refLine = new List<float[]>();
     float[] _refBestLine = null;          // horizon line of the nearest reference (null = none stored)
     bool _refLoaded = false;
+    // DEPLOY REFS (auto-teach): candidates from the first 2s after Deploy As Drone. At the end of
+    // that window, if 3+ candidate lines AGREE, the most confident frame is saved as a
+    // good-auto-* ref so later flights on the same scene match the photo and lock instantly.
+    // Agreement is the guard: a wrong ref would later publish its line at 0.95 confidence.
+    long _autoRefUntil = 0;
+    int _autoRefN = 0;
+    float[] _autoRefR = new float[10];
+    float[] _autoRefP = new float[10];
+    int[] _autoRefPx = null;
+    float _autoRefConf = 0f, _autoSaveRoll = 0f, _autoSavePitch = 0f;
     float _refDist = 0.16f;               // dial "ref match": L2 threshold (0..1) for a match
     float _refD = 9f;                     // last frame's nearest-reference distance
     bool _refGood = true;                 // last frame's nearest-reference label
@@ -3930,7 +3940,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             InvalidateGrab();
             Thread.Sleep(90);
 
-            List<Point> cells = FindWarheadCells(count);
+            List<Point> cells;
+            if (!WarheadCellsFromTitle(count, out cells)) cells = FindWarheadCells(count);
             if (cells.Count <= slot)
             {
                 Log("   found " + cells.Count + " warhead cells, need " + (slot + 1) + " - not clicking");
@@ -4028,7 +4039,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             int slot = idx - 1;
             int count = BombsFor(_drone).Length - 1;
             if (!BasePanelIsDrone(_drone)) { Log("   payload check: the panel is not the " + _drone + " loadout"); return false; }
-            List<Point> cells = FindWarheadCells(count);
+            List<Point> cells;
+            if (!WarheadCellsFromTitle(count, out cells)) cells = FindWarheadCells(count);
             if (cells.Count <= slot) { Log("   payload check: only " + cells.Count + " cells, need slot " + slot); return false; }
             int W, H; int[] px = Grab(out W, out H);
             int cur = GreenSlot(px, W, H, cells, count);
@@ -4307,6 +4319,73 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
     // Find the "Deploy As Drone" button (the lowest match, so the nav-bar DEPLOY is ignored) and
     // return its centre - the anchor the whole warhead grid hangs off.
+    // ---- warhead cells measured from the TEAM BASE TITLE (field request) ------------------------
+    // The panel is a FIXED-SIZE element (it moves horizontally, its size never changes), so once
+    // the "TEAM BASE" title is found every control sits at a constant offset from it. Measured on
+    // a real 1919x1079 capture from the user's own screenshot:
+    //   title centre (950,428); cell centres (843,733) (950,733) (1057,733) (843,794) (950,794)
+    //   -> column dx {-107, 0, +107}, rows dy {+305, +366}, row-major slots 0..2 / 3..4.
+    // This is the PRIMARY warhead measurement; the colour-cluster fit stays as the fallback.
+    static readonly int[] WhColDx = { -107, 0, 107 };
+    static readonly int[] WhRowDy = { 305, 366 };
+
+    float CellGreyFrac(int[] px, int W, int H, int cx, int cy)
+    {
+        int grey = 0, n = 0;
+        for (int dy = -20; dy <= 20; dy += 4)
+            for (int dx = -40; dx <= 40; dx += 4)
+            {
+                int x = cx + dx, y = cy + dy;
+                if (x < 0 || y < 0 || x >= W || y >= H) continue;
+                int v = px[y * W + x];
+                int b = v & 0xFF, g = (v >> 8) & 0xFF, r = (v >> 16) & 0xFF;
+                int mx = Math.Max(r, Math.Max(g, b)), mn = Math.Min(r, Math.Min(g, b));
+                if ((mx - mn) <= 14 && r >= 55 && r <= 125) grey++;
+                n++;
+            }
+        return n > 0 ? (float)grey / n : 0f;
+    }
+
+    bool WarheadCellsFromTitle(int count, out List<Point> cells)
+    {
+        cells = new List<Point>();
+        List<Hit> h = FindPhraseAll("TEAM BASE", null, OcrWords());
+        if (h.Count == 0) h = FindPhraseAll("TEAM BASE", null, OcrWordsWhiten());
+        if (h.Count == 0) return false;
+        int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
+        int bi = -1;
+        for (int i = 0; i < h.Count; i++)
+        {
+            if (h[i].X < W * 20 / 100 || h[i].X > W * 80 / 100) continue;
+            if (h[i].Y < H * 20 / 100 || h[i].Y > H * 80 / 100) continue;
+            if (bi < 0 || h[i].Quality > h[bi].Quality) bi = i;
+        }
+        if (bi < 0) return false;
+        double sx = W / 1920.0, sy = H / 1080.0;
+        for (int i = 0; i < count; i++)
+        {
+            int col = i % 3, row = i / 3;
+            if (row >= WhRowDy.Length) break;
+            cells.Add(new Point(
+                h[bi].X + (int)Math.Round(WhColDx[col] * sx),
+                h[bi].Y + (int)Math.Round(WhRowDy[row] * sy)));
+        }
+        // VALIDATE against the pixels: each cell face must read as panel UI (grey or green), never
+        // bare terrain. If the title hit was wrong this fails and the caller falls back to the fit.
+        int gW, gH; int[] gpx = Grab(out gW, out gH);
+        int okN = 0;
+        for (int i = 0; i < cells.Count; i++)
+        {
+            float gv = CellGreenFrac(gpx, gW, gH, cells[i].X, cells[i].Y);
+            float gr = CellGreyFrac(gpx, gW, gH, cells[i].X, cells[i].Y);
+            if (gv > 0.10f || gr > 0.30f) okN++;
+        }
+        bool pass = okN >= Math.Min(4, cells.Count);
+        Log("   panel title (" + h[bi].X + "," + h[bi].Y + ") -> " + cells.Count + " cells, " + okN +
+            " validated " + (pass ? "- using them" : "- rejected, falling back"));
+        return pass;
+    }
+
     bool WarheadAnchor(out int ax, out int ay)
     {
         ax = 0; ay = 0;
@@ -6864,6 +6943,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 _hudSettling = true;   // hold the ladder still while the spawn pose settles
                 _hudSettleUntil = Environment.TickCount + _hudSettleMs;
                 _seedN = 0; _hudSettleExt = 0;
+                // DEPLOY REFS: those same first seconds are the auto-teach window - good frames can
+                // become a reference photo at the end of it (AutoSaveRef). 2s, as requested.
+                _autoRefUntil = Environment.TickCount + 2000;
+                _autoRefN = 0; _autoRefPx = null; _autoRefConf = 0f;
                 _hudColdUntil = Environment.TickCount + _hudColdMs;   // first 10s = plain median of the image
                 _hudColdLogged = false;
                 if (_physLog) PhysLogReset("deploy as drone");
@@ -8136,6 +8219,72 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         catch (Exception ex) { Log("capture ref failed: " + ex.Message); }
     }
 
+    // DEPLOY REF SAVE. Called when the deploy window ends. Saves ONE reference photo when the
+    // candidates AGREED - 3+ lines within 6 deg / 120 px - using the most confident frame. If they
+    // disagreed (view swinging, fog rolling in) nothing is written: a bad ref is worse than none,
+    // because a matching frame later adopts its line at 0.95 confidence.
+    void AutoSaveRef()
+    {
+        try
+        {
+            if (_autoRefN < 3 || _autoRefPx == null)
+            {
+                Log("   deploy refs: only " + _autoRefN + " good frames in the first 2s - nothing saved");
+                return;
+            }
+            float rmin = _autoRefR[0], rmax = _autoRefR[0], pmin = _autoRefP[0], pmax = _autoRefP[0];
+            for (int i = 1; i < _autoRefN; i++)
+            {
+                if (_autoRefR[i] < rmin) rmin = _autoRefR[i]; if (_autoRefR[i] > rmax) rmax = _autoRefR[i];
+                if (_autoRefP[i] < pmin) pmin = _autoRefP[i]; if (_autoRefP[i] > pmax) pmax = _autoRefP[i];
+            }
+            if (rmax - rmin > 6f || pmax - pmin > 120f)
+            {
+                Log("   deploy refs: " + _autoRefN + " frames disagreed (roll spread " + (rmax - rmin).ToString("0") +
+                    " deg, pitch spread " + (pmax - pmin).ToString("0") + "px) - nothing saved");
+                return;
+            }
+            string dir = Path.Combine(_appDir, "hudref");
+            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            string baseName = "good-auto-" + _hudScene + "-" + DateTime.Now.ToString("HHmmss");
+            int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
+            float[] sig;
+            using (Bitmap b = new Bitmap(W, H, System.Drawing.Imaging.PixelFormat.Format32bppRgb))
+            {
+                System.Drawing.Imaging.BitmapData bd = b.LockBits(new Rectangle(0, 0, W, H),
+                    System.Drawing.Imaging.ImageLockMode.WriteOnly, b.PixelFormat);
+                int stride = bd.Stride;
+                byte[] buf = new byte[stride * H];
+                for (int y = 0; y < H; y++)
+                {
+                    int ro = y * stride, so = y * W;
+                    for (int x = 0; x < W; x++)
+                    {
+                        int c = _autoRefPx[so + x];
+                        buf[ro + x * 4] = (byte)(c & 0xFF);
+                        buf[ro + x * 4 + 1] = (byte)((c >> 8) & 0xFF);
+                        buf[ro + x * 4 + 2] = (byte)((c >> 16) & 0xFF);
+                        buf[ro + x * 4 + 3] = 255;
+                    }
+                }
+                System.Runtime.InteropServices.Marshal.Copy(buf, 0, bd.Scan0, buf.Length);
+                b.UnlockBits(bd);
+                sig = SigFromBitmap(b);
+                b.Save(Path.Combine(dir, baseName + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
+            File.WriteAllText(Path.Combine(dir, baseName + ".hzn"),
+                "roll=" + _autoSaveRoll.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                "\r\npitch=" + _autoSavePitch.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            _refSigs.Add(sig);
+            _refGoodL.Add(true);
+            _refLine.Add(new float[] { _autoSaveRoll, _autoSavePitch });
+            _refLoaded = true;
+            Log("   deploy ref saved: " + baseName + " at roll " + _autoSaveRoll.ToString("0.0") +
+                " deg / pitch " + _autoSavePitch.ToString("0") + " px (" + _autoRefN + " frames agreed)");
+        }
+        catch (Exception e) { Log("   deploy ref save failed: " + e.Message); }
+    }
+
     // Nearest reference by signature distance (0 = identical). Returns the distance and the label.
     float MatchRefs(float[] sig, out bool good, out float[] line)
     {
@@ -9149,6 +9298,22 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _hnOk = true; _hnTheta = theta; _hnM = mFin; _hnK = kFinal;
             _hudTrkM = mFin; _hudTrkB = cy - mFin * cx - normF * kFinal;
             _hudTrkAt = Environment.TickCount;
+
+            // DEPLOY REF CANDIDATES. Window-end is checked FIRST so a full candidate list can
+            // never skip the save. Only confident lines join, and the best one's FRAME is kept.
+            if (_autoRefUntil != 0)
+            {
+                if (Environment.TickCount >= _autoRefUntil) { _autoRefUntil = 0; AutoSaveRef(); }
+                else if (conf >= 0.5f && _autoRefN < _autoRefR.Length)
+                {
+                    _autoRefR[_autoRefN] = theta; _autoRefP[_autoRefN] = pitchPerp; _autoRefN++;
+                    if (_autoRefPx == null || conf >= _autoRefConf)
+                    {
+                        _autoRefPx = (int[])px.Clone();     // the exact frame to save as the photo
+                        _autoRefConf = conf; _autoSaveRoll = theta; _autoSavePitch = pitchPerp;
+                    }
+                }
+            }
 
             // scene classifier (informational) + the "trained on your photos" override
             if (_hudSceneTick++ % 20 == 0)
