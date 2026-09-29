@@ -7962,8 +7962,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         if (!_kfSeeded)
         {
             _kfSeeded = true;
-            _kfRollX = _hudFRoll;
-            _kfPitX = (float)(Math.Atan(_hudFPitch / f) * 180.0 / Math.PI);
+            // SEED FROM THE FIRST MEASUREMENT when one is available. This used to seed from
+            // _hudFRoll/_hudFPitch, which still held the PREVIOUS flight values (often 0), so for the
+            // first seconds of every deploy the ladder sat at the screen centre while the horizon was
+            // hundreds of px away, waiting for the filter to walk across. Seen live: HUD pit 0 against
+            // a measured -313.
+            bool seedFromMeas = _hudDetValid && (now - _hudDetAt) < 2000;
+            _kfRollX = seedFromMeas ? _hudMRoll : _hudFRoll;
+            _kfPitX = seedFromMeas ? HudPxToDeg(_hudMPitch) : (float)(Math.Atan(_hudFPitch / f) * 180.0 / Math.PI);
             _kfRollV = 0f; _kfPitV = 0f;
             _kfRollOb = 0f; _kfPitOb = 0f;
             _kfRollP = 25f; _kfPitP = 25f;
@@ -8073,8 +8079,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // measurement pull harder for this frame - otherwise the capped gain takes many seconds
             // to walk the line back and it looks like it never recovers.
             float coastBefore = _hudCoastMs; _hudCoastMs = 0f;
-            float gainCap = 0.30f;
-            if (coastBefore > 1500f) gainCap = 0.30f + 0.40f * Math.Min(1f, (coastBefore - 1500f) / 2500f);
+            // The steady-state lag is proportional to 1/gain, so a 0.30 ceiling left the line a
+            // constant ~60 px behind the measurement (measured: 50-90 px on every sample). The rate
+            // state is driven by the stick only these days, so a stiffer position gain no longer
+            // differentiates noise and cannot make the ladder whip - the old reason for the low cap.
+            float gainCap = 0.50f;
+            if (coastBefore > 1500f) gainCap = 0.50f + 0.40f * Math.Min(1f, (coastBefore - 1500f) / 2500f);
             if (aR > gainCap) aR = gainCap;
             if (aP > gainCap) aP = gainCap;
             // RE-ACQUIRE FLOOR. The gain above can come out TINY - aP = P/(P+Rp) with Rp inflated
