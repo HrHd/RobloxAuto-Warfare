@@ -256,6 +256,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     int _hudBigPn = 0, _hudBigPat = 0, _hudBigPsg = 0;   // consecutive large PITCH innovations
     bool _hudParserOn = true;                     // dial "parser" (settings.ini hudParser): 1 = on
     float _hudParserScore = 0f;                   // last section-parser confidence (log only)
+    float _hudParserK = 0f;                       // last parser line (working px), log only
+    float _hudColK = 0f;                          // last 3-centre-column vote line (working px)
+    int _hudColAgree = 0;                         // columns that agreed with the middle one
+    bool _hudColOk = false;                       // the vote produced a usable line
+    int _watchAt = 0;                             // hwatch frame throttle
     float _hudSceneTol = 0.10f;                   // max RMS distance to claim a scene match
     int _hudSceneTick = 0;
     float _hudSkyMin = 0.10f;                      // dial "sky min": discard a frame with less verified sky than this
@@ -9067,6 +9072,75 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         kOut = bestK; score = bestSc;
     }
 
+    // ---- 3 CENTRE COLUMNS VOTE (the field idea, PASSIVE - never steers the lock) -------------
+    // Three columns through the centre of the view (middle +-12% width). Each finds the row where
+    // the mean of everything ABOVE differs most from the mean of everything BELOW (prefix sums,
+    // so a GRADUAL fog boundary still separates - a local edge test finds only the canopy, which
+    // is exactly what we must not chase). Row -> line constant k through the CURRENT ANGLE (roll
+    // handled by mapping, the columns stay vertical). Middle column double weight; a flanker
+    // within 9 working px agrees; needs middle + one flanker.
+    bool HudColVote(float thetaPrior, out float kOut, out int nAgree)
+    {
+        kOut = 0f; nAgree = 0;
+        int mw = _hdW, mh = _hdH;
+        if (_hdL == null || mw < 64 || mh < 48) return false;
+        float cx = mw * 0.5f, cy = mh * 0.5f;
+        float m = (float)Math.Tan(thetaPrior * Math.PI / 180.0);
+        float norm = (float)Math.Sqrt(1 + m * m);
+        float[] offs = new float[] { -0.12f, 0f, 0.12f };
+        float[] kv = new float[3]; bool[] okv = new bool[3];
+        double[] pL = new double[mh + 1]; double[] pB = new double[mh + 1];
+        for (int i = 0; i < 3; i++)
+        {
+            int gx = (int)(cx + offs[i] * mw);
+            if (gx < 12 || gx >= mw - 12) { okv[i] = false; continue; }
+            for (int y = 0; y < mh; y++) { int idx = y * mw + gx; pL[y + 1] = pL[y] + _hdL[idx]; pB[y + 1] = pB[y] + _hdBR[idx]; }
+            float bestD = -1f; int bestY = -1;
+            int y0 = mh / 8, y1 = mh * 7 / 8;
+            for (int y = y0; y < y1; y++)
+            {
+                double aL = pL[y] / y, aB = pB[y] / y;
+                double bL = (pL[mh] - pL[y]) / (mh - y), bB = (pB[mh] - pB[y]) / (mh - y);
+                float d = (float)Math.Sqrt((aL - bL) * (aL - bL) + 0.6 * (aB - bB) * (aB - bB));
+                if (d > bestD) { bestD = d; bestY = y; }
+            }
+            if (bestY < 0) { okv[i] = false; continue; }
+            okv[i] = bestD >= 6f;
+            kv[i] = ((gx - cx) * m - (bestY - cy)) / norm;
+        }
+        if (!okv[1]) return false;
+        int ag = 1; float sum = 2f * kv[1]; float wsum = 2f;
+        for (int i = 0; i < 3; i += 2)
+            if (okv[i] && Math.Abs(kv[i] - kv[1]) <= 9f) { ag++; sum += kv[i]; wsum += 1f; }
+        kOut = sum / wsum; nAgree = ag;
+        return ag >= 2;
+    }
+
+    // save the frame into hwatch\ when the passive vote strongly disagrees with what we published
+    void SaveWatchFrame(float pubPitch, float colPitch)
+    {
+        try
+        {
+            if (Environment.TickCount - _watchAt < 4000) return;
+            _watchAt = Environment.TickCount;
+            string dir = Path.Combine(System.Windows.Forms.Application.StartupPath, "hwatch");
+            System.IO.Directory.CreateDirectory(dir);
+            int W, H; int[] px = Grab(out W, out H);
+            using (Bitmap bmp = new Bitmap(W, H, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            {
+                System.Drawing.Imaging.BitmapData bd = bmp.LockBits(new Rectangle(0, 0, W, H),
+                    System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                Marshal.Copy(px, 0, bd.Scan0, px.Length);
+                bmp.UnlockBits(bd);
+                string nm = "vote_" + DateTime.Now.ToString("HHmmss") +
+                    "_pub" + ((int)pubPitch) + "_col" + ((int)colPitch) + ".png";
+                bmp.Save(Path.Combine(dir, nm), System.Drawing.Imaging.ImageFormat.Png);
+                Log("hwatch frame saved: published " + ((int)pubPitch) + "px vs vote " + ((int)colPitch) + "px (" + nm + ")");
+            }
+        }
+        catch { }
+    }
+
     void DetectHorizon()
     {
         try
@@ -9338,6 +9412,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float thetaS, kS, scoreS;
             HudSectionParse(theta, out thetaS, out kS, out scoreS);
             _hudParserScore = scoreS;
+            _hudParserK = kS;
+            // passive test instrumentation: the 3-centre-column vote, computed but never used to
+            // move the line - it is logged and it drops frames when it disagrees with us.
+            _hudColOk = HudColVote(theta, out _hudColK, out _hudColAgree);
             // 0.15 bar: the true-horizon forest line scores 0.21; a diagonal shadow band that
             // used to win scores 0.12. Weak frames (fisher sep < 0.5) are discarded later anyway.
             bool parserOn = _hudParserOn && scoreS >= 0.15f;
@@ -9591,6 +9669,13 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
             _hudDetValid = true;
             _hudDetAt = Environment.TickCount;
+            // PASSIVE VOTE TEST: if the 3-column vote strongly disagrees with the line that is
+            // about to be published, keep the screenshot in hwatch\ for offline review.
+            {
+                float pubPitch = -kFinal * HD_DS;
+                float colPitch = -_hudColK * HD_DS;
+                if (_hudColOk && Math.Abs(pubPitch - colPitch) > 40f) SaveWatchFrame(pubPitch, colPitch);
+            }
             if (Environment.TickCount - _hudLogAt >= 2000)
             {
                 _hudLogAt = Environment.TickCount;
@@ -9599,7 +9684,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     "%, sep " + bestScore.ToString("0.0") + " (next angle " + second.ToString("0.0") + "), onset " +
                     onN + ", clutter " + (_hudClutter * 100f).ToString("0") + "%, sky-model " +
                     (_skyModelOk ? "on" : "none") + ", scene " + _hudScene +
-                    ", parser " + _hudParserScore.ToString("0.00") +
+                    ", parser " + _hudParserScore.ToString("0.00") + "@" + (-_hudParserK * HD_DS).ToString("0") + "px" +
+                    ", colvote " + (_hudColOk ? (-_hudColK * HD_DS).ToString("0") + "px/" + _hudColAgree : "no/" + _hudColAgree) +
                     (refHit ? "  REF-ANSWER" : ""));
             }
         }
