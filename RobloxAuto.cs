@@ -127,6 +127,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // frames are garbage. Hold the ladder still for a few seconds, collect what the detector sees,
     // then lock from the MEDIAN of those samples instead of trusting one frame.
     volatile bool _hudSettling = false;
+    // COLD START. For the first seconds of a flight the detector is at its most likely to latch
+    // onto terrain and swing the ladder, so it is ordered to stop being clever and just report the
+    // MEDIAN of the image until this expires. See MedianHorizonLine.
+    int _hudColdMs = 10000;
+    volatile int _hudColdUntil = 0;
+    bool _hudColdLogged = false;
     int _hudSettleMs = 2500;
     long _hudSettleUntil = 0;
     float[] _seedR = new float[80];
@@ -6050,6 +6056,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudSkyMin") _hudSkyMin = ParseF(v) / 100f;
             else if (k == "hudSkyFlat") _hudSkyFlatMax = ParseF(v) / 100f;
             else if (k == "hudSettleMs") { _hudSettleMs = (int)ParseF(v); if (_hudSettleMs < 0) _hudSettleMs = 0; if (_hudSettleMs > 60000) _hudSettleMs = 60000; }
+            else if (k == "hudColdMs") { _hudColdMs = (int)ParseF(v); if (_hudColdMs < 0) _hudColdMs = 0; if (_hudColdMs > 60000) _hudColdMs = 60000; }
             else if (k == "uav") _hudStyleUav = v == "1";
             else if (k == "night") _nightVision = v == "1";
             else if (k == "nightKey") { try { _hkNightKey = (uint)int.Parse(v); } catch { } }
@@ -6136,7 +6143,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudMsTau=" + _hudMsTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSkyMin=" + (_hudSkyMin * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSkyFlat=" + (_hudSkyFlatMax * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "hudSettleMs=" + _hudSettleMs,
+            "hudSettleMs=" + _hudSettleMs, "hudColdMs=" + _hudColdMs,
             "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -6668,6 +6675,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 _hudSettling = true;   // hold the ladder still while the spawn pose settles
                 _hudSettleUntil = Environment.TickCount + _hudSettleMs;
                 _seedN = 0; _hudSettleExt = 0;
+                _hudColdUntil = Environment.TickCount + _hudColdMs;   // first 10s = plain median of the image
+                _hudColdLogged = false;
+                Log("   cold start: using the plain median horizon for the first " + (_hudColdMs / 1000) + "s while a solid line builds");
                 Log("   spawn settle: holding the horizon for " + (_hudSettleMs / 1000) + "s and averaging what we see");
                 long lockArmedAt = Environment.TickCount + 1200;   // skip the base panel/map frames
                 long lastOcr = 0;      // slower cadence: NO SIGNAL / LINK / heading / AGL
@@ -8175,6 +8185,71 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         _hudFPitch = HudDegToPx(_kfPitX);
     }
 
+    // ---- COLD-START HORIZON: "just the median of the image" ------------------------------------
+    // Deliberately dumb and deliberately robust. Walk down every column from the top and find the
+    // first row where the picture stops looking like the sky at the top of the frame; the horizon
+    // is the MEDIAN of those rows. A median is not dragged anywhere by a single road, wall or
+    // bright patch, which is the whole point: for the first seconds of a flight we would rather be
+    // boringly stable than clever and wrong. The slope comes from a robust fit so banking still
+    // tracks; if the fit will not settle, we fall back to a FLAT line at the median row.
+    bool MedianHorizonLine(int[] px, int W, int H, out float mslope, out float micept, out float sky, out int ninl)
+    {
+        mslope = 0f; micept = H * 0.5f; sky = 0.5f; ninl = 0;
+        double ss = 0; int sn = 0;
+        for (int y = 4; y < H / 14; y += 2)
+            for (int x = W / 10; x < W * 9 / 10; x += 8)
+            { int c = px[y * W + x]; ss += 0.299 * ((c >> 16) & 0xFF) + 0.587 * ((c >> 8) & 0xFF) + 0.114 * (c & 0xFF); sn++; }
+        if (sn == 0) return false;
+        float sLy = (float)(ss / sn);
+        double gs = 0; int gn = 0;
+        for (int y = H * 86 / 100; y < H * 95 / 100; y += 4)
+            for (int x = W / 10; x < W * 9 / 10; x += 10)
+            { int c = px[y * W + x]; gs += 0.299 * ((c >> 16) & 0xFF) + 0.587 * ((c >> 8) & 0xFF) + 0.114 * (c & 0xFF); gn++; }
+        if (gn == 0) return false;
+        float gLy = (float)(gs / gn);
+        float dly = Math.Abs(gLy - sLy);
+        // A WEAK sky/ground step is exactly where the median is untrustworthy: the "first row that
+        // leaves the sky" then trips on noise just under the top band and reports a horizon near
+        // the top of the frame. Measured live: a clean frame steps ~114, a hazy fog/grey frame only
+        // ~18. Below 30 we hand the frame to the normal detector instead of guessing.
+        if (dly < 30f) return false;
+
+        int cap = W / 8 + 8;
+        float[] onX = new float[cap], onY = new float[cap]; int onN = 0;
+        for (int x = W / 10; x < W * 9 / 10; x += 8)
+        {
+            for (int y = H / 14; y < H * 82 / 100 - 6; y += 2)
+            {
+                int c = px[y * W + x];
+                float l = 0.299f * ((c >> 16) & 0xFF) + 0.587f * ((c >> 8) & 0xFF) + 0.114f * (c & 0xFF);
+                if (Math.Abs(l - sLy) > 0.30f * dly)
+                {
+                    int q = px[(y + 4) * W + x];
+                    float l2 = 0.299f * ((q >> 16) & 0xFF) + 0.587f * ((q >> 8) & 0xFF) + 0.114f * (q & 0xFF);
+                    if (Math.Abs(l2 - sLy) > 0.27f * dly) { if (onN < cap) { onX[onN] = x; onY[onN] = y; onN++; } }
+                    break;
+                }
+            }
+        }
+        ninl = onN;
+        if (onN < 25) return false;                        // not enough of the frame agrees - skip
+
+        float[] onW = new float[onN];
+        for (int i = 0; i < onN; i++) onW[i] = 3f;
+        float om, ob, osig; int oinl;
+        if (FitLineRobust(onX, onY, onW, onN, out om, out ob, out osig, out oinl)
+            && oinl >= onN * 6 / 10 && Math.Abs(om) < 1.0f)
+        { mslope = om; micept = ob; }
+        else
+        {
+            float[] sy = new float[onN]; Array.Copy(onY, sy, onN); Array.Sort(sy);
+            mslope = 0f; micept = sy[onN / 2];             // flat line at the MEDIAN row
+        }
+        float cy = mslope * (W / 2f) + micept;
+        sky = cy / H; if (sky < 0f) sky = 0f; if (sky > 1f) sky = 1f;
+        return true;
+    }
+
     void DetectHorizon()
     {
         try
@@ -8230,6 +8305,45 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     { _hudLogAt = Environment.TickCount; Log("horizon det: flat frame (spread " + spread.ToString("0") + ") - skipped"); }
                     return;
                 }
+            }
+
+            // ---- COLD START ---------------------------------------------------------------------
+            // First seconds of a flight: the full detector is the thing most likely to swing the
+            // ladder - it hunts for a strong sky/ground transition and terrain happily supplies one.
+            // So until the cold window closes we skip it entirely and hand the estimator the plain
+            // median-of-the-image line instead. Boring on purpose: it cannot be yanked sideways by
+            // one bad frame. When the window closes the normal detector takes over, by which point
+            // there is a solid line to fall back on.
+            if (Environment.TickCount < _hudColdUntil)
+            {
+                float cSl, cIc, cSky; int cN;
+                // Also demand the line lands somewhere a horizon actually can be. A median that says
+                // "the horizon is 7% from the top" is almost always a mis-read top band, and locking
+                // the ladder there for the whole cold window is worse than letting the real detector
+                // have the frame. Outside this band we fall through instead.
+                if (MedianHorizonLine(px, W, H, out cSl, out cIc, out cSky, out cN)
+                    && cSky > 0.12f && cSky < 0.88f)
+                {
+                    float cRoll = (float)(Math.Atan(cSl) * 180.0 / Math.PI);
+                    if (cRoll > 45f) cRoll = 45f; if (cRoll < -45f) cRoll = -45f;
+                    float cPitch = (cSl * (W / 2f) + cIc) - H / 2f;
+                    _hudSmSeeded = false;                    // let the smoother re-seed off the median
+                    _hudDetRoll = cRoll; _hudDetPitch = cPitch;
+                    _hudDetSky = cSky; _hudDetConf = 0.55f;
+                    _hudMConf = 0.55f;                       // this is the one the fusion actually reads
+                    _hudMRoll = cRoll; _hudMPitch = cPitch;
+                    _hudMPitchVar = 400f; _hudMRollVar = 4f;
+                    _hudTrkM = cSl; _hudTrkB = cIc; _hudTrkAt = Environment.TickCount;
+                    _hudDetValid = true; _hudDetAt = Environment.TickCount;
+                    if (!_hudColdLogged || Environment.TickCount - _hudLogAt >= 2000)
+                    {
+                        _hudLogAt = Environment.TickCount; _hudColdLogged = true;
+                        Log("horizon det: COLD START median line - roll " + cRoll.ToString("0") + " deg, sky " +
+                            (cSky * 100f).ToString("0") + "%, " + cN + " onset columns");
+                    }
+                    return;
+                }
+                // no usable median this frame -> fall through to the normal detector
             }
 
             int maxPts = W / 4 + 4;
