@@ -8904,7 +8904,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 float dly = Math.Abs(gLy - sLy);
                 if (dly > 10f)
                 {
-                    int onN = 0; float[] onY = new float[W / 12 + 4];
+                    int onN = 0; float[] onY = new float[W / 12 + 4]; float[] onX = new float[W / 12 + 4];
                     for (int x = W / 10; x < W * 9 / 10; x += 12)
                     {
                         for (int y = H / 14; y < H * 82 / 100 - 6; y += 2)
@@ -8919,17 +8919,46 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                                 float l2 = axUseLum
                                     ? 0.299f * ((q >> 16) & 0xFF) + 0.587f * ((q >> 8) & 0xFF) + 0.114f * (q & 0xFF)
                                     : (q & 0xFF) - ((q >> 16) & 0xFF);
-                                if (Math.Abs(l2 - sLy) > 0.27f * dly) { if (onN < onY.Length) onY[onN++] = y; }
+                                if (Math.Abs(l2 - sLy) > 0.27f * dly)
+                                { if (onN < onY.Length) { onX[onN] = x; onY[onN] = y; onN++; } }
                                 break;
                             }
                         }
                     }
                     if (onN >= 25)
                     {
+                        // SECOND SYSTEM, from the same pixels but parsed properly. The per-column "first
+                        // row that leaves the sky" IS the horizon, one sample per column - far more of
+                        // the frame than the block-gradient search uses, and far harder to fool with a
+                        // texture edge inside the ground (a road has sky ABOVE it neither column-by-
+                        // column nor in bulk). Fit a robust line through those points (RANSAC + TLS +
+                        // Huber, the same fitter used elsewhere) and blend toward it. The old code only
+                        // stole the HEIGHT and kept the block search's slope, throwing away half of
+                        // what the onset points were telling us.
+                        float[] wts = new float[onN];
+                        for (int i = 0; i < onN; i++) wts[i] = 3f;
+                        float om, ob, osig; int oinl;
+                        bool onFit = FitLineRobust(onX, onY, wts, onN, out om, out ob, out osig, out oinl)
+                                     && oinl >= onN * 6 / 10 && Math.Abs(om) < 1.0f;
+                        float med;
                         Array.Sort(onY, 0, onN);
-                        float med = onY[onN / 2];
+                        med = onY[onN / 2];
                         float cy = slope * (W / 2f) + icept;
-                        if (cy > med + 30f)          // the fit is BELOW the sky onset -> pull it up
+                        if (onFit)
+                        {
+                            // trust the onset line; blend so a wild fit cannot slam the ladder
+                            float onYc = om * (W / 2f) + ob;
+                            if (onYc < cy - 20f || Math.Abs(om - slope) > 0.25f)
+                            {
+                                slope = 0.30f * slope + 0.70f * om;
+                                icept = 0.30f * icept + 0.70f * ob;
+                                float hf5 = (slope * (W / 2f) + icept) / H;
+                                if (hf5 < 0f) hf5 = 0f; if (hf5 > 1f) hf5 = 1f;
+                                detSky = hf5;
+                                onsetAnchored = true;
+                            }
+                        }
+                        else if (cy > med + 30f)     // no usable fit - at least pull the HEIGHT up
                         {
                             icept = med - slope * (W / 2f);
                             float hf4 = (slope * (W / 2f) + icept) / H;
