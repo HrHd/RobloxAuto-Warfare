@@ -8153,8 +8153,13 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // SECOND of correction against a 1300 px error, which looks like it is simply stuck.
             // A large innovation that the gate accepted deserves a decisive pull.
             float floorR = 0.05f, floorP = 0.05f;
-            if (Math.Abs(ir) > 4f) floorR = 0.20f;      // ~50 px at f=704
-            if (Math.Abs(ip) > 4f) floorP = 0.20f;
+            // ...but a GENUINE divergence must still be rescued fast. The detector only PUBLISHES
+            // every 2-3 s in practice (it discards most frames), so a 0.20 gain closes a 500 px
+            // error at about 10%/second - twenty to thirty seconds - while the model keeps
+            // integrating. Measured live: fused +168 against a measured -324, drifting further
+            // apart. A large innovation therefore pulls hard; a small one still barely moves it.
+            if (Math.Abs(ir) > 4f) floorR = 0.55f;      // ~50 px at f=704
+            if (Math.Abs(ip) > 4f) floorP = 0.55f;
             if (aR < floorR) aR = floorR;
             if (aP < floorP) aP = floorP;
 
