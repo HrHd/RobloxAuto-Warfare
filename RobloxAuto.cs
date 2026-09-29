@@ -260,6 +260,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudTreeBelow = 0f;                     // parser vote: fraction of sections under the line that are canopy
     float _hudTreeBelowSm = 0f;                   // ...smoothed ~2s, drives the tree trim
     int _treeLogAt = 0;                           // "trees de-value the vision" log throttle
+    float _expK = 0f;                             // stick-model predicted line change since the last fix (working px)
+    float _prevFPit = 0f;                         // previous tick's fused pitch, for the accumulation above
+    bool _expSeeded = false;
+    int _pubContraN = 0, _pubContraAt = 0, _pubContraSg = 0;   // publish-vs-stick-model contradiction persistence
     int _lgRTot = 0, _lgPTot = 0;                 // stick fine-tune sample counts (per flight, log)
     int _lgLogAt = 0;                             // fine-tune log throttle
     float _hudColK = 0f;                          // last 3-centre-column vote line (working px)
@@ -5821,6 +5825,16 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         float kOut = 1f - (float)Math.Pow(0.5, dt / 0.09f);
         _hudRoll += (rawRoll - _hudRoll) * kOut;
         _hudPitch += (rawPitch - _hudPitch) * kOut;
+        // STICK SAY (field): while the vision is blind, accumulate what the STICKS have moved the
+        // fused line by - that IS the model's prediction, since the model is all that is running.
+        // The vote acceptance then checks a vote against (last fix + this), not just a raw envelope:
+        // held forward -> the line must have moved; flying level -> it cannot have flown.
+        if (!(_hudDetValid && (Environment.TickCount - _hudDetAt) < 2000))
+        {
+            if (_expSeeded) _expK += (_hudFPitch - _prevFPit) / HD_DS;
+            _prevFPit = _hudFPitch; _expSeeded = true;
+        }
+        else { _expK = 0f; _expSeeded = false; }
         if (_physLog) PhysLogLine();                       // 50 Hz: fast stick work included
 
         // Simulated FPV pack voltage. It starts at half, rises with throttle (left stick Y up), and
@@ -7050,7 +7064,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _homeLastM = -1f; _homeLastText = null; _homeLastAt = 0;
             _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
             _hudPitchVel = 0f; _hudRollVel = 0f; _hudPitStickSm = 0f; _hudRollStickSm = 0f; _hudSkySm = 1f;   // start each flight clean
-            _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f; _hudStairSm = 0f; _hudTreeBelowSm = 0f;           // reset the weighted average
+            _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f; _hudStairSm = 0f; _hudTreeBelowSm = 0f; _expK = 0f; _expSeeded = false; _pubContraN = 0;           // reset the weighted average
             _kfSeeded = false; _kfRollV = 0f; _kfPitV = 0f; _kfRollOb = 0f; _kfPitOb = 0f; _kfMeasAt = 0;                 // reset the estimator
             _kfRollGain = 1f; _kfPitGain = 1f; _kfRollP = 25f; _kfPitP = 25f; _kfRollZAt = 0; _kfPitZAt = 0; _lgRTot = 0; _lgPTot = 0;
             _kfSmSeeded = false; _kfSmRoll = 0f; _kfSmPit = 0f;
@@ -8313,9 +8327,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 {
                     rr2.Sort();
                     float p95 = rr2[(int)(rr2.Count * 0.95)];
-                    _rollEnvVote = p95 * 1.5f;
-                    if (_rollEnvVote < 40f) _rollEnvVote = 40f;
-                    if (_rollEnvVote > 80f) _rollEnvVote = 80f;
+                    _rollEnvVote = p95 * 2.0f;
+                    if (_rollEnvVote < 55f) _rollEnvVote = 55f;   // real acro banks routinely pass 50 deg
+                    if (_rollEnvVote > 90f) _rollEnvVote = 90f;
                     Log("vote envelope learned from " + rr2.Count + " good refs: roll up to +-" + _rollEnvVote.ToString("0") + " deg");
                 }
             }
@@ -8686,7 +8700,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 int sg = ir > 0f ? 1 : -1;
                 if (Environment.TickCount - _hudBigRat < 1200 && sg == _hudBigRsg) _hudBigRn++; else _hudBigRn = 1;
                 _hudBigRat = Environment.TickCount; _hudBigRsg = sg;
-                if (_hudBigRn >= 3) floorR = 0.55f;
+                // after a genuine blind stretch the FIRST confident fix may save immediately -
+                // the 3-frame persistence rule is for lone bad frames with vision flowing, not
+                // for the rescue that follows a real coast.
+                if (_hudBigRn >= 3 || coastBefore > 1200f) floorR = 0.55f;
             }
             else _hudBigRn = 0;
             if (Math.Abs(ip) > 4f)
@@ -8694,7 +8711,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 int sg = ip > 0f ? 1 : -1;
                 if (Environment.TickCount - _hudBigPat < 1200 && sg == _hudBigPsg) _hudBigPn++; else _hudBigPn = 1;
                 _hudBigPat = Environment.TickCount; _hudBigPsg = sg;
-                if (_hudBigPn >= 3) floorP = 0.55f;
+                if (_hudBigPn >= 3 || coastBefore > 1200f) floorP = 0.55f;
             }
             else _hudBigPn = 0;
             if (aR < floorR) aR = floorR;
@@ -8808,6 +8825,20 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 float stepP = aP * ip;
                 if (stepP > maxStepP) stepP = maxStepP; if (stepP < -maxStepP) stepP = -maxStepP;
                 _kfPitX += stepP; _kfPitP = (1f - aP) * _kfPitP;
+            }
+
+            // COAST ENVELOPE (field): with no vision the model integrates the sticks freely - over
+            // a long blind stretch in trees it wandered to absurd attitudes (measured live: roll
+            // 68 deg, pitch -1132px = the HUD line off screen and "so lost"). The craft may BE
+            // there, but the estimate must stay reachable: clamp to the screen-reachable range
+            // while blind. The moment a real fix arrives the coast exemption below re-anchors it.
+            if (!(_hudDetValid && (Environment.TickCount - _hudDetAt) < 2000))
+            {
+                float pitLim = HudPxToDeg(760f);
+                if (_kfPitX > pitLim) _kfPitX = pitLim;
+                if (_kfPitX < -pitLim) _kfPitX = -pitLim;
+                if (_kfRollX > 100f) _kfRollX = 100f;
+                if (_kfRollX < -100f) _kfRollX = -100f;
             }
 
             // OFFSET LEARNING - this is what used to drag the horizon DOWN permanently ("it thinks
@@ -9407,7 +9438,15 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         if (allowed > 140f) allowed = 140f;
         return allowed;
     }
-    bool VoteNearLast(float vk) { return !_hnOk || Math.Abs(vk - _hnK) <= VoteLastAllowed(); }
+    bool VoteNearLast(float vk)
+    {
+        if (!_hnOk) return true;
+        // THE STICKS HAVE A SAY (field): the expected line is the last fix PLUS what the stick
+        // command has moved it by since (the model prediction accumulated in HudTick). A vote is
+        // judged against THAT, so input-consistent votes pass and input-impossible ones are tossed.
+        float expected = _hnK + _expK;
+        return Math.Abs(vk - expected) <= VoteLastAllowed();
+    }
 
     void DetectHorizon()
     {
@@ -9981,6 +10020,38 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float pVar = onsetSd * onsetSd * HD_DS * HD_DS / Math.Max(1, onN)
                        + (KSTEP * HD_DS) * (KSTEP * HD_DS) * 0.25f + 4f;
             if (pVar > 4000f) pVar = 4000f;
+            // STICK SAY ON THE MAIN PATH (field): the model predicted where the line should be
+            // (last fix + accumulated stick motion). A measurement contradicting that beyond the
+            // envelope is SUSPECT until it persists: the first frame gets its confidence cut; a
+            // second same-direction frame inside 1.2s means the model was wrong - accept it fully.
+            if (_hnOk)
+            {
+                float expectedPitch = -(_hnK + _expK) * HD_DS;
+                float dev = Math.Abs(pitchPerp - expectedPitch);
+                float lim = VoteLastAllowed() * HD_DS * 1.4f;
+                if (dev > lim)
+                {
+                    int sg = pitchPerp > expectedPitch ? 1 : -1;
+                    if (Environment.TickCount - _pubContraAt < 1200 && sg == _pubContraSg) _pubContraN++; else _pubContraN = 1;
+                    _pubContraAt = Environment.TickCount; _pubContraSg = sg;
+                    if (_pubContraN < 2)
+                    {
+                        conf *= 0.45f;
+                        if (Environment.TickCount - _hudLogAt >= 2000)
+                        {
+                            _hudLogAt = Environment.TickCount;
+                            Log("horizon det: measurement contradicts the stick model by " + (int)dev + "px (limit " + (int)lim +
+                                "px) - confidence trimmed, watching");
+                        }
+                    }
+                    else if (Environment.TickCount - _hudLogAt >= 2000)
+                    {
+                        _hudLogAt = Environment.TickCount;
+                        Log("horizon det: model outvoted - " + _pubContraN + " frames say the line really is at " + (int)pitchPerp + "px");
+                    }
+                }
+                else _pubContraN = 0;
+            }
             float rsd = 0.4f + 4f * (1f - conf);
             HudPublish(theta, pitchPerp, skyFrac2, conf, pVar, rsd * rsd);
 
