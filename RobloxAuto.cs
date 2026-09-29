@@ -5728,11 +5728,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         if (_hudFPitch > 1600f) _hudFPitch = 1600f;  // lots of travel so the horizon can leave the frame
         if (_hudFPitch < -1600f) _hudFPitch = -1600f; // (pointed at the ground -> it runs off the top)
 
-        float tDropRaw = _hudClutter * _hudTreeDrop * _hudDpp;
+        // TREE TRIM: with the parser on, the trim is driven by the measured tree-below fraction
+        // (blurred colour + unblurred texture must agree, v2.9.42); parser off falls back to the
+        // old clutter number. Always px: fraction x "tree drop" dial (deg) x px-per-deg.
+        float treeDrop = (_hudParserOn ? _hudTreeBelowSm : _hudClutter) * _hudTreeDrop * _hudDpp;
         float rawRoll = _hudFRoll + _hudRollOff + stickRoll;     // + manual roll offset + direct stick bank
-        // low-quality LIFT (up) and clutter DROP (down) - both in px, off the dials
-        float treeDrop = _hudParserOn ? _hudTreeBelowSm * _hudTreeDrop * _hudDpp
-                                      : tDropRaw;
         float rawPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff + treeDrop;
         // OUTPUT SMOOTHING (v2.9.40): a ~90ms glide on the values the HUD and the overlay actually
         // draw. The estimator is untouched - this only removes the last per-tick steps from
@@ -8704,7 +8704,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // sample counts are logged so the fine-tuning is visible.
             if (okR) LearnGain(ref _kfRollGain, ref _kfRollZ, ref _kfRollZAt, zr, -sxS * _hudRollRate, sxS, now, 0.30f, mq, ref _lgRTot);
             if (okP) LearnGain(ref _kfPitGain, ref _kfPitZ, ref _kfPitZAt, zp, -syS * HudPitchRateDeg(), syS, now, 0.30f, mq, ref _lgPTot);
-            if (Environment.TickCount - _lgLogAt >= 8000)
+            if ((_lgRTot + _lgPTot) > 0 && Environment.TickCount - _lgLogAt >= 8000)
             {
                 _lgLogAt = Environment.TickCount;
                 Log("sticks fine-tune: roll gain " + _kfRollGain.ToString("0.000") + " (" + _lgRTot + " samples), pitch gain " +
@@ -9218,14 +9218,15 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // where the last accepted horizon was CANNOT be true - the craft cannot have moved the line
     // that fast. Allowed distance = 25px + 1.5x the model's max pitch rate x the time since the
     // last fix, capped at 140 working px. With no prior line (first lock) the vote is free.
-    bool VoteNearLast(float vk)
+    float VoteLastAllowed()
     {
-        if (!_hnOk) return true;
+        if (!_hnOk) return 1e9f;
         float dtS = Math.Max(0.2f, (Environment.TickCount - _hudDetAt) / 1000f);
         float allowed = 25f + 1.5f * (_hudPitchRate / HD_DS) * dtS;
         if (allowed > 140f) allowed = 140f;
-        return Math.Abs(vk - _hnK) <= allowed;
+        return allowed;
     }
+    bool VoteNearLast(float vk) { return !_hnOk || Math.Abs(vk - _hnK) <= VoteLastAllowed(); }
 
     void DetectHorizon()
     {
@@ -9328,8 +9329,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     if (!voteOk && _hudColOk && _hudColAgree >= 2) { vk = _hudColK; vag = _hudColAgree; voteOk = true; }
                     if (voteOk && !VoteNearLast(vk))
                     {
-                        Log("horizon det: COLD START vote rejected - " + ((int)(Math.Abs(vk - _hnK) * HD_DS)) +
-                            "px from the last line (limit " + ((int)(140 * HD_DS)) + "px) - too far, too fast");
+                        if (Environment.TickCount - _hudLogAt >= 2000)
+                        {
+                            _hudLogAt = Environment.TickCount;
+                            Log("horizon det: COLD START vote rejected - " + ((int)(Math.Abs(vk - _hnK) * HD_DS)) +
+                                "px from the last line (limit " + ((int)(VoteLastAllowed() * HD_DS)) + "px) - too far, too fast");
+                        }
                         voteOk = false;
                     }
                     if (voteOk)
@@ -9736,6 +9741,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                             ((int)vPitch) + "px (agree " + _hudColAgree + ")");
                     }
                     return;
+                }
+                else if (!coldMedian && _hudColOk && _hudColAgree >= 2 && Environment.TickCount - _hudLogAt >= 2000)
+                {
+                    _hudLogAt = Environment.TickCount;
+                    Log("horizon det: weak-frame colvote rejected - " + ((int)(Math.Abs(_hudColK - _hnK) * HD_DS)) +
+                        "px from the last line (limit " + ((int)(VoteLastAllowed() * HD_DS)) + "px) - too far, too fast");
                 }
                 // a scorer miss during the cold start must NOT wipe the median's quick-grab line
                 if (!coldMedian)
