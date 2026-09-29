@@ -2141,7 +2141,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 // If the Deploy As Drone button is actually on screen, the last click just did not
                 // register - retry it rather than backing out with Return (which used to fire even
                 // though the deploy button was right there).
-                if (PhraseOnScreen("Deploy As Drone") || PhraseOnScreenWhiten("Deploy As Drone"))
+                if (TeamBasePhraseUp(OcrWords()))   // corroborated + inside the panel, not a fused phrase
                 {
                     Log("AUTO: Deploy As Drone is on screen - clicking it again instead of returning");
                     if (ClickDeployAsDrone(g))
@@ -2971,10 +2971,26 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // SKIP the entire Base step (the "it is not finding the base" report) and then fit the warhead
     // grid to nav-bar text. The panel also prints WARHEAD and the Deploy As Drone button, which the
     // map never has - so require one of those, or the panel button stack, as corroboration.
+    // Is (x,y) inside the centred TEAM BASE panel? The panel buttons and text all live in the
+    // middle of the screen; the nav bar (top) and the objectives (top-right) do not. This is the
+    // test that stops a phrase being FUSED out of unrelated words elsewhere on screen.
+    static bool InPanel(float x, float y)
+    {
+        int W = Screen.PrimaryScreen.Bounds.Width, H = Screen.PrimaryScreen.Bounds.Height;
+        return x > W * 22 / 100 && x < W * 80 / 100 && y > H * 25 / 100 && y < H * 85 / 100;
+    }
+
     bool TeamBasePhraseUp(List<string[]> ws)
     {
         if (!PhraseIn("TEAM BASE", ws)) return false;
-        return PhraseIn("WARHEAD", ws) || PhraseIn("DEPLOY AS DRONE", ws) || BasePanelVisual();
+        if (BasePanelVisual()) return true;
+        // The corroborating phrases MUST be in the panel. Without this, the words DEPLOY (nav bar),
+        // AS (from the objective "Get 14 headshots with AS Val") and DRONE (from "SELECT DRONE")
+        // fuse into "Deploy As Drone" on the LOADOUT screen - which is what made the flow click the
+        // nav bar at (363,122), hit LOADOUT instead of Deploy, and then believe it had deployed.
+        foreach (Hit hh in FindPhraseAll("WARHEAD", null, ws)) if (InPanel(hh.X, hh.Y)) return true;
+        foreach (Hit hh in FindPhraseAll("Deploy As Drone", null, ws)) if (InPanel(hh.X, hh.Y)) return true;
+        return false;
     }
 
     // the SELECT DRONE panel prints the current drone as "FPV Drone Customization" /
