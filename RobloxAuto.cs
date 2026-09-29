@@ -3362,6 +3362,32 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         catch { }
     }
 
+    // HARD PANEL RULE (field): inside the TEAM BASE panel the app NEVER clicks the GREEN Deploy
+    // bar or the maroon Return - green deploys WITHOUT the drone, and the rule is absolute, not
+    // geometric luck. Positive colour veto sampled at the exact click target before every click.
+    bool PanelClickSafe(int x, int y)
+    {
+        try
+        {
+            int W, H; int[] px = Grab(out W, out H);
+            int g = 0, mar = 0, n = 0;
+            for (int dx = -50; dx <= 50; dx += 10)
+                for (int dy = -6; dy <= 6; dy += 6)
+                {
+                    int sx = x + dx, sy = y + dy;
+                    if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
+                    int v = px[sy * W + sx]; n++;
+                    if (HudGreen(v)) g++;
+                    if (HudMaroon(v)) mar++;
+                }
+            if (n == 0) return false;
+            if (100 * g / n >= 45) { Log("   PANEL VETO: (" + x + "," + y + ") reads as the GREEN Deploy bar - click refused"); return false; }
+            if (100 * mar / n >= 30) { Log("   PANEL VETO: (" + x + "," + y + ") reads as the maroon Return bar - click refused"); return false; }
+            return true;
+        }
+        catch { return true; }   // never block on a grab failure - the other guards still hold
+    }
+
     // The TEAM BASE panel stacks Deploy / Return / Deploy As Drone at the SAME x, one button apart
     // (~52px). "Deploy As Drone" is gold-on-tan and the OCR often misses it, so if the phrase is not
     // found we click just BELOW Return (or two rows below Deploy) - a known position, not a guess.
@@ -3382,6 +3408,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             int pxx, pyy;
             if (PanelDeployAsDrone(out pxx, out pyy))
             {
+                if (!PanelClickSafe(pxx, pyy)) return false;
                 ClickPrimaryLogged(pxx, pyy, "Deploy As Drone");
                 return true;
             }
@@ -3404,6 +3431,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 if (ButtonKindAt(d.X, d.Y) == 3)
                 {
                     int cx2 = d.X + 45, cy2 = d.Y + 10;
+                    if (!PanelClickSafe(cx2, cy2)) continue;
                     Log("   Deploy As Drone (gold fill 8D7136) at (" + cx2 + "," + cy2 + ") - clicking");
                     ClickPrimaryLogged(cx2, cy2, "Deploy As Drone");
                     return true;
@@ -3423,6 +3451,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     if (dx <= 0 || dx > 400) continue;
                     int px2 = (d.X + r.X + 25) / 2;
                     int py2 = (d.Y + r.Y) / 2 + 8;
+                    if (!PanelClickSafe(px2, py2)) continue;
                     Log("   Deploy As Drone (Deploy+Drone row) at (" + px2 + "," + py2 + ") - clicking");
                     ClickPrimaryLogged(px2, py2, "Deploy As Drone");
                     return true;
@@ -3438,6 +3467,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             foreach (Hit h in hd) if (h.Y > hr[0].Y) { below = h; hasBelow = true; break; }
             int x = hasBelow ? below.X + 40 : hr[0].X;
             int y = hasBelow ? below.Y + 8 : hr[0].Y + 52;
+            if (!PanelClickSafe(x, y)) return false;
             Log("   Deploy As Drone not readable - clicking below the buttons at (" + x + "," + y + ")");
             ClickPrimaryLogged(x, y, "Deploy As Drone");
             return true;
@@ -3991,6 +4021,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // is correct (verified against a clean screenshot).
             int tx = cells[slot].X, ty = cells[slot].Y;
             FocusRoblox();
+            if (!PanelClickSafe(tx, ty))
+            {
+                Thread.Sleep(200);
+                continue;
+            }
             MoveTo(tx, ty);
             Thread.Sleep(120);
             Log("   clicking warhead cell " + _bomb + " at (" + tx + "," + ty + ") (" + t + "/4)");
