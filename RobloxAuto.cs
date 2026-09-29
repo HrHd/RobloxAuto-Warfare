@@ -127,7 +127,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // frames are garbage. Hold the ladder still for a few seconds, collect what the detector sees,
     // then lock from the MEDIAN of those samples instead of trusting one frame.
     volatile bool _hudSettling = false;
-    int _hudSettleMs = 5000;
+    int _hudSettleMs = 2500;
     long _hudSettleUntil = 0;
     float[] _seedR = new float[80];
     float[] _seedP = new float[80];
@@ -6830,10 +6830,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                                 float[] sp = new float[_seedN]; Array.Copy(_seedP, sp, _seedN); Array.Sort(sp);
                                 spread = sp[_seedN - 1] - sp[0];
                             }
-                            if ((_seedN < 6 || spread > 160f) && _hudSettleExt < 2)
+                            if ((_seedN < 4 || spread > 160f) && _hudSettleExt < 1)
                             {
                                 _hudSettleExt++;
-                                _hudSettleUntil = Environment.TickCount + _hudSettleMs / 2;
+                                _hudSettleUntil = Environment.TickCount + 1500;
                                 Log("   spawn baseline not solid yet (" + _seedN + " samples, spread " +
                                     spread.ToString("0") + "px) - sampling a bit longer");
                             }
@@ -6854,12 +6854,21 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                                 else Log("   settle done but only " + _seedN + " samples - locking from the next good frame");
                             }
                         }
-                        else if (Environment.TickCount - lastDet >= 120)
+                        else if (Environment.TickCount - lastDet >= 60)   // sample twice as fast - fewer seconds to a solid set
                         {
                             lastDet = Environment.TickCount;
                             DetectHorizon();
                             if (_hudDetValid && _hudDetConf >= 0.35f && _seedN < _seedR.Length)
                             { _seedR[_seedN] = _hudDetRoll; _seedP[_seedN] = _hudDetPitch; _seedN++; }
+                            // COMMIT EARLY. Waiting out the whole window even when the samples already
+                            // agree is what made the start feel slow (~15s). Once 5 samples line up
+                            // within 90px, expire the window now - the next pass takes the lock from
+                            // the median. The spread test keeps this from firing on a jumpy set.
+                            if (_seedN >= 5)
+                            {
+                                float[] ep = new float[_seedN]; Array.Copy(_seedP, ep, _seedN); Array.Sort(ep);
+                                if (ep[_seedN - 1] - ep[0] <= 90f) _hudSettleUntil = Environment.TickCount;
+                            }
                         }
                     }
                     else if (!_hudLocked && (_hudNeedLock || shown) && Environment.TickCount >= lockArmedAt)
