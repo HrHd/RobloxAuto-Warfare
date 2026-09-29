@@ -700,7 +700,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
     void AddLangCombo()
     {
-        cmbLang = new ComboBox();
+        cmbLang = new NoWheelCombo();
         cmbLang.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbLang.SetBounds(ClientSize.Width - 118, 8, 108, 24);
         foreach (string k in LANG.Keys) cmbLang.Items.Add(k);
@@ -1258,7 +1258,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         chkPadRejoin.SetBounds(256, 80, 84, 22);
         gRe.Controls.Add(chkPadRejoin);
 
-        cmbPadRejoin = new ComboBox();
+        cmbPadRejoin = new NoWheelCombo();
         cmbPadRejoin.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbPadRejoin.SetBounds(342, 79, 110, 24);
         foreach (string k in PAD.Keys) cmbPadRejoin.Items.Add(k);
@@ -1273,7 +1273,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         chkPadLand.SetBounds(256, 108, 84, 22);
         gRe.Controls.Add(chkPadLand);
 
-        cmbPadLand = new ComboBox();
+        cmbPadLand = new NoWheelCombo();
         cmbPadLand.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbPadLand.SetBounds(342, 107, 110, 24);
         foreach (string k in PAD.Keys) cmbPadLand.Items.Add(k);
@@ -1288,7 +1288,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         chkPadReconnect.SetBounds(256, 136, 84, 22);
         gRe.Controls.Add(chkPadReconnect);
 
-        cmbPadReconnect = new ComboBox();
+        cmbPadReconnect = new NoWheelCombo();
         cmbPadReconnect.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbPadReconnect.SetBounds(342, 135, 110, 24);
         foreach (string k in PAD.Keys) cmbPadReconnect.Items.Add(k);
@@ -1309,7 +1309,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         lT.SetBounds(12, 26, 38, 20);
         gAu.Controls.Add(lT);
 
-        cmbTeam = new ComboBox();
+        cmbTeam = new NoWheelCombo();
         cmbTeam.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbTeam.SetBounds(52, 24, 62, 24);
         cmbTeam.Items.Add("Blue"); cmbTeam.Items.Add("Red");
@@ -1322,7 +1322,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         lD.SetBounds(122, 26, 44, 20);
         gAu.Controls.Add(lD);
 
-        cmbDrone = new ComboBox();
+        cmbDrone = new NoWheelCombo();
         cmbDrone.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbDrone.SetBounds(168, 24, 84, 24);
         cmbDrone.Items.Add("(default)");
@@ -1347,7 +1347,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         lB.SetBounds(258, 26, 42, 20);
         gAu.Controls.Add(lB);
 
-        cmbBomb = new ComboBox();
+        cmbBomb = new NoWheelCombo();
         cmbBomb.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbBomb.SetBounds(302, 24, 124, 24);
         cmbBomb.SelectedIndexChanged += delegate
@@ -1372,7 +1372,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         chkPadAuto.SetBounds(128, 58, 64, 22);
         gAu.Controls.Add(chkPadAuto);
 
-        cmbPadAuto = new ComboBox();
+        cmbPadAuto = new NoWheelCombo();
         cmbPadAuto.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbPadAuto.SetBounds(194, 57, 74, 24);
         foreach (string k in PAD.Keys) cmbPadAuto.Items.Add(k);
@@ -1387,7 +1387,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         chkPadStop.SetBounds(272, 58, 66, 22);
         gAu.Controls.Add(chkPadStop);
 
-        cmbPadStop = new ComboBox();
+        cmbPadStop = new NoWheelCombo();
         cmbPadStop.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbPadStop.SetBounds(340, 57, 74, 24);
         foreach (string k in PAD.Keys) cmbPadStop.Items.Add(k);
@@ -1408,7 +1408,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         chkPadSwap.SetBounds(8, 136, 62, 22);
         gAu.Controls.Add(chkPadSwap);
 
-        cmbPadSwap = new ComboBox();
+        cmbPadSwap = new NoWheelCombo();
         cmbPadSwap.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbPadSwap.SetBounds(72, 135, 74, 24);
         foreach (string k in PAD.Keys) cmbPadSwap.Items.Add(k);
@@ -1719,6 +1719,18 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
     // A tuning spinner that NEVER changes on a plain wheel scroll (that was the accidental-change
     // bug) and only steps by a FINE amount when CTRL+wheel is used.
+    // A ComboBox that IGNORES the mouse wheel. Scrolling the page with the cursor over a dropdown
+    // was silently changing the team / drone / bomb without any click, and the next AUTO then
+    // deployed the wrong setup. WM_MOUSEWHEEL (0x020A) is swallowed here.
+    class NoWheelCombo : ComboBox
+    {
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == 0x020A) return;
+            base.WndProc(ref m);
+        }
+    }
+
     class TuneNum : NumericUpDown
     {
         public decimal Fine = 1m;
@@ -2441,6 +2453,19 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         int sim = SimPct(wd[4], "Base");
                         if (sim >= 50) Log("      (" + wd[0] + "," + wd[1] + ") '" + wd[4] + "'  " + sim + "%");
                     }
+                }
+            }
+
+            // LAST RESORT: OCR never produced "Base", but the base marker is still on the map. Its
+            // red is the BRIGHT red (#ED2224) and, unlike a full/contested POINT pin (#D51B1E), it
+            // is the biggest red thing on the map - so find it from the pixels.
+            if (!sawBase)
+            {
+                int rx, ry;
+                if (FindRedMapLabel(out rx, out ry))
+                {
+                    sawBase = true; baseX = rx; baseY = ry;
+                    Log("   Base found by its bright-red marker at (" + rx + "," + ry + ")");
                 }
             }
 
@@ -4929,6 +4954,67 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         inp[0].U.mi.data = (uint)(-120 * notches);
         inp[0].U.mi.flags = MV_WHEEL;
         SendInput(1, inp, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    // The map prints the Base label in RED while every POINT label is white, so when OCR cannot
+    // read "Base" the red text is still a unique marker - find it from the pixels. Solid red blobs
+    // (the base flag / red terrain) are rejected by the height test, which only keeps runs the size
+    // of a text label.
+    bool FindRedMapLabel(out int bx, out int by)
+    {
+        bx = -1; by = -1;
+        try
+        {
+            int W, H; int[] q = Grab(out W, out H);
+            if (q == null) return false;
+            int y0 = H * 12 / 100, y1 = H * 92 / 100;
+            // How SOLID is this row's red? Red TEXT has gaps between the letters (solidity ~0.3-0.6);
+            // the solid red flag and the half-red CAPTURING pin are ~1.0. Only text-like rows count,
+            // so the pin and the flag are ignored and cannot be mistaken for the label. (A map can
+            // show a red capture pin AND the red Base label at once - that was the confusion.)
+            bool[] textRow = new bool[H];
+            int[] rowN = new int[H], rowMinX = new int[H], rowMaxX = new int[H];
+            for (int y = y0; y < y1; y++)
+            {
+                int cnt = 0, mn = W, mx = -1;
+                for (int x = 4; x < W - 4; x += 2)
+                {
+                    int v = q[y * W + x];
+                    int r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
+                    // The BASE red is the BRIGHT one. Measured on a real map (1919x1078): the base
+                    // marker is #ED2224 (R 237, 3131 px) while a "full/contested" POINT pin is
+                    // #D51B1E (R 213, 2308 px). Requiring R >= 224 keeps the base and drops the
+                    // pin, so a red capture pin can never be mistaken for the Base.
+                    if (r >= 224 && r - g >= 55 && r - b >= 50) { cnt++; if (x < mn) mn = x; if (x > mx) mx = x; }
+                }
+                int wid = mx >= 0 ? (mx - mn) / 2 + 1 : 0;
+                float solidity = wid > 0 ? (float)cnt / wid : 1f;
+                rowN[y] = cnt; rowMinX[y] = mn; rowMaxX[y] = mx;
+                textRow[y] = (cnt >= 3 && solidity <= 0.72f);
+            }
+            int bestCnt = 0, bestX = -1, bestY = -1;
+            int ry = y0;
+            while (ry < y1)
+            {
+                if (!textRow[ry]) { ry++; continue; }
+                int ys = ry, ye = ry, cnt = 0, mnx = W, mxx = -1;
+                while (ry < y1 && textRow[ry])
+                {
+                    cnt += rowN[ry];
+                    if (rowMinX[ry] < mnx) mnx = rowMinX[ry];
+                    if (rowMaxX[ry] > mxx) mxx = rowMaxX[ry];
+                    ye = ry; ry++;
+                }
+                int hgt = ye - ys + 1, wid = mxx - mnx + 1;
+                if (hgt <= 45 && wid >= 24 && wid <= 340 && cnt > bestCnt)
+                { bestCnt = cnt; bestX = (mnx + mxx) / 2; bestY = (ys + ye) / 2; }
+            }
+            if (bestCnt < 25) return false;
+            bx = bestX; by = bestY;
+            return true;
+        }
+        catch { }
+        return false;
     }
 
     // Positive wheel = zoom IN. The Base is easier to find zoomed IN than zoomed out (the label
