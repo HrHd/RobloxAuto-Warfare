@@ -925,7 +925,6 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         y += 22;
 
         numPitch = MkTune(x, y, "pitch speed", (decimal)_hudPitchRate, 80m, 4000m, 40m, 0);
-        numPitch = MkTune(x, y, "pitch speed", (decimal)_hudPitchRate, 80m, 4000m, 40m, 0);
         numRoll = MkTune(x + 168, y, "roll speed", (decimal)_hudRollRate, 20m, 900m, 10m, 0);
         numPitch.ValueChanged += delegate { _hudPitchRate = (float)numPitch.Value; SaveCfg(); };
         numRoll.ValueChanged += delegate { _hudRollRate = (float)numRoll.Value; SaveCfg(); };
@@ -1905,6 +1904,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             case "stick pitch": return "Direct horizon lift from the right stick Y (px). Negative inverts.";
             case "stick tilt": return "Direct bank from the right stick X (deg). Negative inverts.";
             case "tree drop": return "Push the horizon DOWN (deg) when the detector sees lots of clutter (trees/structures), which pull a lock UP onto the canopy.";
+            case "roll gain": return "LEARNED, shown live: the roll-rate scale the fine-tune learner has found (1.00 = your roll speed dial is exact). Type to override for this flight; the next deploy hands it back to the learner.";
+            case "pitch gain": return "LEARNED, shown live: the pitch-rate scale the fine-tune learner has found, including off-screen traverse corrections (1.00 = your pitch speed dial is exact). Type to override for this flight.";
             case "min colour": return "Reject frames whose overall colour spread is below this - a flat, one-tone frame has no horizon in it.";
             case "override %": return "Right-stick travel (%) at which the STICK takes over from the image. Below it the image is in full control.";
             case "estimator": return "1 = use the new angle-space alpha-beta/Kalman estimator with the stick as a control input. 0 = the old filter.";
