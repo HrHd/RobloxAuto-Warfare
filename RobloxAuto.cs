@@ -7885,12 +7885,15 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // Only learn from a frame we actually TRUST, and only while the stick is clearly
             // commanding. A stubborn gain that winds up makes the model over-rotate and the vision
             // fight it - that is the visible "jump". Clamped tight (0.5..1.8) and very slow.
-            if (trust < 0.50f) { lastZ = z; lastAt = now; return; }
-            if (Math.Abs(stick) < minStick) { lastZ = z; lastAt = now; return; }
-            if (lastAt != 0)
+            if (trust < 0.50f || Math.Abs(stick) < minStick) { lastAt = 0; return; }
+            // HOLD the reference until enough time has passed for the measurement to actually
+            // update. This ran at the 50 Hz HUD rate with lastAt refreshed on EVERY call, so dtZ
+            // was always ~0.02 s and the 0.03 s window was unreachable - the gain never learned.
+            if (lastAt == 0) { lastZ = z; lastAt = now; return; }
+            if (true)
             {
                 float dtZ = (now - lastAt) / 1000f;
-                if (dtZ > 0.03f && dtZ < 0.7f)
+                if (dtZ >= 0.10f && dtZ < 0.7f)
                 {
                     float measRate = (z - lastZ) / dtZ;
                     if (Math.Abs(cmdRate) > 4f)
@@ -7899,8 +7902,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         if (ratio > 0.4f && ratio < 2.5f)
                         {
                             gain += 0.030f * (ratio - gain);
-                            if (gain < 0.5f) gain = 0.5f;
-                            if (gain > 1.8f) gain = 1.8f;
+                            // wide enough to express a badly wrong dial: the fitted pitch rate was                             // ~5x below hudPitch, which the old 0.5 floor could not correct.                             if (gain < 0.20f) gain = 0.20f;                             if (gain > 2.50f) gain = 2.50f;
                         }
                     }
                 }
