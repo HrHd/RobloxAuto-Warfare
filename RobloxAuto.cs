@@ -7978,9 +7978,21 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         bool fresh = _hudDetValid && (now - _hudDetAt) < 700;
         if (!fresh)
         {
-            float cl = 1f - (float)Math.Pow(0.5, dt / 0.9);        // ~0.9s to lose half the coasting rate
-            _kfRollV -= _kfRollV * cl;
-            _kfPitV -= _kfPitV * cl;
+            // ACRO MODE: the stick is a RATE command, so with a stick held the attitude KEEPS
+            // ROTATING and the model must keep integrating - that is the whole point, and it is
+            // what makes the sticks able to tell us where the horizon is while it is off screen.
+            // This used to bleed the rate to zero whenever the vision was missing, which is the
+            // behaviour of an ANGLE/self-levelling flight mode, not acro: a held stick stopped
+            // moving the line while the real drone kept turning, so it drifted further the longer
+            // it was blind. The bleed now only runs when there is NO stick command at all (rate
+            // should already be ~0), so it just settles the state instead of fighting the pilot.
+            float stickMag = Math.Max(Math.Abs(sxS), Math.Abs(syS));
+            if (stickMag < 0.05f)
+            {
+                float cl = 1f - (float)Math.Pow(0.5, dt / 0.9);
+                _kfRollV -= _kfRollV * cl;
+                _kfPitV -= _kfPitV * cl;
+            }
             _hudCoastMs += dt * 1000f;
         }
         _kfRollX += _kfRollV * dt;
