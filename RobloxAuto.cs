@@ -8454,9 +8454,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     float mm = 1f;
                     if (_skyModelOk)
                     {
-                        float dA = (float)Math.Abs(muAL - _skyMuL) / _skySdL + (float)Math.Abs(muAB - _skyMuB) / _skySdB;
-                        float dBm = (float)Math.Abs(muBL - _skyMuL) / _skySdL + (float)Math.Abs(muBB - _skyMuB) / _skySdB;
-                        mm = 0.25f + 0.75f * Smooth01(dBm - dA, 0f, 1.2f);
+                        float dA = (float)Math.Abs(muAL - _skyMuL) / Math.Max(_skySdL, 18f) + (float)Math.Abs(muAB - _skyMuB) / Math.Max(_skySdB, 14f);
+                        float dBm = (float)Math.Abs(muBL - _skyMuL) / Math.Max(_skySdL, 18f) + (float)Math.Abs(muBB - _skyMuB) / Math.Max(_skySdB, 14f);
+                        mm = 0.5f + 0.5f * Smooth01(dBm - dA, 0f, 1.2f);   // one global sky colour is too tight for a sky that changes with heading - a preference, never a veto
                     }
                     // and the region ABOVE must REACH THE TOP of the frame
                     float topFrac = (float)(aTop / dw);
@@ -8585,6 +8585,19 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             }
 
             // ---- THE GATE: no verified sky in the frame means no measurement ----------------------
+            // NO REAL SEPARATION, NO MEASUREMENT. A frame where every candidate line scores near
+            // zero has no sky/ground edge in it at all (all ground, or all sky). Publishing it hands
+            // the filter a line that LOOKS valid, and the estimator then yanks hard on it even though
+            // the confidence is low - because the outlier gate OPENS UP on the huge variance that
+            // comes with it. That is the "it gets lost". Coast instead.
+            if (bestScore < 0.5f)
+            {
+                _hudDetValid = false;
+                _hudNoSkyFrames++;
+                if (Environment.TickCount - _hudLogAt >= 2000)
+                { _hudLogAt = Environment.TickCount; Log("horizon det: no usable sky/ground separation (sep " + bestScore.ToString("0.0") + ") - coasting"); }
+                return;
+            }
             if (skyFrac2 < _hudSkyMin)
             {
                 _hudDetValid = false;
