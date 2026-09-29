@@ -7908,28 +7908,28 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // commanding. A stubborn gain that winds up makes the model over-rotate and the vision
             // fight it - that is the visible "jump". Clamped tight (0.5..1.8) and very slow.
             if (trust < 0.50f || Math.Abs(stick) < minStick) { lastAt = 0; return; }
-            // HOLD the reference until enough time has passed for the measurement to actually
-            // update. This ran at the 50 Hz HUD rate with lastAt refreshed on EVERY call, so dtZ
-            // was always ~0.02 s and the 0.03 s window was unreachable - the gain never learned.
             if (lastAt == 0) { lastZ = z; lastAt = now; return; }
-            if (true)
+            float dtZ = (now - lastAt) / 1000f;
+            // HOLD THE REFERENCE until the measurement has had time to actually update. This runs
+            // at the 50 Hz HUD rate, and refreshing the timestamp on EVERY call made dtZ
+            // permanently ~0.02 s, so the window below was unreachable and the gain NEVER LEARNED.
+            // (Changing only the threshold was not enough - the refresh itself had to move.)
+            if (dtZ < 0.10f) return;
+            if (dtZ < 0.70f)
             {
-                float dtZ = (now - lastAt) / 1000f;
-                if (dtZ >= 0.10f && dtZ < 0.7f)
+                float measRate = (z - lastZ) / dtZ;
+                if (Math.Abs(cmdRate) > 4f)
                 {
-                    float measRate = (z - lastZ) / dtZ;
-                    if (Math.Abs(cmdRate) > 4f)
+                    float ratio = measRate / cmdRate;
+                    if (ratio > 0.30f && ratio < 3.00f)
                     {
-                        float ratio = measRate / cmdRate;
-                        if (ratio > 0.4f && ratio < 2.5f)
-                        {
-                            gain += 0.030f * (ratio - gain);
-                            // wide enough to express a badly wrong dial: the fitted pitch rate was                             // ~5x below hudPitch, which the old 0.5 floor could not correct.                             if (gain < 0.20f) gain = 0.20f;                             if (gain > 2.50f) gain = 2.50f;
-                        }
+                        gain += 0.050f * (ratio - gain);
+                        if (gain < 0.15f) gain = 0.15f;
+                        if (gain > 3.00f) gain = 3.00f;
                     }
                 }
             }
-            lastZ = z; lastAt = now;
+            lastZ = z; lastAt = now;                  // refresh ONLY when the window has elapsed
         }
         catch { }
     }
