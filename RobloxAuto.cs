@@ -265,6 +265,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudColK = 0f;                          // last 3-centre-column vote line (working px)
     int _hudColAgree = 0;                         // columns that agreed with the middle one
     bool _hudColOk = false;                       // the vote produced a usable line
+    float _rollEnvVote = 60f;                     // "normal flight" roll envelope - learned from the good refs
+    int _voteTossAt = 0;                          // envelope-toss log throttle
     int _watchAt = 0;                             // hwatch frame throttle
     float _hudSceneTol = 0.10f;                   // max RMS distance to claim a scene match
     int _hudSceneTick = 0;
@@ -1993,6 +1995,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // The HUD can still be started by the flow (Deploy As Drone) - this only silences the SCAN.
         _hudCooldownUntil = unchecked(Environment.TickCount + 20000);
         StopRfWatch();
+        // KILL THE HUD IMMEDIATELY (field): stopping the watch used to FREEZE the HUD on screen -
+        // the menu-detection that would have dropped it was the very loop being stopped. A quick
+        // reconnect now visibly drops the drone HUD before the relaunch begins.
+        try { OverlayHub.I.SetHud(false, "", "", "", 0f, 0f, false, 0f, 0f); } catch { }
+        try { OverlayHub.I.SetFlight(false, 0f, 0); } catch { }
+        try { if (_hudForm != null) _hudForm.Visible = false; } catch { }
         Log("   reconnect: HUD detect paused for 20s");
 
         FindServer();   // always re-read, so we rejoin the server we are on right now
@@ -3362,6 +3370,36 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         catch { }
     }
 
+    // SNAP to the warhead cell's actual rectangle before clicking. The panel's exact scale drifts
+    // a little between sessions and (field, 01:46) a 22px prediction error put the click 2px from
+    // the cell edge - one bad pixel row from a miss. The cells are translucent dark grey over any
+    // terrain; find their fill near the predicted point and use its centroid.
+    void SnapToCell(ref int tx, ref int ty)
+    {
+        try
+        {
+            int W, H; int[] px = Grab(out W, out H);
+            int x0 = tx - 45, x1 = tx + 45, y0 = ty - 20, y1 = ty + 20;
+            long sx = 0, sy = 0; int n = 0;
+            for (int y = Math.Max(0, y0); y <= Math.Min(H - 1, y1); y++)
+                for (int x = Math.Max(0, x0); x <= Math.Min(W - 1, x1); x++)
+                {
+                    int v = px[y * W + x];
+                    int r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
+                    int mx = Math.Max(r, Math.Max(g, b)), mn = Math.Min(r, Math.Min(g, b));
+                    if (mx - mn <= 30 && r >= 55 && r <= 125) { sx += x; sy += y; n++; }
+                }
+            if (n >= 100)
+            {
+                int nx = (int)(sx / n), ny = (int)(sy / n);
+                if (Math.Abs(nx - tx) > 5 || Math.Abs(ny - ty) > 5)
+                    Log("   warhead cell snap: (" + tx + "," + ty + ") -> (" + nx + "," + ny + ")  fill " + n + "px");
+                tx = nx; ty = ny;
+            }
+        }
+        catch { }
+    }
+
     // HARD PANEL RULE (field): inside the TEAM BASE panel the app NEVER clicks the GREEN Deploy
     // bar or the maroon Return - green deploys WITHOUT the drone, and the rule is absolute, not
     // geometric luck. Positive colour veto sampled at the exact click target before every click.
@@ -4021,11 +4059,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // is correct (verified against a clean screenshot).
             int tx = cells[slot].X, ty = cells[slot].Y;
             FocusRoblox();
-            if (!PanelClickSafe(tx, ty))
-            {
-                Thread.Sleep(200);
-                continue;
-            }
+            SnapToCell(ref tx, ref ty);
             MoveTo(tx, ty);
             Thread.Sleep(120);
             Log("   clicking warhead cell " + _bomb + " at (" + tx + "," + ty + ") (" + t + "/4)");
@@ -8269,6 +8303,22 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 }
                 catch { }
             }
+            // LEARN the vote's normal-flight roll envelope from the good references (they are, by
+            // construction, frames from real normal flying). p95(|roll|) x1.5, clamped 40..80 deg.
+            {
+                System.Collections.Generic.List<float> rr2 = new System.Collections.Generic.List<float>();
+                for (int i = 0; i < _refLine.Count && i < _refGoodL.Count; i++)
+                    if (_refGoodL[i] && _refLine[i] != null) rr2.Add(Math.Abs(_refLine[i][0]));
+                if (rr2.Count >= 5)
+                {
+                    rr2.Sort();
+                    float p95 = rr2[(int)(rr2.Count * 0.95)];
+                    _rollEnvVote = p95 * 1.5f;
+                    if (_rollEnvVote < 40f) _rollEnvVote = 40f;
+                    if (_rollEnvVote > 80f) _rollEnvVote = 80f;
+                    Log("vote envelope learned from " + rr2.Count + " good refs: roll up to +-" + _rollEnvVote.ToString("0") + " deg");
+                }
+            }
             Log("reference frames: " + ng + " good / " + nb + " bad loaded from " + dir);
         }
         catch { }
@@ -9238,9 +9288,22 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         kOut = 0f; nAgree = 0;
         int mw = _hdW, mh = _hdH;
         if (_hdL == null || mw < 64 || mh < 48) return false;
-        float cx = mw * 0.5f, cy = mh * 0.5f;
-        float m = (float)Math.Tan(thetaPrior * Math.PI / 180.0);
-        float norm = (float)Math.Sqrt(1 + m * m);
+            float cx = mw * 0.5f, cy = mh * 0.5f;
+            float m = (float)Math.Tan(thetaPrior * Math.PI / 180.0);
+            float norm = (float)Math.Sqrt(1 + m * m);
+            // BAD-DATA TOSS (field): certain angles simply do not happen flying normally. The
+            // envelope is LEARNED from the good reference library (their rolls x1.5, clamped
+            // 40..80 deg) - a vote asked to run at an angle outside that is tossed, not trusted.
+            if (Math.Abs(thetaPrior) > _rollEnvVote)
+            {
+                if (Environment.TickCount - _voteTossAt >= 4000)
+                {
+                    _voteTossAt = Environment.TickCount;
+                    Log("   colvote tossed - angle " + thetaPrior.ToString("0") + " deg is outside the normal-flight envelope ("
+                        + _rollEnvVote.ToString("0") + " deg)");
+                }
+                return false;
+            }
         // FIVE candidate strips, the best THREE by QUALITY vote (field idea: high-quality strips
         // with priority - but never two alone: one strip through a trunk and there is no
         // tie-breaker). Quality = split contrast / (1 + column texture): a strip full of tree
