@@ -304,6 +304,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     Button btnReloadRefs, btnCapRef;
     NumericUpDown numDpp, numShear, numLen, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numRollGain, numPitchGain;
     System.Windows.Forms.Timer _gainTick; bool _updGains = false;
+    Label[] _updValue;                    // UPDATES panel: one value box per tracked helper value
+    float[] _updLast;                     // last shown value (drives the amber "it moved" flash)
+    long[] _updFlashAt;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
@@ -998,10 +1001,57 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     if (numPitchGain.Value != pg) numPitchGain.Value = pg;
                 }
                 _updGains = false;
+                RefreshUpdates();
             }
             catch { _updGains = false; }
         };
         _gainTick.Start();
+
+        // ---- UPDATES: live read-out of the values the helper (or the dials) changes by itself.
+        // Each box shows the current number and FLASHES AMBER when the value actually moves, so
+        // the learner's adjustments and the tree/sky beliefs are visible at a glance instead of
+        // silently happening inside the dials.
+        // The panel spans the WHOLE HUD TUNING block (top row to the buttons below the last dial)
+        // so its right edge and its bottom line up with the tuning section instead of stopping
+        // mid-list.
+        var pnlUpd = new Panel();
+        pnlUpd.BackColor = Color.FromArgb(28, 31, 37);
+        pnlUpd.SetBounds(x + 340, 68, w - 340, 472);
+        Controls.Add(pnlUpd);
+
+        var lblUpd = new Label();
+        lblUpd.Text = "UPDATES";
+        lblUpd.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        lblUpd.ForeColor = Color.FromArgb(120, 200, 255);
+        lblUpd.SetBounds(10, 8, w - 360, 16);
+        pnlUpd.Controls.Add(lblUpd);
+
+        string[] updNames = { "roll gain", "pitch gain", "trees belief", "sky seen", "ground boost" };
+        _updValue = new Label[updNames.Length];
+        _updLast = new float[updNames.Length];
+        _updFlashAt = new long[updNames.Length];
+        for (int i = 0; i < updNames.Length; i++)
+        {
+            var ln = new Label();
+            ln.Text = updNames[i];
+            ln.Font = new Font("Segoe UI", 9F);
+            ln.ForeColor = Color.FromArgb(150, 155, 165);
+            ln.SetBounds(10, 40 + i * 84, w - 360, 16);
+            pnlUpd.Controls.Add(ln);
+            var lv = new Label();
+            lv.BackColor = Color.FromArgb(14, 15, 18);
+            lv.ForeColor = Color.Gainsboro;
+            lv.BorderStyle = BorderStyle.FixedSingle;
+            lv.TextAlign = ContentAlignment.MiddleCenter;
+            lv.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+            lv.SetBounds(10, 57 + i * 84, w - 360, 24);
+            pnlUpd.Controls.Add(lv);
+            _updValue[i] = lv;
+        }
+        _updLast[0] = _kfRollGain; _updLast[1] = _kfPitGain;
+        _updLast[2] = _hudTreeBelowSm * 100f; _updLast[3] = _hudDetSky * 100f;
+        _updLast[4] = _hudGndBoost;
+        RefreshUpdates();
 
         numMinSpread = MkTune(x, y, "min colour", (decimal)_hudMinSpread, 0m, 40m, 1m, 0);
         numTexW = MkTune(x + 168, y, "texture", (decimal)_hudTexW, 0m, 3m, 0.1m, 1);
@@ -1858,6 +1908,30 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     }
 
     // caption + numeric spinner for a HUD tuning dial
+    // ---- UPDATES panel refresh (2.5 Hz, same tick as the gain dials) ----
+    void RefreshUpdates()
+    {
+        if (_updValue == null) return;
+        float[] cur = { _kfRollGain, _kfPitGain, _hudTreeBelowSm * 100f, _hudDetSky * 100f, _hudGndBoost };
+        float[] minFlash = { 0.005f, 0.005f, 1.5f, 1.5f, 0.005f };   // read-out jitter must not strobe the box
+        for (int i = 0; i < _updValue.Length; i++)
+        {
+            string txt = (i == 2 || i == 3) ? cur[i].ToString("0") + "%" : cur[i].ToString("0.00");
+            if (_updValue[i].Text != txt) _updValue[i].Text = txt;
+            if (Math.Abs(cur[i] - _updLast[i]) >= minFlash[i])
+            {
+                _updLast[i] = cur[i];
+                _updFlashAt[i] = Environment.TickCount;
+                _updValue[i].ForeColor = Color.FromArgb(255, 205, 90);
+            }
+            else if (_updFlashAt[i] != 0 && Environment.TickCount - _updFlashAt[i] > 1200)
+            {
+                _updFlashAt[i] = 0;
+                _updValue[i].ForeColor = Color.Gainsboro;
+            }
+        }
+    }
+
     NumericUpDown MkTune(int cx, int cy, string caption, decimal val, decimal min, decimal max, decimal inc, int decimals)
     {
         var lbl = new Label();
@@ -8821,6 +8895,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // SECOND of correction against a 1300 px error, which looks like it is simply stuck.
             // A large innovation that the gate accepted deserves a decisive pull.
             float floorR = 0.05f, floorP = 0.05f;
+            // RAIL RESCUE: a state pegged at the +-1600 pitch clamp / +-180 roll clamp is lost by
+            // definition - whatever the measurement says is better than the rail.
+            bool railR = Math.Abs(_hudFRoll) > 170f;
+            bool railP = Math.Abs(_hudFPitch) > 1500f;
             // ...but a GENUINE divergence must still be rescued fast. A large innovation that
             // PERSISTS pulls hard; ONE big frame does not. v2.9.32: a single confident-but-wrong
             // detection (a tree line during low flight) used to get the 0.55 floor and yank the
@@ -8835,7 +8913,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 // after a genuine blind stretch the FIRST confident fix may save immediately -
                 // the 3-frame persistence rule is for lone bad frames with vision flowing, not
                 // for the rescue that follows a real coast.
-                if (_hudBigRn >= 3 || coastBefore > 1200f) floorR = 0.55f;
+                if (_hudBigRn >= 3 || coastBefore > 1200f || railR) floorR = 0.55f;
             }
             else _hudBigRn = 0;
             if (Math.Abs(ip) > 4f)
@@ -8843,11 +8921,31 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 int sg = ip > 0f ? 1 : -1;
                 if (Environment.TickCount - _hudBigPat < 1200 && sg == _hudBigPsg) _hudBigPn++; else _hudBigPn = 1;
                 _hudBigPat = Environment.TickCount; _hudBigPsg = sg;
-                if (_hudBigPn >= 3 || coastBefore > 1200f) floorP = 0.55f;
+                if (_hudBigPn >= 3 || coastBefore > 1200f || railP) floorP = 0.55f;
             }
             else _hudBigPn = 0;
             if (aR < floorR) aR = floorR;
             if (aP < floorP) aP = floorP;
+            // PERSISTENT-DIVERGENCE RESCUE (field, from a flight recording): the filter can LATCH -
+            // the model integrates a held stick while the tree/hug de-value mutes the vision, runs
+            // to the clamp, and then the innovation gate rejects EVERY honest measurement because
+            // it only widens after a real COAST (vision was flowing the whole time). The line then
+            // sits hundreds of px off for the rest of the flight. A big one-directional error that
+            // persists for 3 measurements is the model being wrong - give the vision its full pull.
+            bool resR = _hudBigRn >= 3 || railR;
+            bool resP = _hudBigPn >= 3 || railP;
+            if (resP && Math.Abs(ip) > 4f && Environment.TickCount - _hudLogAt >= 2000)
+            {
+                _hudLogAt = Environment.TickCount;
+                Log("horizon fuse: persistent PITCH error " + (int)HudDegToPx(ip) + "px" +
+                    (railP ? " (on the rail)" : "") + " - full vision pull");
+            }
+            if (resR && Math.Abs(ir) > 4f && Environment.TickCount - _hudLogAt >= 2000)
+            {
+                _hudLogAt = Environment.TickCount;
+                Log("horizon fuse: persistent ROLL error " + ir.ToString("0") + " deg" +
+                    (railR ? " (on the rail)" : "") + " - full vision pull");
+            }
 
             // TREES DE-VALUE THE VISION (field): flying into canopy means the frames arriving are
             // the LEAST trustworthy ones - so the vision's authority scales down hard with the
@@ -8858,7 +8956,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (treeW > 1f) treeW = 1f; if (treeW < 0f) treeW = 0f;
             float visionW = 1f - 0.75f * treeW;
             if (visionW < 0.15f) visionW = 0.15f;
-            aR *= visionW; aP *= visionW;
+            if (!resR) aR *= visionW;
+            if (!resP) aP *= visionW;
             if (treeW > 0.5f && Environment.TickCount - _treeLogAt >= 5000)
             {
                 _treeLogAt = Environment.TickCount;
@@ -8916,7 +9015,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // further - it only TRIMS the controls. Stick input (the hug drops itself) or a
             // sustained divergence (releases the hug) brings the full trim back.
             if (_hudLockedOnce && _hugSm > 0.9f && stickNow < 0.12f) hg *= 0.55f;
-            aR *= hg; aP *= hg;
+            if (!resR) aR *= hg;
+            if (!resP) aP *= hg;
 
             // Mahalanobis-style gate: reject a frame that jumps further than a real horizon could in
             // one step. Grounded in the measurement noise so a clean lock gets a tighter gate.
@@ -8936,6 +9036,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // the 6x-wide gate (~18 deg) rejected every single correction - so it stayed there.
             if (coastBefore > 1200f) { gR = 1e9f; gP = 1e9f; }
             else if (coastBefore > 800f) { float wf = 1f + coastBefore / 2000f; if (wf > 6f) wf = 6f; gR *= wf; gP *= wf; }
+            // the rescue opens the gate too - otherwise a persistent error is rejected forever
+            // and the latch never breaks (measured: 2600 px of innovation, refused every frame)
+            if (resR) gR = 1e9f;
+            if (resP) gP = 1e9f;
             bool okR = Math.Abs(ir) <= gR;
             bool okP = Math.Abs(ip) <= gP;
 
