@@ -3813,20 +3813,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 if (!namesOurs) { Log("   payload check: our cell reads \"" + lab + "\" which is not " + _bomb); return false; }
             }
             if (cur == slot) return true;
-            // green undetectable
+            // Green undetectable -> accept ONLY a positive label match for OUR bomb in our slot.
+            // NOTE: there was briefly a blanket "green AND label unreadable -> trust the click"
+            // escape here. It deployed Standard Frag instead of the chosen warhead (the panel even
+            // showed the Deploy As Drone button padlocked). Verification must never pass on the
+            // ABSENCE of evidence - only on positive evidence.
             if (cur < 0)
             {
-                // a positive label match for OUR bomb in our slot is proof enough
                 if (lab != "" && SimPct(lab, _bomb) >= 60) return true;
-                // BOTH the green box and the label were unreadable, so there is no EVIDENCE of a
-                // wrong payload - and we already clicked the right cell. Blocking here just wedged
-                // the flow on the panel forever ("clicks the rack then never deploys"). Deploy, and
-                // let the wrong-payload loop breaker handle a genuine mismatch.
-                if (lab == "")
-                {
-                    Log("   payload check: green and label both unreadable - trusting the click on " + _bomb);
-                    return true;
-                }
             }
             Log("   payload check: green slot is " + (cur < 0 ? "not detected" : cur + " (" + BombsFor(_drone)[cur + 1] + ")") +
                 ", want " + slot + " (" + _bomb + ")");
