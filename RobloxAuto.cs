@@ -8519,6 +8519,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
              .Append(_kfPitV.ToString("0.00", ci))
              .Append(',').Append(_kfRollGain.ToString("0.000", ci)).Append(',')
              .Append(_kfPitGain.ToString("0.000", ci))
+             .Append(',').Append((_hudAlt ?? "").Replace(",", "")).Append(',')
+             .Append((_hudAgl ?? "").Replace(",", ""))
              .Append("\r\n");
             File.AppendAllText(Path.Combine(_appDir, "hudphys.csv"), b.ToString());
         }
