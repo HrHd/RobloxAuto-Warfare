@@ -3343,6 +3343,18 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     {
         try
         {
+            // CORROBORATE FIRST. This used to fire on the bare word "Return" from anywhere on
+            // screen, so a stray tooltip, objective line or label during a LOADING transition
+            // satisfied it and the flow pressed back out of the screen it was waiting for. Only
+            // screens that genuinely carry a Return button are allowed to satisfy it.
+            bool panelish = PhraseOnScreen("WARHEAD") || PhraseOnScreen("DEPLOY AS DRONE")
+                         || PhraseOnScreen("SELECT DRONE") || PhraseOnScreen("POINT")
+                         || PhraseOnScreen("TEAM BASE");   // NOT "LOADOUT": that is a permanent nav button
+            if (!panelish)
+            {
+                Log("   saw 'Return' but no panel is up - NOT pressing back (a stray word during a transition)");
+                return false;
+            }
             List<Hit> h = FindPhraseAll("Return", null, OcrWords());
             if (h.Count == 0) h = FindPhraseAll("Return", null, OcrWordsWhiten());
             if (h.Count == 0) h = FindPhraseAll("Retum", null, OcrWords());
@@ -5203,11 +5215,19 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         int tx, ty;
         for (int t = 1; t <= tries && Alive(g); t++)
         {
+            int SW = Screen.PrimaryScreen.Bounds.Width, SH = Screen.PrimaryScreen.Bounds.Height;
+            // The blob is searched for across the WHOLE screen, so anything else that colour -
+            // a banner, an objective, a team icon that is already selected - could win and the
+            // click would land on nothing (which is how a misclick showed up as pressing
+            // something unrelated). The team cards live in the middle, so reject anything
+            // outside that band and log where it was found.
             if (FindBlob(delegate (int rr, int gg, int bb)
             {
                 return blue ? (bb > 110 && bb > rr + 40 && bb > gg + 40)
                             : (rr > 110 && rr > gg + 50 && rr > bb + 50);
-            }, 200, out tx, out ty))
+            }, 200, out tx, out ty)
+                && tx > SW * 15 / 100 && tx < SW * 85 / 100
+                && ty > SH * 15 / 100 && ty < SH * 85 / 100)
             {
                 int[] before = Signature();
                 if (t == 1) ClickPrimaryLogged(tx, ty, _team + " team blob");
