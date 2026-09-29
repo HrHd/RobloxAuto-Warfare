@@ -3478,6 +3478,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             bool onBase = TeamBasePhraseUp(OcrWords());
             if (!onBase) { Log("   Deploy As Drone: not on TEAM BASE - not clicking blindly"); return false; }
 
+            // MEASURE WITH THE POINTER OFF THE BUTTON (field): the warhead verify leaves the pointer
+            // HOVERING on the gold button, and a hovered button scales/highlights - its local
+            // geometry shifts. Measuring then produced a target below the button ("it hovers over
+            // Deploy As Drone, then moves under it in the blank space and tries to click").
+            MoveTo(220, 320);
+            InvalidateGrab();
+            Thread.Sleep(140);
+
             // PRIMARY: the panel's own two OPAQUE bars (green Deploy + maroon Return) give the button
             // pitch; one pitch below Return is Deploy As Drone, verified by its gold fill. No OCR.
             int pxx, pyy;
