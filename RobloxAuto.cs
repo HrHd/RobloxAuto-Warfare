@@ -3959,8 +3959,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 ", want slot " + slot + " (" + _bomb + ")");
             if (cur == slot)
             {
-                Log("   " + _bomb + " already equipped (green box)");
-                return true;
+                // v2.9.31: the known cell gets CLICKED even when the green box already reads as
+                // ours. The read is a colour heuristic; a wrong "already equipped" used to leave
+                // the wrong warhead in place with no visible action (this is exactly the "bomb
+                // got skipped" complaint). Click it anyway - the verify below is the proof.
+                Log("   " + _bomb + " already reads green - clicking the known cell anyway");
             }
 
             // sample the resting cell BEFORE clicking so we can prove it actually changed
