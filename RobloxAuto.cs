@@ -3114,7 +3114,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             }
             // The green Deploy and maroon Return bars are ~200px wide. Require a solid run so a
             // terrain streak cannot stand in for a button.
-            if (gN < 120 || mN < 120 || mY <= gY) return false;
+            if (gN < 120 || mN < 120 || mY <= gY)
+            {
+                Log("   panel anchor: green run " + gN + ", maroon run " + mN + " (y " + gY + " vs " + mY + ") - not enough" +
+                    (gN < 120 || mN < 120 ? "  [the button bar was not found - a LOCKED/greyed Deploy As Drone has no solid bar]" : ""));
+                return false;
+            }
             int pitch = mY - gY; if (pitch < 30 || pitch > 80) pitch = 58;
             int tx = mC, ty = mY + pitch;
             // The panel is the SAME three bars every time: Deploy (green) -> Return (maroon) ->
@@ -3722,7 +3727,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             return false;
         }
 
-        Thread.Sleep(250);   // let the TEAM BASE panel finish laying out before measuring the grid
+        // Let the panel finish animating in. At 250 ms the green/maroon bars are sometimes still
+        // fading and the solid-run test fails, which used to be read as "wrong loadout" and cost a
+        // whole LOADOUT -> DEPLOY -> Base -> panel lap.
+        Thread.Sleep(600);
 
         // NO GRID NUDGING ON RETRY. Sliding the whole grid up/down was aimed at a grid that was a
         // few px off, but because the grid is re-MEASURED on every attempt the nudge only ever moved
@@ -4002,14 +4010,24 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         float sc = Screen.PrimaryScreen.Bounds.Height / 1080f;
         if (sc <= 0f) sc = 1f;
 
-        int ax, ay;
+        int ax = 0, ay = 0;
         // Use the PIXEL anchor (the gold button, derived from the green and maroon bars) whenever
         // the panel is really up. The OCR phrase centroid jitters by up to 60 px between reads and
         // the ENTIRE grid is placed relative to it, so the cells slid out from under the cursor and
         // it clicked the WRONG warhead - which is exactly what was seen. Button geometry does not
         // jitter. The OCR anchor stays as the fallback.
-        bool haveAnchor = PanelDeployAsDrone(out ax, out ay);
-        if (!haveAnchor) haveAnchor = WarheadAnchor(out ax, out ay);
+        // THREE TRIES. The anchor is a pixel test on solid button bars, so it should not be flaky
+        // while the panel is really up - but it is measured immediately after a click, and between
+        // one read and the next the panel may still be fading or the pointer still hovering a
+        // button. Losing it used to drop straight through to the colour hunt, find 0 cells, and
+        // back the entire flow out as a "wrong loadout".
+        bool haveAnchor = false;
+        for (int at = 0; at < 3 && !haveAnchor; at++)
+        {
+            if (at > 0) { MoveToDeployAsDrone(); InvalidateGrab(); Thread.Sleep(200); }
+            haveAnchor = PanelDeployAsDrone(out ax, out ay);
+            if (!haveAnchor) haveAnchor = WarheadAnchor(out ax, out ay);
+        }
         if (!haveAnchor)
         {
             Log("   no 'Deploy As Drone' anchor on screen - falling back to the colour hunt");
