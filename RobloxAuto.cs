@@ -194,6 +194,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                                                     // while a FULL push is unchanged
     float _hudLeftPx = 0f;                         // px - max horizon offset from the LEFT stick (dial "thr pitch"); 0 = off
     float _hudPitStick = 280f;                      // px - DIRECT horizon offset from the RIGHT stick Y (dial "stick pitch")
+    float _hudGndBoost = 1f;                        // x  - extra stick-pitch lift when the image has no horizon (dial "ground boost"; was hard-wired 1.6x)
                                                     //      push forward = line UP, pull back = line DOWN (signed: set - to invert)
     float _hudPitStickSm = 0f;                      // smoothed stick-pitch offset (glides, never jumps)
     float _hudRollStick = 8f;                       // DEG - direct bank from the right stick X (dial "stick tilt").
@@ -234,11 +235,15 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     List<float[]> _refLine = new List<float[]>();
     float[] _refBestLine = null;          // horizon line of the nearest reference (null = none stored)
     bool _refLoaded = false;
-    // DEPLOY REFS (auto-teach): candidates from the first 2s after Deploy As Drone. At the end of
-    // that window, if 3+ candidate lines AGREE, the most confident frame is saved as a
-    // good-auto-* ref so later flights on the same scene match the photo and lock instantly.
-    // Agreement is the guard: a wrong ref would later publish its line at 0.95 confidence.
+    // DEPLOY REFS (auto-teach): ARMS on the first confident line of the flight - the old fixed
+    // 2s-from-deploy window sat inside the cold start / spawn settle and caught nothing (every
+    // deploy logged "0 good frames") - then collects for 3s. If 3+ candidate lines AGREE, the
+    // most confident frame is saved as a good-auto-* ref so later flights on the same scene
+    // match the photo and lock instantly. Agreement is the guard: a wrong ref would later
+    // publish its line at 0.95 confidence.
     long _autoRefUntil = 0;
+    bool _autoRefDone = false;
+    long _autoRefDeadline = 0;
     int _autoRefN = 0;
     float[] _autoRefR = new float[10];
     float[] _autoRefP = new float[10];
@@ -295,7 +300,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hugSm = 0f;
     int _hugDisR = 0, _hugDisP = 0, _hugSignR = 0, _hugSignP = 0;
     bool _hugLogged = false;
-    NumericUpDown numPitch, numRoll, numBias, numAccel, numFov, numManeuver, numRefDist, numAxisW, numMsTau, numSkyMin, numSkyTex;
+    NumericUpDown numPitch, numRoll, numBias, numAccel, numFov, numManeuver, numRefDist, numAxisW, numMsTau, numSkyMin, numSkyTex, numGndBoost;
     Button btnReloadRefs, btnCapRef;
     NumericUpDown numDpp, numShear, numLen, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numRollGain, numPitchGain;
     System.Windows.Forms.Timer _gainTick; bool _updGains = false;
@@ -1053,7 +1058,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         y += 28;
 
         numSkyMin = MkTune(x, y, "sky min", (decimal)(_hudSkyMin * 100f), 0m, 80m, 1m, 0);
+        numGndBoost = MkTune(x + 168, y, "ground boost", (decimal)_hudGndBoost, 1m, 2.5m, 0.05m, 2);
         numSkyMin.ValueChanged += delegate { _hudSkyMin = (float)numSkyMin.Value / 100f; SaveCfg(); };
+        numGndBoost.ValueChanged += delegate { _hudGndBoost = (float)numGndBoost.Value; SaveCfg(); };
         y += 28;
 
         // reload the reference photos ("base photos") without restarting
@@ -1908,6 +1915,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             case "fine gain": return "Boosts SMALL right-stick inputs so fine movements move the line more (full push unchanged).";
             case "stick pitch": return "Direct horizon lift from the right stick Y (px). Negative inverts.";
             case "stick tilt": return "Direct bank from the right stick X (deg). Negative inverts.";
+            case "ground boost": return "Extra stick-pitch lift while the image has NO horizon (no fix, or sky under 15%). 1.00 = off - the stick then moves the line exactly by 'stick pitch'.";
             case "tree drop": return "Push the horizon DOWN (deg) when the detector sees lots of clutter (trees/structures), which pull a lock UP onto the canopy.";
             case "roll gain": return "LEARNED, shown live: the roll-rate scale the fine-tune learner has found (1.00 = your roll speed dial is exact). Type to override for this flight; the next deploy hands it back to the learner.";
             case "pitch gain": return "LEARNED, shown live: the pitch-rate scale the fine-tune learner has found, including off-screen traverse corrections (1.00 = your pitch speed dial is exact). Type to override for this flight.";
@@ -5841,7 +5849,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // while the image has nothing to contribute. It returns to 1x as soon as the horizon is
         // back in view.
         bool groundEye = !(_hudDetValid && (Environment.TickCount - _hudDetAt) < 2000) || _hudDetSky < 0.15f;
-        float pitStickEff = _hudPitStick * (groundEye ? 1.6f : 1f);
+        float pitStickEff = _hudPitStick * (groundEye ? _hudGndBoost : 1f);
         float stickPitchTarget = -syS * pitStickEff;
         float pv = 1f - (float)Math.Pow(0.5, dt / 0.22f);      // ~0.22s glide
         _hudPitStickSm += (stickPitchTarget - _hudPitStickSm) * pv;
@@ -6527,6 +6535,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudPitOff") _hudPitOff = ParseF(v);
             else if (k == "hudThr") _hudLeftPx = ParseF(v);
             else if (k == "hudPStick") _hudPitStick = ParseF(v);
+            else if (k == "hudGndBoost") _hudGndBoost = ParseF(v);
             else if (k == "hudTexW") _hudTexW = ParseF(v);
             else if (k == "hudAccPitch") _hudAccPitch = ParseF(v);
             else if (k == "hudAccRoll") _hudAccRoll = ParseF(v);
@@ -6633,6 +6642,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudThr=" + _hudLeftPx.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPStick=" + _hudPitStick.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudGndBoost=" + _hudGndBoost.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudTexW=" + _hudTexW.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAccPitch=" + _hudAccPitch.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAccRoll=" + _hudAccRoll.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -7168,9 +7178,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 _hudSettling = true;   // hold the ladder still while the spawn pose settles
                 _hudSettleUntil = Environment.TickCount + _hudSettleMs;
                 _seedN = 0; _hudSettleExt = 0;
-                // DEPLOY REFS: those same first seconds are the auto-teach window - good frames can
-                // become a reference photo at the end of it (AutoSaveRef). 2s, as requested.
-                _autoRefUntil = Environment.TickCount + 2000;
+                // DEPLOY REFS: the teach window ARMS on the first confident line (the old fixed
+                // 2s-from-deploy window sat inside the cold start and caught nothing), then
+                // collects for 3s and AutoSaveRef decides. 45s bound so a bad spawn never turns
+                // a mid-dogfight frame into the teach sample.
+                _autoRefUntil = 0; _autoRefDone = false;
+                _autoRefDeadline = Environment.TickCount + 45000;
                 _autoRefN = 0; _autoRefPx = null; _autoRefConf = 0f;
                 _hudColdUntil = Environment.TickCount + _hudColdMs;   // first 10s = plain median of the image
                 _hudColdLogged = false;
@@ -8507,7 +8520,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             catch { }
             if (_autoRefN < 3 || _autoRefPx == null)
             {
-                Log("   deploy refs: only " + _autoRefN + " good frames in the first 2s - nothing saved");
+                Log("   deploy refs: only " + _autoRefN + " good frames in the collection window - nothing saved");
                 return;
             }
             float rmin = _autoRefR[0], rmax = _autoRefR[0], pmin = _autoRefP[0], pmax = _autoRefP[0];
@@ -10219,18 +10232,28 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _hudTrkM = mFin; _hudTrkB = cy - mFin * cx - normF * kFinal;
             _hudTrkAt = Environment.TickCount;
 
-            // DEPLOY REF CANDIDATES. Window-end is checked FIRST so a full candidate list can
-            // never skip the save. Only confident lines join, and the best one's FRAME is kept.
-            if (_autoRefUntil != 0)
+            // DEPLOY REF CANDIDATES. The teach window ARMS on the first confident line, collects
+            // for 3s (window-end checked FIRST so a full list never skips the save), then
+            // AutoSaveRef keeps the best frame if 3+ candidates agree. Only confident lines join.
+            if (!_autoRefDone)
             {
-                if (Environment.TickCount >= _autoRefUntil) { _autoRefUntil = 0; AutoSaveRef(); }
-                else if (conf >= 0.5f && _autoRefN < _autoRefR.Length)
+                if (_autoRefUntil == 0 && conf >= 0.5f && Environment.TickCount < _autoRefDeadline)
                 {
-                    _autoRefR[_autoRefN] = theta; _autoRefP[_autoRefN] = pitchPerp; _autoRefN++;
-                    if (_autoRefPx == null || conf >= _autoRefConf)
+                    _autoRefUntil = Environment.TickCount + 3000;
+                    _autoRefN = 0; _autoRefPx = null; _autoRefConf = 0f;
+                    Log("   deploy refs: first confident line - collecting the next 3s");
+                }
+                if (_autoRefUntil != 0)
+                {
+                    if (Environment.TickCount >= _autoRefUntil) { _autoRefUntil = 0; _autoRefDone = true; AutoSaveRef(); }
+                    else if (conf >= 0.5f && _autoRefN < _autoRefR.Length)
                     {
-                        _autoRefPx = (int[])px.Clone();     // the exact frame to save as the photo
-                        _autoRefConf = conf; _autoSaveRoll = theta; _autoSavePitch = pitchPerp;
+                        _autoRefR[_autoRefN] = theta; _autoRefP[_autoRefN] = pitchPerp; _autoRefN++;
+                        if (_autoRefPx == null || conf >= _autoRefConf)
+                        {
+                            _autoRefPx = (int[])px.Clone();     // the exact frame to save as the photo
+                            _autoRefConf = conf; _autoSaveRoll = theta; _autoSavePitch = pitchPerp;
+                        }
                     }
                 }
             }

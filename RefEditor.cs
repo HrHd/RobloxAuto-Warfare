@@ -23,12 +23,16 @@ class RefEditor : Form
     Label lblTreeLevel;
     TrackBar tbSky;
     Label lblSkyLevel;
+    Button btnTreeKey, btnSkyKey;
+    ToolTip tip = new ToolTip();
+    Keys treeKey = Keys.Q, skyKey = Keys.E; // rebindable: cycle the trees/sky level
+    int bindMode = 0;                       // 0 = none, 1 = waiting for a trees key, 2 = waiting for a sky key
     bool loadingRef = false;                // guard: slider changes during a load must not rename
 
     public RefEditor()
     {
         Text = "Ref Editor - drag the line onto the real horizon, S = save";
-        Width = 1480; Height = 1000;
+        Width = 1480; Height = 900;
         StartPosition = FormStartPosition.CenterScreen;
         KeyPreview = true;
 
@@ -42,7 +46,7 @@ class RefEditor : Form
         Controls.Add(list);
 
         pic = new PictureBox();
-        pic.SetBounds(336, 34, Width - 372, Height - 116);
+        pic.SetBounds(336, 34, Width - 560, Height - 116);
         pic.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
         pic.SizeMode = PictureBoxSizeMode.Zoom;
         pic.Paint += PicPaint;
@@ -83,57 +87,86 @@ class RefEditor : Form
 
         Button bs = new Button(); bs.Text = "SAVE (S)"; bs.SetBounds(650, Height - 78, 110, 28);
         bs.Click += delegate { SaveRef(); }; Controls.Add(bs);
-        Button br = new Button(); br.Text = "reload"; br.SetBounds(768, Height - 78, 80, 28);
-        br.Click += delegate { LoadRef(); }; Controls.Add(br);
+        Button br = new Button(); br.Text = "reload list"; br.SetBounds(768, Height - 78, 86, 28);
+        br.Click += delegate { ReloadList(); }; Controls.Add(br);
         Button bn = new Button(); bn.Text = "next >"; bn.SetBounds(856, Height - 78, 80, 28);
         bn.Click += delegate { if (list.SelectedIndex < list.Items.Count - 1) list.SelectedIndex++; }; Controls.Add(bn);
         Button bd = new Button(); bd.Text = "DELETE (Del)"; bd.SetBounds(944, Height - 78, 108, 28);
         bd.Click += delegate { DeleteRef(); }; Controls.Add(bd);
-        Button bg = new Button(); bg.Text = "GROUND (G)"; bg.SetBounds(1060, Height - 78, 112, 28);
-        bg.Click += delegate { GroundRef(); }; Controls.Add(bg);
 
-        // TREE LEVEL slider lives in the BOTTOM ROW with the buttons (that is where the controls
-        // are; it was reported as missing when it sat at the top).
-        Label lt = new Label(); lt.Text = "trees:"; lt.SetBounds(1180, Height - 74, 44, 20);
-        lt.Font = new Font("Segoe UI", 9F, FontStyle.Bold); Controls.Add(lt);
+        // REF MARKS panel down the RIGHT side: TREES and SKY sliders stacked, each with a level
+        // read-out and a click-to-rebind key button; GROUND sits at the bottom of the panel.
+        Panel pnl = new Panel();
+        pnl.SetBounds(Width - 208, 34, 180, Height - 116);
+        pnl.Anchor = AnchorStyles.Top | AnchorStyles.Right | AnchorStyles.Bottom;
+        pnl.BorderStyle = BorderStyle.FixedSingle;
+        Controls.Add(pnl);
+
+        Label lh = new Label(); lh.Text = "ref marks"; lh.SetBounds(12, 10, 158, 22);
+        lh.Font = new Font("Segoe UI", 10F, FontStyle.Bold); pnl.Controls.Add(lh);
+
+        Label lt = new Label(); lt.Text = "trees"; lt.SetBounds(14, 44, 80, 20);
+        lt.Font = new Font("Segoe UI", 9F, FontStyle.Bold); pnl.Controls.Add(lt);
         tbTrees = new TrackBar();
-        tbTrees.SetBounds(1222, Height - 82, 190, 30);
+        tbTrees.SetBounds(10, 66, 158, 34);
         tbTrees.Minimum = 0; tbTrees.Maximum = 3; tbTrees.TickFrequency = 1;
         tbTrees.SmallChange = 1; tbTrees.LargeChange = 1;
-        Controls.Add(tbTrees);
-        lblTreeLevel = new Label(); lblTreeLevel.SetBounds(1416, Height - 74, 70, 20);
-        lblTreeLevel.Font = new Font("Segoe UI", 9F, FontStyle.Bold); Controls.Add(lblTreeLevel);
+        pnl.Controls.Add(tbTrees);
+        lblTreeLevel = new Label(); lblTreeLevel.SetBounds(14, 106, 76, 26);
+        lblTreeLevel.Font = new Font("Segoe UI", 11F, FontStyle.Bold); pnl.Controls.Add(lblTreeLevel);
         tbTrees.ValueChanged += delegate
         {
             lblTreeLevel.Text = TreeName(tbTrees.Value);
             if (!loadingRef) SetTreeLevel(tbTrees.Value);
         };
+        btnTreeKey = new Button(); btnTreeKey.SetBounds(96, 104, 74, 28);
+        btnTreeKey.Click += delegate { StartBind(1); }; pnl.Controls.Add(btnTreeKey);
 
-        // hint + count live at the TOP above the photo (the bottom row is for controls)
-        // ...and the SKY slider joins it up here: AUTO / LOW / MED / HIGH = how much sky was
-        // above the line (HIGH = a true open-sky boundary; LOW = threading/behind the canopy).
-        Label lk = new Label(); lk.Text = "sky:"; lk.SetBounds(700, 6, 34, 20);
-        lk.Font = new Font("Segoe UI", 9F, FontStyle.Bold); Controls.Add(lk);
+        Label lk = new Label(); lk.Text = "sky"; lk.SetBounds(14, 152, 80, 20);
+        lk.Font = new Font("Segoe UI", 9F, FontStyle.Bold); pnl.Controls.Add(lk);
         tbSky = new TrackBar();
-        tbSky.SetBounds(738, 0, 170, 30);
+        tbSky.SetBounds(10, 174, 158, 34);
         tbSky.Minimum = 0; tbSky.Maximum = 3; tbSky.TickFrequency = 1;
         tbSky.SmallChange = 1; tbSky.LargeChange = 1;
-        Controls.Add(tbSky);
-        lblSkyLevel = new Label(); lblSkyLevel.SetBounds(912, 8, 60, 20);
-        lblSkyLevel.Font = new Font("Segoe UI", 9F, FontStyle.Bold); Controls.Add(lblSkyLevel);
+        pnl.Controls.Add(tbSky);
+        lblSkyLevel = new Label(); lblSkyLevel.SetBounds(14, 214, 76, 26);
+        lblSkyLevel.Font = new Font("Segoe UI", 11F, FontStyle.Bold); pnl.Controls.Add(lblSkyLevel);
         tbSky.ValueChanged += delegate
         {
             lblSkyLevel.Text = TreeName(tbSky.Value);
             if (!loadingRef) SetSkyLevel(tbSky.Value);
         };
+        btnSkyKey = new Button(); btnSkyKey.SetBounds(96, 212, 74, 28);
+        btnSkyKey.Click += delegate { StartBind(2); }; pnl.Controls.Add(btnSkyKey);
 
-        lblInfo = new Label(); lblInfo.SetBounds(984, 6, Width - 1004, 44);
+        Button bg = new Button(); bg.Text = "GROUND (G)";
+        bg.SetBounds(10, pnl.ClientSize.Height - 40, 160, 30);
+        bg.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+        bg.Click += delegate { GroundRef(); }; pnl.Controls.Add(bg);
+
+        tip.SetToolTip(btnTreeKey, "click, then press the key that should cycle the TREES level (AUTO > LOW > MED > HIGH)");
+        tip.SetToolTip(btnSkyKey, "click, then press the key that should cycle the SKY level (AUTO > LOW > MED > HIGH)");
+
+        LoadKeys();
+        UpdateKeyButtons();
+
+        // hint + count live at the TOP above the photo (the bottom row is for controls)
+        lblInfo = new Label(); lblInfo.SetBounds(700, 6, Width - 720, 46);
         lblInfo.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         lblInfo.Text = Hint();
         Controls.Add(lblInfo);
 
         KeyDown += delegate(object s, KeyEventArgs e)
         {
+            // REBINDING takes every key while it waits, so nothing else fires mid-assignment.
+            if (bindMode != 0)
+            {
+                e.Handled = true; e.SuppressKeyPress = true;
+                HandleBindKey(e.KeyCode);
+                return;
+            }
+            if (e.KeyCode == treeKey) { e.Handled = true; e.SuppressKeyPress = true; CycleTrees(); return; }
+            if (e.KeyCode == skyKey) { e.Handled = true; e.SuppressKeyPress = true; CycleSky(); return; }
             if (e.KeyCode == Keys.Up) { pitch -= 5; Refresh(); MarkDirty(); }
             else if (e.KeyCode == Keys.Down) { pitch += 5; Refresh(); MarkDirty(); }
             else if (e.KeyCode == Keys.Left) { roll -= 0.5f; Refresh(); MarkDirty(); }
@@ -154,7 +187,9 @@ class RefEditor : Form
 
     string Hint()
     {
-        return "refs " + list.Items.Count + "/" + REF_CAP + "   |   S save  |  G ground  |  Del delete  |  A/D prev/next";
+        return "refs " + list.Items.Count + "/" + REF_CAP + "   |   S save  |  G ground  |  Del delete  |  A/D prev/next\r\n" +
+               "[" + KeyName(treeKey) + "] cycles the trees level    [" + KeyName(skyKey) +
+               "] cycles the sky level    (click a key button to rebind - saved in refkeys.ini)";
     }
 
     void MarkDirty()
@@ -184,6 +219,21 @@ class RefEditor : Form
         }
         if (list.Items.Count > 0) list.SelectedIndex = 0;
         if (lblInfo != null) lblInfo.Text = Hint();
+    }
+
+    void ReloadList()
+    {
+        // refs appear in the folder while the editor is open (auto-saves from flights) - refresh
+        // the LIST, keeping the current selection when it is still there.
+        string cur = list.SelectedIndex >= 0 ? (string)list.Items[list.SelectedIndex] : null;
+        int shown = list.SelectedIndex;
+        RefreshList();
+        if (cur != null)
+        {
+            int ix = list.Items.IndexOf(cur);
+            if (ix >= 0) { list.SelectedIndex = ix; return; }
+        }
+        if (shown >= 0 && shown < list.Items.Count) list.SelectedIndex = shown;
     }
 
     string CurPath()
@@ -522,9 +572,99 @@ class RefEditor : Form
         catch (Exception ex) { lblInfo.Text = "save failed: " + ex.Message; }
     }
 
+    // ---- rebindable level keys ---------------------------------------------------------------
+    // One key per slider cycles AUTO > LOW > MED > HIGH (and back). The buttons show the current
+    // keys; click one, press any key, and it is stored in refkeys.ini next to the exe.
+    void CycleTrees() { tbTrees.Value = (tbTrees.Value + 1) % 4; }
+    void CycleSky() { tbSky.Value = (tbSky.Value + 1) % 4; }
+
+    void StartBind(int which)
+    {
+        bindMode = which;
+        UpdateKeyButtons();
+        lblInfo.Text = "press any key to cycle the " + (which == 1 ? "TREES" : "SKY") +
+            " level   (Esc cancels)   -   now " + KeyName(which == 1 ? treeKey : skyKey);
+    }
+
+    void HandleBindKey(Keys k)
+    {
+        if (k == Keys.Escape) { bindMode = 0; UpdateKeyButtons(); lblInfo.Text = Hint(); return; }
+        if (Reserved(k)) { lblInfo.Text = KeyName(k) + " is used by the editor - try another key (Esc cancels)"; return; }
+        if ((bindMode == 1 && k == skyKey) || (bindMode == 2 && k == treeKey))
+        {
+            lblInfo.Text = KeyName(k) + " already cycles the other slider - try another key (Esc cancels)";
+            return;
+        }
+        if (bindMode == 1) treeKey = k; else skyKey = k;
+        bindMode = 0;
+        SaveKeys();
+        UpdateKeyButtons();
+        lblInfo.Text = Hint();
+    }
+
+    void UpdateKeyButtons()
+    {
+        btnTreeKey.Text = bindMode == 1 ? "press key..." : "cycle " + KeyName(treeKey);
+        btnSkyKey.Text = bindMode == 2 ? "press key..." : "cycle " + KeyName(skyKey);
+    }
+
+    static bool Reserved(Keys k)
+    {
+        // keys the editor itself needs (arrows nudge the line, S/Del/G/A/D/PgUp/PgDn are commands)
+        return k == Keys.Up || k == Keys.Down || k == Keys.Left || k == Keys.Right ||
+               k == Keys.S || k == Keys.Delete || k == Keys.G ||
+               k == Keys.A || k == Keys.D || k == Keys.PageUp || k == Keys.PageDown ||
+               k == Keys.Escape || k == Keys.Space || k == Keys.Enter || k == Keys.Tab;
+    }
+
+    static string KeyName(Keys k)
+    {
+        string s = k.ToString();
+        if (s.StartsWith("Oem") && s.Length > 3) s = s.Substring(3);
+        else if (s.Length == 2 && s[0] == 'D' && char.IsDigit(s[1])) s = s.Substring(1);
+        else if (s == "Next") s = "PgDn";
+        else if (s == "Prior") s = "PgUp";
+        else if (s == "Return") s = "Enter";
+        return s;
+    }
+
+    void LoadKeys()
+    {
+        try
+        {
+            string f = Path.Combine(Application.StartupPath, "refkeys.ini");
+            if (!File.Exists(f)) return;
+            foreach (string ln in File.ReadAllLines(f))
+            {
+                int eq = ln.IndexOf('=');
+                if (eq <= 0) continue;
+                string name = ln.Substring(0, eq).Trim().ToLowerInvariant();
+                Keys k;
+                try { k = (Keys)Enum.Parse(typeof(Keys), ln.Substring(eq + 1).Trim(), true); }
+                catch { continue; }
+                if (Reserved(k)) continue;
+                if (name == "trees") treeKey = k;
+                else if (name == "sky") skyKey = k;
+            }
+        }
+        catch { }
+    }
+
+    void SaveKeys()
+    {
+        try
+        {
+            File.WriteAllText(Path.Combine(Application.StartupPath, "refkeys.ini"),
+                "trees=" + treeKey + "\r\nsky=" + skyKey);
+        }
+        catch { }
+    }
+
     [STAThread]
     static void Main()
     {
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
         Application.Run(new RefEditor());
     }
 }
