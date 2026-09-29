@@ -183,7 +183,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudMinSpread = 5f;                        // reject frames whose colour spread is below this (dial "min colour")
     float _hudClutter = 0f;                          // 0..1 detected clutter (trees/structures) around the horizon
     float _hudTreeDrop = 3f;                         // DEG to push the horizon DOWN when clutter is high (dial "tree drop")
-    float _hudSpreadAmt = 2.2f;                      // how fast the ladder FANS OUT with tilt (dial "spread")
+    float _hudSpreadAmt = 2.2f;                      // how far the ladder FANS OUT with the right stick (dial "spread")
+    float _hudSpreadSm = 0f;                        // smoothed RIGHT STICK magnitude - the only driver of the fan
     float _hudTexW = 1f;                            // how hard the TEXTURE cue (smooth sky / busy ground)
                                                     // backs the colour cue (dial "texture"); 0 = off
     float _hudAccPitch = 0.65f;                     // expo/acceleration on the right-stick Y (dial "pitch accel")
@@ -1820,7 +1821,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             case "max tilt": return "Hard cap (deg) on how far the rungs may tilt when banking - stops them swinging out.";
             case "image limit": return "Max rate the IMAGE may correct the horizon (deg/s). Stops a false lock yanking the line.";
             case "down limit": return "The image is not allowed to push the horizon DOWN past this many px (soft limit).";
-            case "spread": return "How fast the rungs fan apart with tilt (right stick left/right + pitch).";
+            case "spread": return "How far the rungs fan out when the RIGHT STICK moves. Stick centred = tight and centred on the aim point.";
             case "spread accel": return "Expo on the fan: higher = the rungs stay tight for small banks and fan out fast on big ones.";
             case "camera trust": return "How hard the image horizon pulls the lines overall.";
             case "throttle": return "Left-stick throttle nudges the horizon up/down (px).";
@@ -2385,7 +2386,23 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     Log("   Base label is visible at (" + baseX + "," + baseY + ")");
                     break;
                 }
-                if (PhraseOnScreen("POINT")) break;
+                if (PhraseOnScreen("POINT"))
+                {
+                    // The map is up but the icon was not seen yet - it can lag the map's fade-in.
+                    // Give the COLOUR scan a few passes of its own before any zooming: this is the
+                    // "hex first" path and it must not lose to an immediate POINT break.
+                    for (int t = 0; t < 6 && !sawBase && Alive(g); t++)
+                    {
+                        if (FindBaseTent(out htx, out hty))
+                        {
+                            sawBase = true; baseX = htx; baseY = hty;
+                            Log("   Base tent found by colour at (" + baseX + "," + baseY + ") - no scanning needed");
+                            break;
+                        }
+                        Thread.Sleep(180);
+                    }
+                    if (!sawBase) break;
+                }
                 Thread.Sleep(200);
                 InvalidateOcr();
             }
@@ -5560,6 +5577,13 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // so the roll stays a steady acro rate and HOLDS the bank when you centre.
         float sxS = Shape(sx, _hudAccRoll);
         _lastSxS = sxS; _lastSyS = syS;                   // for the physics log
+        // SPREAD FEEL (field request): the fan is driven ONLY by the RIGHT stick. Centred stick =
+        // tight and centred, so the aim point is never disturbed; moving the stick opens it, like a
+        // real drone camera. Smoothed ~0.2s so it opens and closes cleanly instead of snapping.
+        float stickMag = (float)Math.Sqrt(sx * sx + sy * sy);
+        if (stickMag > 1f) stickMag = 1f;
+        if (stickMag < 0.05f) stickMag = 0f;
+        _hudSpreadSm += (stickMag - _hudSpreadSm) * (1f - (float)Math.Pow(0.5, dt / 0.20f));
         bool det = _hudDetValid && (now - _hudDetAt) < 2000;
         // ---- PROPER FUSION: scalar Kalman/alpha-beta per axis, in ANGLE space (see HudFuse) ----
         // Stick = control input, vision = measurement, coast when the vision drops out.
@@ -5619,7 +5643,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
         string alt = _hudAgl != "" ? _hudAgl + " m" : (_hudAlt != "" ? _hudAlt + " m" : "");
         OverlayHub.I.SetHud(true, _hudHdg, _hudSpd != "" ? _hudSpd + " m/s" : "", alt, _hudRoll, _hudPitch, _hudStyleUav, _hudV1, _hudV2);
-        OverlayHub.I.SetDials(_hudDpp, _hudShear, _hudLen, _hudRungTilt, _hudMaxTilt, _hudSpreadAmt, _hudSpreadAccel);
+        OverlayHub.I.SetDials(_hudDpp, _hudShear, _hudLen, _hudRungTilt, _hudMaxTilt, _hudSpreadAmt, _hudSpreadAccel, _hudSpreadSm);
 
         if (_hudForm == null) EnsureHud();          // UI thread - safe to create here
         if (_hudForm != null)
@@ -5630,6 +5654,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _hudForm.Hdg = _hudHdg;
             _hudForm.Roll = _hudRoll;
             _hudForm.PitchPx = _hudPitch;
+            _hudForm.Spread = _hudSpreadSm;
             _hudForm.Dpp = _hudDpp; _hudForm.Shear = _hudShear; _hudForm.Len = _hudLen; _hudForm.RungTilt = _hudRungTilt; _hudForm.MaxTilt = _hudMaxTilt; _hudForm.SpreadAmt = _hudSpreadAmt; _hudForm.SpreadAccel = _hudSpreadAccel;
             _hudForm.Uav = _hudStyleUav;
             _hudForm.V1 = _hudV1; _hudForm.V2 = _hudV2;
@@ -6636,6 +6661,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
           catch { }   // a draw error must never bubble up - WinForms turns that into the red-X screen
         }
 
+        // the ladder fan driver: smoothed RIGHT STICK magnitude (0 = centred = tight)
+        public float Spread = 0f;
+
         protected override void OnPaint(PaintEventArgs e)
         {
           try
@@ -6651,7 +6679,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // artificial horizon + pitch ladder. Each rung is ROTATED by the roll so it stays PARALLEL
             // TO THE REAL HORIZON (tilted like the ground line), like a gyro/instrument horizon. Pitch
             // slides the whole ladder up/down.
-            float tilt = Math.Min(1f, Math.Abs(PitchPx) / 900f + Math.Abs(Roll) / 180f);
+            // the fan follows the RIGHT STICK only (fed from HudTick): centred stick = tight, so
+            // the aim point is never disturbed by the effect.
+            float tilt = Spread;
             float tS = tilt * ((1f - SpreadAccel) + SpreadAccel * tilt * tilt);   // expo: fan builds slower then faster
             float spread = 1f + SpreadAmt * tS;
             // Rungs follow the bank ("rung tilt"), but the angle is CAPPED at "max tilt" so they can
@@ -6663,7 +6693,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             float dxr = (float)Math.Cos(rt), dyr = (float)Math.Sin(rt);
             for (int d = -90; d <= 90; d += 10)
             {
-                float yy = PitchPx + d * Dpp * spread;       // dpp = px per degree, fanned by the tilt
+                // CENTRED expansion (field request): every position scales about the SCREEN CENTRE,
+                // so the fan radiates from the aim reticle instead of growing around the horizon
+                // line. (With the stick centred, spread = 1 and this is exactly the old geometry.)
+                float yy = (PitchPx + d * Dpp) * spread;
                 float dist = Math.Abs(yy);
                 float af = dist <= 300f ? 1f : 1f - (dist - 300f) / 440f;   // fade 300px -> 740px
                 if (af <= 0.02f) continue;
@@ -8774,7 +8807,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 int[] buck = new int[16];
                 for (int i = 0; i < N; i++)
                 {
-                    int bk = (int)(_hdL[i] * 15.999f);
+                    // _hdL is LUMINANCE 0..255, not 0..1 - shift by 4 gives the 16 bands. The first
+                    // version multiplied as if it were 0..1, so every pixel piled into the top band
+                    // and EVERY frame read as "100% one tone": the detector discarded everything and
+                    // no horizon could lock at all. Verified on real frames: max band 39-48%.
+                    int bk = ((int)_hdL[i]) >> 4;
                     if (bk < 0) bk = 0; if (bk > 15) bk = 15;
                     buck[bk]++;
                 }
@@ -9325,7 +9362,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         float _roll = 0f, _pit = 0f;
         bool _uav = false;
         float _v1 = 0f, _v2 = 0f;
-        float _dpp = 8f, _shear = 0.9f, _len = 1f, _rungTilt = 0f, _maxTilt = 30f, _spread = 2.2f, _spreadAccel = 0f;   // ladder geometry dials (from settings)
+        float _dpp = 8f, _shear = 0.9f, _len = 1f, _rungTilt = 0f, _maxTilt = 30f, _spread = 2.2f, _spreadAccel = 0f;
+        float _spreadStick = 0f;   // smoothed right-stick magnitude - the only driver of the fan   // ladder geometry dials (from settings)
         float _plx = 0f, _ply = 0f, _prx = 0f, _pry = 0f;   // live stick values (diagnostics)
         float _alx = 0f, _aly = 0f, _arx = 0f, _ary = 0f;   // stick values fed by the joystick app
         long _aPadAt = 0;
@@ -9374,8 +9412,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         }
         public void SetHud(bool on, string hdg, string spd, string agl, float roll, float pit, bool uav, float v1, float v2)
         { lock (_lock) { _hud = on; _hdg = hdg ?? ""; _spd = spd ?? ""; _agl = agl ?? ""; _roll = roll; _pit = pit; _uav = uav; _v1 = v1; _v2 = v2; } }
-        public void SetDials(float dpp, float shear, float len, float rungTilt, float maxTilt, float spread, float spreadAccel)
-        { lock (_lock) { _dpp = dpp; _shear = shear; _len = len; _rungTilt = rungTilt; _maxTilt = maxTilt; _spread = spread; _spreadAccel = spreadAccel; } }
+        public void SetDials(float dpp, float shear, float len, float rungTilt, float maxTilt, float spread, float spreadAccel, float spreadStick)
+        { lock (_lock) { _dpp = dpp; _shear = shear; _len = len; _rungTilt = rungTilt; _maxTilt = maxTilt; _spread = spread; _spreadAccel = spreadAccel; _spreadStick = spreadStick; } }
         void Step() { lock (_lock) { _progress += (_target - _progress) * 0.12f; if (Math.Abs(_target - _progress) < 0.002f) _progress = _target; } }
 
         static string Esc(string s)
@@ -9423,6 +9461,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     sb.Append(",\"maxTilt\":").Append(_maxTilt.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"spread\":").Append(_spread.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
                     sb.Append(",\"spreadAccel\":").Append(_spreadAccel.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                    sb.Append(",\"spreadStick\":").Append(_spreadStick.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
                     // overlay.html version = its last-write time; the page reloads itself when it changes
                     // so OBS can never sit on a stale render again
                     string oVer = "0";
