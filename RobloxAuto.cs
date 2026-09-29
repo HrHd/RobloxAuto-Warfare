@@ -2512,12 +2512,24 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         if (!GoOn(g)) return;
         bool warheadOk = true;
         AddBlackProgress(0.62f, "payload");
-        if (_stepBomb && _bomb != "(none)" && TeamBaseUp(panelUp))
+        if (_stepBomb && _bomb != "(none)")
         {
-            Log("6) selecting warhead " + _bomb + "...");
-            warheadOk = ClickWarhead(g);
-            if (!warheadOk) Log("   " + _bomb + " is not equipped");
-            AddBlackProgress(0.75f, "warhead armed");
+            if (TeamBaseUp(panelUp))
+            {
+                Log("6) selecting warhead " + _bomb + "...");
+                warheadOk = ClickWarhead(g);
+                if (!warheadOk) Log("   " + _bomb + " is not equipped");
+                AddBlackProgress(0.75f, "warhead armed");
+            }
+            else
+            {
+                // The panel could not be read, so the warhead was NEVER selected. This used to
+                // leave warheadOk TRUE (it starts true and the whole block was gated on the panel),
+                // so a reconnect - where the panel often is not readable yet - went straight on to
+                // click Deploy As Drone with whatever was loaded. Unverifiable is a FAILURE.
+                warheadOk = false;
+                Log("6) could not verify/select the warhead - TEAM BASE panel not readable (will re-plan)");
+            }
         }
         else Log("6) bomb step skipped (" + (_bomb == "(none)" || !_stepBomb ? "step off" : "TEAM BASE not open") + ")");
 
