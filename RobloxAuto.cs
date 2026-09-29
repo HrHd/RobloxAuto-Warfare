@@ -7031,8 +7031,16 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             int wx, wy;
             try { wx = int.Parse(w[0]); wy = int.Parse(w[1]); } catch { continue; }
             string n = Norm(w[4] ?? "");
+            // FPV OSD: "AGL" sits in the TOP-CENTRE altitude readout, payload says "MOUNTED".
             if (n == "agl" && wy < H * 22 / 100 && wx > W * 28 / 100 && wx < W * 72 / 100) return true;
             if (n.IndexOf("mounted") >= 0 && wy > H * 82 / 100 && wx > W * 50 / 100) return true;
+            // MAVIC OSD (measured off a real frame): "AGL 54.2m" is at the BOTTOM-LEFT, and the
+            // bottom-right payload panel reads "PAYLOAD / 3 grenades ready / Amber ring: estimated
+            // landing" - NOT "MOUNTED". Neither of the FPV tests above can ever match a MAVIC view,
+            // which is exactly why the MAVIC HUD kept hiding while we were demonstrably flying it.
+            if (n == "agl" && wy > H * 80 / 100 && wx < W * 25 / 100) return true;
+            if (n.IndexOf("grenade") >= 0 && wy > H * 78 / 100 && wx > W * 50 / 100) return true;
+            if (n.IndexOf("amber") >= 0 && wy > H * 78 / 100 && wx > W * 50 / 100) return true;
         }
         return false;
     }
