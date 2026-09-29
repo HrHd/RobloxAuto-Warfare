@@ -5726,14 +5726,18 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         if (_hudFPitch > 1600f) _hudFPitch = 1600f;  // lots of travel so the horizon can leave the frame
         if (_hudFPitch < -1600f) _hudFPitch = -1600f; // (pointed at the ground -> it runs off the top)
 
-        _hudRoll = _hudFRoll + _hudRollOff + stickRoll;     // + manual roll offset + direct stick bank
+        float tDropRaw = _hudClutter * _hudTreeDrop * _hudDpp;
+        float rawRoll = _hudFRoll + _hudRollOff + stickRoll;     // + manual roll offset + direct stick bank
         // low-quality LIFT (up) and clutter DROP (down) - both in px, off the dials
-        // TREE-BELOW VOTE (field request): when the parser's sections just UNDER the line are
-        // mostly canopy/trunks (neither sky nor ground), the line is riding the tree tops - trim
-        // it DOWN. Smoothing above makes it a slow vote, not a per-frame fudge.
         float treeDrop = _hudParserOn ? _hudTreeBelowSm * _hudTreeDrop * _hudDpp
-                                      : _hudClutter * _hudTreeDrop * _hudDpp;
-        _hudPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff + treeDrop;
+                                      : tDropRaw;
+        float rawPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff + treeDrop;
+        // OUTPUT SMOOTHING (v2.9.40): a ~90ms glide on the values the HUD and the overlay actually
+        // draw. The estimator is untouched - this only removes the last per-tick steps from
+        // detection trims and stick noise, so the line moves continuously instead of stepping.
+        float kOut = 1f - (float)Math.Pow(0.5, dt / 0.09f);
+        _hudRoll += (rawRoll - _hudRoll) * kOut;
+        _hudPitch += (rawPitch - _hudPitch) * kOut;
         if (_physLog) PhysLogLine();                       // 50 Hz: fast stick work included
 
         // Simulated FPV pack voltage. It starts at half, rises with throttle (left stick Y up), and
@@ -8652,8 +8656,25 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             bool okR = Math.Abs(ir) <= gR;
             bool okP = Math.Abs(ip) <= gP;
 
-            if (okR) { _kfRollX += aR * ir; _kfRollP = (1f - aR) * _kfRollP; }
-            if (okP) { _kfPitX += aP * ip; _kfPitP = (1f - aP) * _kfPitP; }
+            // SLEW LIMIT (v2.9.40, field request): the horizon cannot move faster than the model
+            // can fly it. A detection demanding more is physically impossible - clamp the step to
+            // 1.7x the full-stick rate. After a long coast the clamp lifts completely: a genuine
+            // re-acquire must be able to land wherever the craft actually ended up.
+            float maxStepR = 1.7f * _hudRollRate * dt;
+            float maxStepP = 1.7f * HudPitchRateDeg() * dt;
+            if (coastBefore > 1200f) { maxStepR = 1e9f; maxStepP = 1e9f; }
+            if (okR)
+            {
+                float stepR = aR * ir;
+                if (stepR > maxStepR) stepR = maxStepR; if (stepR < -maxStepR) stepR = -maxStepR;
+                _kfRollX += stepR; _kfRollP = (1f - aR) * _kfRollP;
+            }
+            if (okP)
+            {
+                float stepP = aP * ip;
+                if (stepP > maxStepP) stepP = maxStepP; if (stepP < -maxStepP) stepP = -maxStepP;
+                _kfPitX += stepP; _kfPitP = (1f - aP) * _kfPitP;
+            }
 
             // OFFSET LEARNING - this is what used to drag the horizon DOWN permanently ("it thinks
             // the ground is the sky"). It must only ever absorb a SMALL, CONSTANT bias, so it learns
@@ -9175,6 +9196,19 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         catch { }
     }
 
+    // VOTE PROXIMITY GATE (v2.9.40, field request): a vote that is "yes" but lands too far from
+    // where the last accepted horizon was CANNOT be true - the craft cannot have moved the line
+    // that fast. Allowed distance = 25px + 1.5x the model's max pitch rate x the time since the
+    // last fix, capped at 140 working px. With no prior line (first lock) the vote is free.
+    bool VoteNearLast(float vk)
+    {
+        if (!_hnOk) return true;
+        float dtS = Math.Max(0.2f, (Environment.TickCount - _hudDetAt) / 1000f);
+        float allowed = 25f + 1.5f * (_hudPitchRate / HD_DS) * dtS;
+        if (allowed > 140f) allowed = 140f;
+        return Math.Abs(vk - _hnK) <= allowed;
+    }
+
     void DetectHorizon()
     {
         try
@@ -9274,6 +9308,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         if (HudColVote(_hnTheta, out vk2, out vag2) && vag2 >= 2) { vk = vk2; vag = vag2; voteOk = true; }
                     }
                     if (!voteOk && _hudColOk && _hudColAgree >= 2) { vk = _hudColK; vag = _hudColAgree; voteOk = true; }
+                    if (voteOk && !VoteNearLast(vk))
+                    {
+                        Log("horizon det: COLD START vote rejected - " + ((int)(Math.Abs(vk - _hnK) * HD_DS)) +
+                            "px from the last line (limit " + ((int)(140 * HD_DS)) + "px) - too far, too fast");
+                        voteOk = false;
+                    }
                     if (voteOk)
                     {
                         float vPitch = -vk * HD_DS;
@@ -9665,7 +9705,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 // half a minute over the night forest while the vote held the boundary on every
                 // frame). When the pixel scorer has no usable split but the 3-column vote is
                 // confident (2+ columns), publish the vote line instead of coasting.
-                if (!coldMedian && _hudColOk && _hudColAgree >= 2)
+                if (!coldMedian && _hudColOk && _hudColAgree >= 2 && VoteNearLast(_hudColK))
                 {
                     float vPitch = -_hudColK * HD_DS;
                     HudPublish(theta, vPitch, 0.30f, 0.55f, 900f, 9f);
