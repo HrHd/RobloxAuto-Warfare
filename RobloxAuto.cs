@@ -11112,10 +11112,20 @@ ComboBox cmbPadThermal;
                     }
                     else if ((tsecond - td) >= (strong ? 0.008f : 0.006f))
                     {
-                        float tConf = strong ? 0.93f : 0.70f;     // soft tier: trim, never snap
-                        if (tname.IndexOf("-sky-none") >= 0) tConf = Math.Min(tConf, 0.60f);
-                        else if (tname.IndexOf("-sky-med") >= 0) tConf = Math.Min(tConf, 0.82f);
-                        else if (tname.IndexOf("-sky-low") >= 0) tConf = Math.Min(tConf, 0.70f);
+                        // INFLUENCE (user rule + offline data): the thermal match steers HARD. The
+                        // ref-vs-ref test (thmtest, 131 refs) says it identifies the scene very
+                        // reliably and its ROLL is almost always within a few degrees - but the
+                        // PITCH it carries can belong to a different moment of the same scene
+                        // (30-150px off, 76/131 returns inside 60px/4deg). So: high confidence by
+                        // default; when the pitch disagrees with the stick model's expectation it
+                        // keeps a strong prior instead of a lock.
+                        float tConf = strong ? 0.93f : 0.88f;
+                        float expThm = -(_hnK + _expK) * HD_DS;
+                        bool pitchAgrees = !_hnOk || Math.Abs(tline[1] / tcos - expThm) <= 220f;
+                        if (!pitchAgrees) tConf = Math.Min(tConf, 0.62f);
+                        if (tname.IndexOf("-sky-none") >= 0) tConf = Math.Min(tConf, 0.70f);
+                        else if (tname.IndexOf("-sky-low") >= 0) tConf = Math.Min(tConf, 0.80f);
+                        else if (tname.IndexOf("-sky-med") >= 0) tConf = Math.Min(tConf, 0.88f);
                         HudPublish(tline[0], tline[1] / tcos, 0.5f, tConf, 9f, 0.25f);
                         _hudDetValid = true; _hudDetAt = Environment.TickCount;
                         _hnOk = true; _hnTheta = tline[0];
@@ -11126,7 +11136,8 @@ ComboBox cmbPadThermal;
                         if (Environment.TickCount - _hudLogAt >= 2000)
                         {
                             _hudLogAt = Environment.TickCount;
-                            Log("horizon det: SIDE thermal ref " + tname + (strong ? "" : " [soft]") + " (d " + td.ToString("0.000") +
+                            Log("horizon det: SIDE thermal ref " + tname + (strong ? "" : " [soft-d]") +
+                                (pitchAgrees ? "" : " [pitch-guarded]") + " (d " + td.ToString("0.000") +
                                 ", margin " + (tsecond - td).ToString("0.000") + ") - roll " + tline[0].ToString("0.0") +
                                 " deg, pitch " + (tline[1] / tcos).ToString("0") + "px");
                         }

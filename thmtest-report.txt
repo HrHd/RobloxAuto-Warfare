@@ -1,0 +1,131 @@
+good-20260929-033020-ground-trees-low-sky-none.png  own 2.0/-332  ->  good-20260929-054846-ground.png  d 0.038 m 0.021  ret -0.7/-509  dp 177 dr 2.7  
+good-20260929-033028-ground-edit-trees-low.png  own 1.1/1600  ->  good-20260929-054846-ground.png  d 0.072 m 0.009  ret -0.7/-509  dp 2109 dr 1.8  
+good-20260929-054349-edit-trees-low-sky-med.png  own 1.9/-108  ->  good-20260929-054350-edit-trees-low-sky-med.png  d 0.029 m 0.022  ret 1.9/-98  dp 10 dr 0.0  OK
+good-20260929-054350-edit-trees-low-sky-med.png  own 1.9/-98  ->  good-20260929-054349-edit-trees-low-sky-med.png  d 0.026 m 0.026  ret 1.9/-108  dp 10 dr 0.0  OK
+good-20260929-054351-edit-trees-low-sky-med.png  own 1.9/-98  ->  good-20260929-054352-edit-trees-low-sky-med.png  d 0.045 m 0.002  ret 0.7/-68  dp 30 dr 1.2  OK
+good-20260929-054352-edit-trees-low-sky-med.png  own 0.7/-68  ->  good-20260929-054353-edit-trees-low-sky-med.png  d 0.018 m 0.021  ret 0.4/-66  dp 2 dr 0.3  OK
+good-20260929-054353-edit-trees-low-sky-med.png  own 0.4/-66  ->  good-20260929-054352-edit-trees-low-sky-med.png  d 0.013 m 0.014  ret 0.7/-68  dp 2 dr 0.3  OK
+good-20260929-054354-edit-trees-med-sky-med.png  own 0.5/-59  ->  good-20260929-054353-edit-trees-low-sky-med.png  d 0.022 m 0.001  ret 0.4/-66  dp 7 dr 0.1  OK
+good-20260929-054355-edit-trees-med-sky-med.png  own 0.6/-55  ->  good-20260929-054354-edit-trees-med-sky-med.png  d 0.020 m 0.009  ret 0.5/-59  dp 4 dr 0.2  OK
+good-20260929-054405-edit-trees-med-sky-med.png  own -1.0/-2  ->  good-20260929-054415-edit-trees-med-sky-med.png  d 0.059 m 0.014  ret 0.4/-139  dp 137 dr 1.4  
+good-20260929-054406-edit-trees-med-sky-med.png  own -0.1/14  ->  good-20260929-054414-edit-trees-med-sky-med.png  d 0.050 m 0.002  ret 0.4/-137  dp 152 dr 0.5  
+good-20260929-054407-edit-trees-med-sky-med.png  own 0.5/20  ->  good-20260929-054408-edit-trees-med-sky-med.png  d 0.046 m 0.002  ret 0.3/32  dp 11 dr 0.2  OK
+good-20260929-054408-edit-trees-med-sky-med.png  own 0.3/32  ->  good-20260929-054407-edit-trees-med-sky-med.png  d 0.044 m 0.022  ret 0.5/20  dp 11 dr 0.2  OK
+good-20260929-054411-edit-trees-med-sky-med.png  own 1.0/-95  ->  good-20260929-054412-edit-trees-med-sky-med.png  d 0.025 m 0.003  ret 0.9/-91  dp 4 dr 0.0  OK
+good-20260929-054412-edit-trees-med-sky-med.png  own 0.9/-91  ->  good-20260929-054411-edit-trees-med-sky-med.png  d 0.020 m 0.004  ret 1.0/-95  dp 4 dr 0.0  OK
+good-20260929-054414-edit-trees-med-sky-med.png  own 0.4/-137  ->  good-auto-normal-052440-edit.png  d 0.025 m 0.001  ret 0.4/-89  dp 48 dr 0.0  OK
+good-20260929-054415-edit-trees-med-sky-med.png  own 0.4/-139  ->  good-auto-normal-052926-edit.png  d 0.050 m 0.003  ret 3.9/-228  dp 89 dr 3.5  
+good-20260929-054426-edit-trees-med-sky-med.png  own 10.1/-60  ->  good-20260929-082456-edit.png  d 0.077 m 0.023  ret 28.3/-331  dp 271 dr 18.2  
+good-20260929-054427-edit-trees-med-sky-med.png  own 8.6/-38  ->  good-20260929-054428-edit-trees-med-sky-med.png  d 0.085 m 0.007  ret 9.9/-16  dp 21 dr 1.2  OK
+good-20260929-054428-edit-trees-med-sky-med.png  own 9.9/-16  ->  good-tree-038-edit-sky-high.png  d 0.053 m 0.011  ret 11.2/-62  dp 46 dr 1.4  OK
+good-20260929-054429-edit-trees-med-sky-med.png  own 9.3/-11  ->  good-tree-038-edit-sky-high.png  d 0.050 m 0.008  ret 11.2/-62  dp 51 dr 1.9  OK
+good-20260929-054435-edit-trees-low-sky-low.png  own 11.7/-261  ->  good-20260929-081949-edit.png  d 0.041 m 0.012  ret 19.0/-313  dp 52 dr 7.3  
+good-20260929-054436-edit-trees-med-sky-med.png  own 0.3/-274  ->  good-mine-008-edit.png  d 0.043 m 0.000  ret 0.5/-345  dp 71 dr 0.3  
+good-20260929-054437-edit-trees-med-sky-med.png  own -1.4/-262  ->  good-tree-013-edit-sky-high.png  d 0.050 m 0.002  ret -3.9/-302  dp 40 dr 2.5  OK
+good-20260929-054438-edit-trees-low-sky-med.png  own -18.2/-77  ->  good-20260929-054405-edit-trees-med-sky-med.png  d 0.085 m 0.004  ret -1.0/-2  dp 75 dr 17.2  
+good-20260929-054439-edit-trees-none-sky-high.png  own -14.8/392  ->  good-20260929-082826-edit.png  d 0.148 m 0.008  ret 24.9/511  dp 118 dr 39.7  
+good-20260929-054440-edit-trees-low-sky-med.png  own 22.6/102  ->  good-20260929-054837-edit.png  d 0.078 m 0.021  ret 22.3/-41  dp 143 dr 0.3  
+good-20260929-054441-edit-trees-low-sky-med.png  own 5.7/-246  ->  good-tree-013-edit-sky-high.png  d 0.048 m 0.004  ret -3.9/-302  dp 56 dr 9.6  
+good-20260929-054823-edit.png  own -25.1/-64  ->  good-20260929-054824-edit.png  d 0.048 m 0.043  ret -25.3/-33  dp 31 dr 0.2  OK
+good-20260929-054824-edit.png  own -25.3/-33  ->  good-20260929-054823-edit.png  d 0.042 m 0.042  ret -25.1/-64  dp 31 dr 0.2  OK
+good-20260929-054835-edit.png  own 22.7/-80  ->  good-20260929-054836-edit.png  d 0.060 m 0.013  ret 22.1/-77  dp 3 dr 0.6  OK
+good-20260929-054836-edit.png  own 22.1/-77  ->  good-20260929-054837-edit.png  d 0.036 m 0.016  ret 22.3/-41  dp 36 dr 0.2  OK
+good-20260929-054837-edit.png  own 22.3/-41  ->  good-20260929-054836-edit.png  d 0.029 m 0.034  ret 22.1/-77  dp 36 dr 0.2  OK
+good-20260929-054844.png  own -0.1/-61  ->  good-20260929-054355-edit-trees-med-sky-med.png  d 0.028 m 0.004  ret 0.6/-55  dp 6 dr 0.7  OK
+good-20260929-054845-edit.png  own 4.4/-539  ->  good-20260929-084911.png  d 0.039 m 0.010  ret 10.8/-208  dp 331 dr 6.4  
+good-20260929-054846-ground.png  own -0.7/-509  ->  good-20260929-033020-ground-trees-low-sky-none.png  d 0.038 m 0.006  ret 2.0/-332  dp 177 dr 2.7  
+good-20260929-055113-edit.png  own 2.1/-214  ->  good-auto-normal-064626-edit.png  d 0.046 m 0.004  ret -4.0/-247  dp 33 dr 6.1  
+good-20260929-055114-edit.png  own 1.3/-219  ->  good-auto-normal-064626-edit.png  d 0.049 m 0.000  ret -4.0/-247  dp 28 dr 5.4  
+good-20260929-055116-edit.png  own 0.5/-213  ->  good-20260929-055113-edit.png  d 0.047 m 0.014  ret 2.1/-214  dp 1 dr 1.6  OK
+good-20260929-055128-edit.png  own -0.8/2  ->  good-20260929-054405-edit-trees-med-sky-med.png  d 0.076 m 0.014  ret -1.0/-2  dp 4 dr 0.2  OK
+good-20260929-055131-edit.png  own -1.4/-1  ->  good-tree-028-edit-trees-low-sky-med.png  d 0.068 m 0.001  ret 1.0/-19  dp 18 dr 2.4  OK
+good-20260929-055132-edit.png  own -0.6/14  ->  good-20260929-054353-edit-trees-low-sky-med.png  d 0.066 m 0.000  ret 0.4/-66  dp 80 dr 1.0  
+good-20260929-061551.png  own -0.7/-338  ->  good-20260929-061552-edit.png  d 0.031 m 0.000  ret -1.2/-358  dp 19 dr 0.5  OK
+good-20260929-061552-edit.png  own -1.2/-358  ->  good-20260929-061554-edit.png  d 0.019 m 0.017  ret -2.0/-366  dp 8 dr 0.8  OK
+good-20260929-061554-edit.png  own -2.0/-366  ->  good-20260929-061552-edit.png  d 0.025 m 0.009  ret -1.2/-358  dp 8 dr 0.8  OK
+good-20260929-061557-edit.png  own -1.1/-410  ->  good-20260929-061600-edit.png  d 0.022 m 0.006  ret -2.3/-450  dp 39 dr 1.2  OK
+good-20260929-061558-edit.png  own -0.4/-407  ->  good-20260929-061600-edit.png  d 0.023 m 0.003  ret -2.3/-450  dp 42 dr 2.0  OK
+good-20260929-061600-edit.png  own -2.3/-450  ->  good-20260929-061601-edit.png  d 0.025 m 0.005  ret 0.1/-431  dp 19 dr 2.4  OK
+good-20260929-061601-edit.png  own 0.1/-431  ->  good-20260929-061600-edit.png  d 0.025 m 0.013  ret -2.3/-450  dp 19 dr 2.4  OK
+good-20260929-061609-edit.png  own -4.5/-464  ->  good-20260929-061601-edit.png  d 0.063 m 0.003  ret 0.1/-431  dp 33 dr 4.7  
+good-20260929-061610-edit.png  own -9.8/-440  ->  good-20260929-061601-edit.png  d 0.050 m 0.002  ret 0.1/-431  dp 9 dr 10.0  
+good-20260929-061615-edit.png  own 0.1/-430  ->  good-mine-008-edit.png  d 0.048 m 0.000  ret 0.5/-345  dp 85 dr 0.5  
+good-20260929-072223-edit.png  own -0.3/-210  ->  good-20260929-072241-edit.png  d 0.053 m 0.001  ret -3.9/-292  dp 82 dr 3.6  
+good-20260929-072228-edit.png  own 2.4/-74  ->  good-20260929-072229-edit.png  d 0.035 m 0.033  ret 4.0/-69  dp 5 dr 1.6  OK
+good-20260929-072229-edit.png  own 4.0/-69  ->  good-20260929-072228-edit.png  d 0.037 m 0.030  ret 2.4/-74  dp 5 dr 1.6  OK
+good-20260929-072235-edit.png  own 3.9/-186  ->  good-20260929-072236-edit.png  d 0.041 m 0.016  ret 5.1/-180  dp 6 dr 1.2  OK
+good-20260929-072236-edit.png  own 5.1/-180  ->  good-20260929-072235-edit.png  d 0.039 m 0.009  ret 3.9/-186  dp 6 dr 1.2  OK
+good-20260929-072241-edit.png  own -3.9/-292  ->  good-tree-006-edit-trees-high-sky-low.png  d 0.048 m 0.003  ret -7.0/-241  dp 51 dr 3.1  OK
+good-20260929-081949-edit.png  own 19.0/-313  ->  good-20260929-054435-edit-trees-low-sky-low.png  d 0.035 m 0.022  ret 11.7/-261  dp 52 dr 7.3  
+good-20260929-082005-edit.png  own -41.6/-268  ->  good-20260929-082820-edit.png  d 0.032 m 0.067  ret -38.8/-339  dp 71 dr 2.7  
+good-20260929-082456-edit.png  own 28.3/-331  ->  good-20260929-081949-edit.png  d 0.060 m 0.004  ret 19.0/-313  dp 18 dr 9.3  
+good-20260929-082457-edit.png  own 45.5/-416  ->  good-20260929-082456-edit.png  d 0.068 m 0.001  ret 28.3/-331  dp 85 dr 17.2  
+good-20260929-082458-edit.png  own 61.0/-524  ->  good-20260929-082457-edit.png  d 0.072 m 0.038  ret 45.5/-416  dp 108 dr 15.5  
+good-20260929-082820-edit.png  own -38.8/-339  ->  good-20260929-082005-edit.png  d 0.033 m 0.059  ret -41.6/-268  dp 71 dr 2.7  
+good-20260929-082821-edit.png  own -67.4/-60  ->  good-20260929-082822-edit.png  d 0.059 m 0.059  ret -56.2/102  dp 162 dr 11.2  
+good-20260929-082822-edit.png  own -56.2/102  ->  good-20260929-082821-edit.png  d 0.056 m 0.070  ret -67.4/-60  dp 162 dr 11.2  
+good-20260929-082823-edit.png  own 44.4/656  ->  good-20260929-082826-edit.png  d 0.047 m 0.069  ret 24.9/511  dp 145 dr 19.5  
+good-20260929-082826-edit.png  own 24.9/511  ->  good-20260929-082823-edit.png  d 0.044 m 0.076  ret 44.4/656  dp 145 dr 19.5  
+good-20260929-084911.png  own 10.8/-208  ->  good-20260929-054845-edit.png  d 0.036 m 0.007  ret 4.4/-539  dp 331 dr 6.4  
+good-20260929-084912.png  own -4.0/-272  ->  good-20260929-054846-ground.png  d 0.039 m 0.010  ret -0.7/-509  dp 237 dr 3.3  
+good-20260929-084913.png  own 1.4/-380  ->  good-20260929-054846-ground.png  d 0.053 m 0.015  ret -0.7/-509  dp 129 dr 2.1  
+good-auto-normal-032553-edit.png  own -4.0/-190  ->  good-auto-normal-053852-edit.png  d 0.051 m 0.002  ret -3.6/-232  dp 42 dr 0.4  OK
+good-auto-normal-044755-edit.png  own -1.1/-223  ->  good-mine-016-sky-high-trees-low-edit.png  d 0.033 m 0.000  ret -1.3/-241  dp 18 dr 0.1  OK
+good-auto-normal-050252-edit.png  own -11.5/-306  ->  good-tree-005-edit-trees-high-sky-low.png  d 0.059 m 0.001  ret -18.9/-293  dp 13 dr 7.4  
+good-auto-normal-052104-edit.png  own 4.9/-395  ->  good-20260929-061600-edit.png  d 0.045 m 0.000  ret -2.3/-450  dp 55 dr 7.2  
+good-auto-normal-052440-edit.png  own 0.4/-89  ->  good-20260929-054411-edit-trees-med-sky-med.png  d 0.022 m 0.002  ret 1.0/-95  dp 5 dr 0.6  OK
+good-auto-normal-052926-edit.png  own 3.9/-228  ->  good-mine-015-sky-high-trees-low-edit.png  d 0.040 m 0.000  ret 4.7/-325  dp 97 dr 0.8  
+good-auto-normal-053852-edit.png  own -3.6/-232  ->  good-auto-normal-032553-edit.png  d 0.046 m 0.001  ret -4.0/-190  dp 42 dr 0.4  OK
+good-auto-normal-054206-edit.png  own -0.1/-327  ->  good-mine-008-edit.png  d 0.045 m 0.000  ret 0.5/-345  dp 18 dr 0.6  OK
+good-auto-normal-064626-edit.png  own -4.0/-247  ->  good-20260929-055113-edit.png  d 0.044 m 0.005  ret 2.1/-214  dp 33 dr 6.1  
+good-auto-normal-064729-edit.png  own -2.9/-399  ->  good-20260929-061552-edit.png  d 0.050 m 0.001  ret -1.2/-358  dp 41 dr 1.7  OK
+good-auto-normal-064845-edit.png  own 2.8/-309  ->  good-mine-015-sky-high-trees-low-edit.png  d 0.044 m 0.000  ret 4.7/-325  dp 16 dr 1.9  OK
+good-auto-normal-070816-edit.png  own 2.4/114  ->  good-auto-normal-070931-edit.png  d 0.053 m 0.007  ret 1.6/124  dp 10 dr 0.8  OK
+good-auto-normal-070931-edit.png  own 1.6/124  ->  good-auto-normal-070816-edit.png  d 0.041 m 0.044  ret 2.4/114  dp 10 dr 0.8  OK
+good-auto-normal-074026-edit-trees-med-sky-med.png  own 5.0/-160  ->  good-auto-normal-075416-edit.png  d 0.052 m 0.025  ret 6.6/-241  dp 81 dr 1.6  
+good-auto-normal-075416-edit.png  own 6.6/-241  ->  good-auto-normal-074026-edit-trees-med-sky-med.png  d 0.060 m 0.010  ret 5.0/-160  dp 81 dr 1.6  
+good-auto-normal-075839-edit.png  own -1.0/-135  ->  good-tree-014-edit-sky-med.png  d 0.060 m 0.000  ret -1.4/-235  dp 100 dr 0.4  
+good-auto-normal-082432-edit.png  own -5.2/-395  ->  good-mine-008-edit.png  d 0.053 m 0.000  ret 0.5/-345  dp 50 dr 5.7  
+good-auto-normal-084034.png  own 0.6/-263  ->  good-mine-015-sky-high-trees-low-edit.png  d 0.040 m 0.000  ret 4.7/-325  dp 62 dr 4.1  
+good-auto-normal-084552.png  own 1.8/-318  ->  good-mine-008-edit.png  d 0.034 m 0.000  ret 0.5/-345  dp 26 dr 1.3  OK
+good-mine-001-trees-low-sky-med.png  own -3.0/-245  ->  good-tree-014-edit-sky-med.png  d 0.009 m 0.045  ret -1.4/-235  dp 10 dr 1.6  OK
+good-mine-002-trees-low-sky-high.png  own -3.9/-296  ->  good-tree-013-edit-sky-high.png  d 0.006 m 0.034  ret -3.9/-302  dp 6 dr 0.0  OK
+good-mine-007-edit.png  own -1.0/-340  ->  good-tree-019-edit-sky-med.png  d 0.006 m 0.030  ret -1.0/-319  dp 20 dr 0.0  OK
+good-mine-008-edit.png  own 0.5/-345  ->  good-tree-018-edit-sky-med.png  d 0.008 m 0.026  ret 0.5/-345  dp 0 dr 0.0  OK
+good-mine-009-edit.png  own 1.1/-86  ->  good-tree-027-edit-sky-high.png  d 0.007 m 0.027  ret 1.1/-86  dp 0 dr 0.0  OK
+good-mine-010-trees-low.png  own 0.7/-110  ->  good-tree-024-sky-high.png  d 0.007 m 0.035  ret 0.7/-109  dp 1 dr 0.0  OK
+good-mine-011-trees-med-sky-med.png  own 1.0/-22  ->  good-tree-028-edit-trees-low-sky-med.png  d 0.008 m 0.024  ret 1.0/-19  dp 3 dr 0.0  OK
+good-mine-015-sky-high-trees-low-edit.png  own 4.7/-325  ->  good-tree-035-edit-sky-high.png  d 0.006 m 0.039  ret 5.1/-301  dp 24 dr 0.4  OK
+good-mine-016-sky-high-trees-low-edit.png  own -1.3/-241  ->  good-tree-037-edit-sky-med-trees-low.png  d 0.008 m 0.029  ret -1.7/-227  dp 14 dr 0.4  OK
+good-mine-017-edit-sky-high.png  own 2.3/-100  ->  good-tree-026-edit-sky-high.png  d 0.008 m 0.019  ret 2.3/-102  dp 2 dr 0.0  OK
+good-tree-003-edit-trees-med-sky-low.png  own -22.3/-228  ->  good-tree-011-edit-trees-med.png  d 0.053 m 0.001  ret -27.2/-316  dp 88 dr 4.9  
+good-tree-004-edit-trees-high-sky-low.png  own -20.2/-123  ->  good-tree-003-edit-trees-med-sky-low.png  d 0.063 m 0.020  ret -22.3/-228  dp 105 dr 2.1  
+good-tree-005-edit-trees-high-sky-low.png  own -18.9/-293  ->  good-tree-012-edit-trees-med.png  d 0.052 m 0.002  ret -10.4/-326  dp 33 dr 8.5  
+good-tree-006-edit-trees-high-sky-low.png  own -7.0/-241  ->  good-20260929-072241-edit.png  d 0.049 m 0.012  ret -3.9/-292  dp 51 dr 3.1  OK
+good-tree-007-edit-sky-med.png  own -13.8/-289  ->  good-20260929-054438-edit-trees-low-sky-med.png  d 0.105 m 0.008  ret -18.2/-77  dp 212 dr 4.4  
+good-tree-008-edit-sky-low.png  own -2.2/-194  ->  good-20260929-072236-edit.png  d 0.055 m 0.011  ret 5.1/-180  dp 13 dr 7.2  
+good-tree-009-edit-trees-high-sky-low.png  own -14.4/-330  ->  good-tree-012-edit-trees-med.png  d 0.040 m 0.013  ret -10.4/-326  dp 4 dr 4.0  OK
+good-tree-010-edit-trees-high.png  own -10.9/-347  ->  good-tree-012-edit-trees-med.png  d 0.051 m 0.005  ret -10.4/-326  dp 21 dr 0.5  OK
+good-tree-011-edit-trees-med.png  own -27.2/-316  ->  good-tree-003-edit-trees-med-sky-low.png  d 0.055 m 0.019  ret -22.3/-228  dp 88 dr 4.9  
+good-tree-012-edit-trees-med.png  own -10.4/-326  ->  good-tree-009-edit-trees-high-sky-low.png  d 0.037 m 0.007  ret -14.4/-330  dp 4 dr 4.0  OK
+good-tree-013-edit-sky-high.png  own -3.9/-302  ->  good-mine-002-trees-low-sky-high.png  d 0.007 m 0.033  ret -3.9/-296  dp 6 dr 0.0  OK
+good-tree-014-edit-sky-med.png  own -1.4/-235  ->  good-mine-001-trees-low-sky-med.png  d 0.010 m 0.044  ret -3.0/-245  dp 10 dr 1.6  OK
+good-tree-018-edit-sky-med.png  own 0.5/-345  ->  good-mine-008-edit.png  d 0.008 m 0.026  ret 0.5/-345  dp 0 dr 0.0  OK
+good-tree-019-edit-sky-med.png  own -1.0/-319  ->  good-mine-007-edit.png  d 0.006 m 0.030  ret -1.0/-340  dp 20 dr 0.0  OK
+good-tree-020-sky-high.png  own 2.7/-246  ->  good-tree-023-edit-sky-high.png  d 0.086 m 0.007  ret 2.0/-180  dp 66 dr 0.7  
+good-tree-021-edit-sky-med.png  own 2.3/-263  ->  good-auto-normal-052926-edit.png  d 0.041 m 0.005  ret 3.9/-228  dp 35 dr 1.6  OK
+good-tree-022-sky-med.png  own 1.4/-190  ->  good-tree-023-edit-sky-high.png  d 0.044 m 0.004  ret 2.0/-180  dp 10 dr 0.6  OK
+good-tree-023-edit-sky-high.png  own 2.0/-180  ->  good-auto-normal-053852-edit.png  d 0.040 m 0.005  ret -3.6/-232  dp 52 dr 5.6  
+good-tree-024-sky-high.png  own 0.7/-109  ->  good-mine-010-trees-low.png  d 0.007 m 0.035  ret 0.7/-110  dp 1 dr 0.0  OK
+good-tree-025-sky-high.png  own 1.4/-124  ->  good-tree-023-edit-sky-high.png  d 0.042 m 0.000  ret 2.0/-180  dp 56 dr 0.6  OK
+good-tree-026-edit-sky-high.png  own 2.3/-102  ->  good-mine-017-edit-sky-high.png  d 0.008 m 0.019  ret 2.3/-100  dp 2 dr 0.0  OK
+good-tree-027-edit-sky-high.png  own 1.1/-86  ->  good-mine-009-edit.png  d 0.007 m 0.027  ret 1.1/-86  dp 0 dr 0.0  OK
+good-tree-028-edit-trees-low-sky-med.png  own 1.0/-19  ->  good-mine-011-trees-med-sky-med.png  d 0.009 m 0.023  ret 1.0/-22  dp 3 dr 0.0  OK
+good-tree-029-edit-trees-high-sky-med.png  own 5.7/-111  ->  good-20260929-055131-edit.png  d 0.084 m 0.006  ret -1.4/-1  dp 110 dr 7.1  
+good-tree-030-edit-trees-high-sky-low.png  own 0.1/-245  ->  good-20260929-061552-edit.png  d 0.046 m 0.003  ret -1.2/-358  dp 113 dr 1.3  
+good-tree-033-edit-trees-high-sky-low.png  own 10.9/-316  ->  good-20260929-054435-edit-trees-low-sky-low.png  d 0.074 m 0.004  ret 11.7/-261  dp 55 dr 0.8  OK
+good-tree-034-edit-trees-med-sky-low.png  own 4.6/-306  ->  good-20260929-061552-edit.png  d 0.044 m 0.003  ret -1.2/-358  dp 52 dr 5.8  
+good-tree-035-edit-sky-high.png  own 5.1/-301  ->  good-mine-015-sky-high-trees-low-edit.png  d 0.006 m 0.039  ret 4.7/-325  dp 24 dr 0.4  OK
+good-tree-036-edit-trees-med-sky-med.png  own 3.3/-225  ->  good-20260929-072236-edit.png  d 0.050 m 0.001  ret 5.1/-180  dp 45 dr 1.8  OK
+good-tree-037-edit-sky-med-trees-low.png  own -1.7/-227  ->  good-mine-016-sky-high-trees-low-edit.png  d 0.008 m 0.029  ret -1.3/-241  dp 14 dr 0.4  OK
+good-tree-038-edit-sky-high.png  own 11.2/-62  ->  good-mine-009-edit.png  d 0.039 m 0.000  ret 1.1/-86  dp 24 dr 10.1  
