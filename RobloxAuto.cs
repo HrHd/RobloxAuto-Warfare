@@ -8137,8 +8137,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // constant ~60 px behind the measurement (measured: 50-90 px on every sample). The rate
             // state is driven by the stick only these days, so a stiffer position gain no longer
             // differentiates noise and cannot make the ladder whip - the old reason for the low cap.
-            float gainCap = 0.50f;
-            if (coastBefore > 1500f) gainCap = 0.50f + 0.40f * Math.Min(1f, (coastBefore - 1500f) / 2500f);
+            // SOFTENED: the physics is a CONSTANT of the game (acro - no wind, no levelling, no
+            // load variation), so once the rates are calibrated the model is exact and the image
+            // can only add noise. Measured: median 195 px of fused-vs-measured disagreement, which
+            // is the image pulling the estimate around. The image is now a TRIM - it may nudge the
+            // attitude, not drive it. The re-acquire floor below still lets a genuinely lost
+            // estimate be pulled back hard, so this does not trade away recovery.
+            float gainCap = 0.15f;
+            if (coastBefore > 1500f) gainCap = 0.15f + 0.25f * Math.Min(1f, (coastBefore - 1500f) / 2500f);
             if (aR > gainCap) aR = gainCap;
             if (aP > gainCap) aP = gainCap;
             // RE-ACQUIRE FLOOR. The gain above can come out TINY - aP = P/(P+Rp) with Rp inflated
