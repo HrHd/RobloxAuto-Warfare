@@ -9492,8 +9492,11 @@ ComboBox cmbPadThermal;
         _kfRollX += _kfRollV * dt;
         _kfPitX += _kfPitV * dt;
         // ALTITUDE PARALLAX (the off-screen fallback keeping the right direction): when a fresh
-        // AGL reading arrives and the range is known, shift the boundary pitch by -dAlt/R so a
-        // climb/dive moves the predicted boundary exactly like the real one would. Ignored for
+        // AGL reading arrives and the range is known, shift the boundary pitch by +dAlt/R - a
+        // climb shows MORE far field, so the treeline sits LOWER in the frame (pitch px UP).
+        // (The first cut had this sign inverted - climbs pushed the line the wrong way, which is
+        // the "gain altitude then bank and dive goes crazy" report: the bank de-weights vision,
+        // the dive starves it, and the inverted term ran free.) Ignored for
         // OCR glitches (<25 m jumps) and while the range is unlearned.
         {
             float aglNow;
@@ -9503,7 +9506,7 @@ ComboBox cmbPadThermal;
                 {
                     float dAlt = aglNow - _altApplied;
                     if (Math.Abs(dAlt) > 0.05f && Math.Abs(dAlt) < 25f)
-                        _kfPitX += (float)(-dAlt / _terrRange * 57.29578);
+                        _kfPitX += (float)(dAlt / _terrRange * 57.29578);
                 }
                 _altApplied = aglNow;
             }
@@ -9634,7 +9637,7 @@ ComboBox cmbPadThermal;
                         // altitude drop. A big leftover during a real climb/dive is a wrong lock.
                         if (_terrRange > 25f && Math.Abs(dAl) > 1f && _hudMConf > 0.4f)
                         {
-                            float expD = (float)(-dAl / _terrRange * 57.29578);
+                            float expD = (float)(dAl / _terrRange * 57.29578);
                             float attD = _kfPitX - _geoPrevKf;
                             float resid = dTh - (attD + expD);
                             if (Math.Abs(resid) > 4.5f)
