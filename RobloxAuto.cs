@@ -259,6 +259,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudParserK = 0f;                       // last parser line (working px), log only
     float _hudTreeBelow = 0f;                     // parser vote: fraction of sections under the line that are canopy
     float _hudTreeBelowSm = 0f;                   // ...smoothed ~2s, drives the tree trim
+    int _treeLogAt = 0;                           // "trees de-value the vision" log throttle
     int _lgRTot = 0, _lgPTot = 0;                 // stick fine-tune sample counts (per flight, log)
     int _lgLogAt = 0;                             // fine-tune log throttle
     float _hudColK = 0f;                          // last 3-centre-column vote line (working px)
@@ -8613,6 +8614,23 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else _hudBigPn = 0;
             if (aR < floorR) aR = floorR;
             if (aP < floorP) aP = floorP;
+
+            // TREES DE-VALUE THE VISION (field): flying into canopy means the frames arriving are
+            // the LEAST trustworthy ones - so the vision's authority scales down hard with the
+            // measured tree-below fraction and the line is carried by the model from the last
+            // good fix ("keep it where we knew it was good"). Floor 0.15 so a genuine re-lock can
+            // still creep back in rather than the filter going deaf forever.
+            float treeW = _hudTreeBelowSm;
+            if (treeW > 1f) treeW = 1f; if (treeW < 0f) treeW = 0f;
+            float visionW = 1f - 0.75f * treeW;
+            if (visionW < 0.15f) visionW = 0.15f;
+            aR *= visionW; aP *= visionW;
+            if (treeW > 0.5f && Environment.TickCount - _treeLogAt >= 5000)
+            {
+                _treeLogAt = Environment.TickCount;
+                Log("   trees: vision authority x" + visionW.ToString("0.00") + " (tree fraction " +
+                    (treeW * 100f).ToString("0") + "%) - holding the model from the last good fix");
+            }
 
             // ---- SOLID-LOCK COUNT + HUG ---------------------------------------------------------
             // A frame is SOLID when the detector is confident AND sky is genuinely in view. After
