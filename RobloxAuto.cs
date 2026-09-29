@@ -9472,12 +9472,17 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 for (int y = 0; y < _hdH; y++)
                     for (int x = 0; x < _hdW; x++)
                     {
+                        // EXACT MAP VALUES, not a rendered image (v2.9.53): R = luminance, G = BR+128,
+                        // B = texture. A rendered image loses the per-6px-block texture scale, which
+                        // made offline replays discard everything. The replay tool decodes these.
                         int i = y * _hdW + x;
-                        int r = (int)_hdR[i], g = (int)_hdG[i], bl = (int)_hdB[i];
-                        if (r < 0) r = 0; if (r > 255) r = 255;
-                        if (g < 0) g = 0; if (g > 255) g = 255;
-                        if (bl < 0) bl = 0; if (bl > 255) bl = 255;
-                        b.SetPixel(x, y, Color.FromArgb(r, g, bl));
+                        int l = (int)_hdL[i];
+                        int br = (int)(_hdBR[i] + 128f);
+                        int tx = (int)(_hdT[i] * 2f);
+                        if (l < 0) l = 0; if (l > 255) l = 255;
+                        if (br < 0) br = 0; if (br > 255) br = 255;
+                        if (tx < 0) tx = 0; if (tx > 255) tx = 255;
+                        b.SetPixel(x, y, Color.FromArgb(l, br, tx));
                     }
                 b.Save(Path.Combine(_recDir, _recN.ToString("D5") + (evt == 1 ? "p" : "") + ".png"), System.Drawing.Imaging.ImageFormat.Png);
             }
@@ -9643,9 +9648,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // For each angle, project every pixel onto the line's normal and histogram it. Every
             // candidate offset is then just a split of that histogram, so the whole frame is scored
             // at every angle in one pass.
-            const int NTH = 25;
+            const int NTH = 41;   // +-80 deg sweep: hard acro banks (measured 68 deg live) are INSIDE the range
             const int NBI = 400;
-            const float TH0 = -45f, TH1 = 45f, KSTEP = 1.5f;
+            const float TH0 = -80f, TH1 = 80f, KSTEP = 1.5f;
             float[] thScore = new float[NTH], thK = new float[NTH], thSky = new float[NTH];
             float[] thAL = new float[NTH], thBL = new float[NTH];
             float[] thMul = new float[NTH];
