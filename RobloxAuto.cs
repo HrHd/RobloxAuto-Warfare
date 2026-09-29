@@ -377,10 +377,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // ---- thermal / night vision (PER-WINDOW) ----
     // The game pixels are recoloured with the Windows Magnification API. The FULLSCREEN call
     // (MagSetFullscreenColorEffect) is desktop-wide - it has no monitor parameter, which is why
-    // the old invert tinted EVERY monitor. Instead a MAGNIFIER CONTROL window is pinned over the
-    // Roblox window only, its source filter is set to INCLUDE just that window, and the colour
-    // matrix is applied to the control (MagSetColorEffect). Result: the thermal look covers the
-    // game and nothing else. Screen capture still sees it, so OBS records the thermal feed.
+    // the old invert tinted EVERY monitor. Instead a HOST window with a MAGNIFIER CHILD is pinned
+    // over the Roblox window only, its source filter is set to INCLUDE just that window, and the
+    // colour matrix is applied to the magnifier (MagSetColorEffect). Result: the thermal look
+    // covers the game and nothing else. Screen capture still sees it, so OBS records the feed.
+    // The host is a plain (non-layered) window - layered parents cannot show child controls -
+    // and click-through is done by returning HTTRANSPARENT from WM_NCHITTEST instead.
     [StructLayout(LayoutKind.Sequential)]
     struct MAGCOLOREFFECT
     {
@@ -399,19 +401,42 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     [DllImport("Magnification.dll")] static extern bool MagSetWindowSource(IntPtr hwnd, RECTW rect);
     [DllImport("Magnification.dll")] static extern bool MagSetWindowFilterList(IntPtr hwnd, int mode, int count, IntPtr[] hwnds);
     [DllImport("Magnification.dll")] static extern bool MagSetWindowTransform(IntPtr hwnd, ref MAGTRANSFORM transform);
-    [DllImport("user32.dll")] static extern IntPtr CreateWindowEx(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
+    // MUST be the W entry point: the ANSI import could not resolve the class registered with
+    // RegisterClassExW (CreateWindowEx returned 0 / ERROR_CANNOT_FIND_WND_CLASS), which is why
+    // the host window was never created. Verified standalone before wiring it in.
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "CreateWindowExW", SetLastError = true)]
+    static extern IntPtr CreateWindowEx(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
     [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECTW r);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
-    IntPtr _thermalWnd = IntPtr.Zero;      // the magnifier control pinned over the game
+    IntPtr _thermalHost = IntPtr.Zero;     // black click-through host painted over the game
+    IntPtr _thermalWnd = IntPtr.Zero;      // the Magnifier CHILD that renders the game through the matrix
     int _thL, _thT, _thW, _thH;            // where it currently is
     long _thAt = 0;                        // follow throttle (250 ms)
     const int MW_FILTERMODE_INCLUDE = 0;
-    const uint WSEX_LAYERED = 0x00080000, WSEX_TRANSPARENT = 0x00000020, WSEX_TOPMOST = 0x00000008,
-               WSEX_NOACTIVATE = 0x08000000, WSEX_TOOLWINDOW = 0x00000080,
-               WSPOPUP = 0x80000000, WSVISIBLE = 0x10000000;
+    const int BLACK_BRUSH = 4;
+    const uint WS_CHILD = 0x40000000, WSPOPUP = 0x80000000, WSVISIBLE = 0x10000000;
+    const uint WSEX_TOPMOST = 0x00000008, WSEX_NOACTIVATE = 0x08000000, WSEX_TOOLWINDOW = 0x00000080;
     const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010, SWP_SHOWWINDOW = 0x0040;
+    // The host is a SYSTEM class ("STATIC" + SS_BLACKRECT = a black rectangle) and click-through
+    // comes from SUBCLASSING it with SetWindowLongPtr and answering WM_NCHITTEST with
+    // HTTRANSPARENT. A custom registered class was tried first and failed in this app: the
+    // registration returned an atom but CreateWindowEx still refused with
+    // ERROR_CANNOT_FIND_WND_CLASS (1407) - the same code works in a bare harness, so the system
+    // class is used instead of chasing it.
+    delegate IntPtr ThermalProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] static extern IntPtr DefWindowProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr h, int idx, IntPtr val);
+    [DllImport("user32.dll", EntryPoint = "CallWindowProcW")] static extern IntPtr CallWindowProc(IntPtr prev, IntPtr h, uint m, IntPtr w, IntPtr l);
+    static ThermalProc _thermalProc = ThermalHostProc;      // keep the delegate alive
+    static IntPtr _thermalOldProc = IntPtr.Zero;
+    static IntPtr ThermalHostProc(IntPtr h, uint m, IntPtr w, IntPtr l)
+    {
+        if (m == 0x0084) return new IntPtr(-1);   // WM_NCHITTEST -> HTTRANSPARENT: clicks fall through
+        if (_thermalOldProc != IntPtr.Zero) return CallWindowProc(_thermalOldProc, h, m, w, l);
+        return DefWindowProc(h, m, w, l);
+    }
 
     void ApplyNightVision(bool on)
     {
@@ -445,7 +470,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
             if (!on)
             {
-                if (_thermalWnd != IntPtr.Zero) { DestroyWindow(_thermalWnd); _thermalWnd = IntPtr.Zero; }
+                if (_thermalHost != IntPtr.Zero) { DestroyWindow(_thermalHost); _thermalHost = IntPtr.Zero; _thermalWnd = IntPtr.Zero; }
+                else if (_thermalWnd != IntPtr.Zero) { DestroyWindow(_thermalWnd); _thermalWnd = IntPtr.Zero; }
                 MagSetFullscreenColorEffect(ref e);    // clear any old fullscreen tint (previous builds)
                 Log("thermal OFF");
                 return;
@@ -454,17 +480,33 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             IntPtr rw = RobloxWindow();
             if (rw == IntPtr.Zero) { Log("thermal: no Roblox window found"); return; }
             RECTW r; if (!GetWindowRect(rw, out r)) { Log("thermal: could not read the game window"); return; }
-            if (_thermalWnd == IntPtr.Zero)
+            if (_thermalHost == IntPtr.Zero)
             {
-                _thermalWnd = CreateWindowEx(
-                    WSEX_LAYERED | WSEX_TRANSPARENT | WSEX_TOPMOST | WSEX_NOACTIVATE | WSEX_TOOLWINDOW,
-                    "Magnifier", "thermal", WSPOPUP | WSVISIBLE,
+                // DOCUMENTED LAYOUT: a black host window with the Magnifier as a CHILD. A bare
+                // top-level Magnifier renders black/blank on some drivers - that was the "Roblox
+                // went invisible" report. SS_BLACKRECT (4) makes the STATIC host solid black.
+                _thermalHost = CreateWindowEx(
+                    WSEX_TOPMOST | WSEX_NOACTIVATE | WSEX_TOOLWINDOW,
+                    "STATIC", "", WSPOPUP | WSVISIBLE | 0x00000004,
                     r.L, r.T, r.R - r.L, r.B - r.T, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
-                if (_thermalWnd == IntPtr.Zero) { Log("thermal: could not create the magnifier"); return; }
+                if (_thermalHost == IntPtr.Zero)
+                {
+                    Log("thermal: could not create the host window (err " + Marshal.GetLastWin32Error() + ")");
+                    return;
+                }
+                _thermalOldProc = SetWindowLongPtr(_thermalHost, -4, Marshal.GetFunctionPointerForDelegate(_thermalProc));
+                _thermalWnd = CreateWindowEx(0, "Magnifier", "", WS_CHILD | WSVISIBLE,
+                    0, 0, r.R - r.L, r.B - r.T, _thermalHost, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                if (_thermalWnd == IntPtr.Zero)
+                {
+                    DestroyWindow(_thermalHost); _thermalHost = IntPtr.Zero;
+                    Log("thermal: could not create the magnifier");
+                    return;
+                }
             }
             _thL = r.L; _thT = r.T; _thW = r.R - r.L; _thH = r.B - r.T;
-            IntPtr after = ThermalZAfter();
-            SetWindowPos(_thermalWnd, after, r.L, r.T, _thW, _thH, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            SetWindowPos(_thermalHost, ThermalZAfter(), r.L, r.T, _thW, _thH, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            SetWindowPos(_thermalWnd, IntPtr.Zero, 0, 0, _thW, _thH, SWP_NOACTIVATE);
             IntPtr[] only = new IntPtr[] { rw };
             MagSetWindowFilterList(_thermalWnd, MW_FILTERMODE_INCLUDE, 1, only);   // ONLY the game
             MagSetWindowSource(_thermalWnd, r);
@@ -495,23 +537,24 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     {
         try
         {
-            if (!_nightVision || _thermalWnd == IntPtr.Zero) return;
+            if (!_nightVision || _thermalHost == IntPtr.Zero) return;
             if (Environment.TickCount - _thAt < 250) return;
             _thAt = Environment.TickCount;
             IntPtr rw = RobloxWindow();
             if (rw == IntPtr.Zero) return;
-            if (IsIconic(rw) || !RobloxFocused()) { ShowWindow(_thermalWnd, 0); return; }   // never cover other apps
+            if (IsIconic(rw) || !RobloxFocused()) { ShowWindow(_thermalHost, 0); return; }   // never cover other apps
             IntPtr after = ThermalZAfter();
             RECTW r; if (!GetWindowRect(rw, out r)) return;
             if (r.L == _thL && r.T == _thT && r.R - r.L == _thW && r.B - r.T == _thH)
             {
                 // same spot: just re-assert the z-order and re-show if a focus flip hid it
-                SetWindowPos(_thermalWnd, after, 0, 0, 0, 0,
+                SetWindowPos(_thermalHost, after, 0, 0, 0, 0,
                     SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
                 return;
             }
             _thL = r.L; _thT = r.T; _thW = r.R - r.L; _thH = r.B - r.T;
-            SetWindowPos(_thermalWnd, after, r.L, r.T, _thW, _thH, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            SetWindowPos(_thermalHost, after, r.L, r.T, _thW, _thH, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            SetWindowPos(_thermalWnd, IntPtr.Zero, 0, 0, _thW, _thH, SWP_NOACTIVATE);
             IntPtr[] only = new IntPtr[] { rw };
             MagSetWindowFilterList(_thermalWnd, MW_FILTERMODE_INCLUDE, 1, only);
             MagSetWindowSource(_thermalWnd, r);
