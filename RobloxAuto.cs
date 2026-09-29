@@ -3366,6 +3366,22 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (h.Count == 0) h = FindPhraseAll("Return", null, OcrWordsWhiten());
             if (h.Count == 0) h = FindPhraseAll("Retum", null, OcrWords());
             if (h.Count == 0) return false;
+            // THE PANEL REGION ONLY. "Return" was matched by the fuzzy phrase test against totally
+            // unrelated UI elsewhere on screen - measured: the OCR box for FEATURED on the LOADOUT
+            // screen is 1413,235 59x9, whose centre is exactly (1443,239), and the log shows
+            // "click Return (1443,239)". So pressing AUTO from the loadout page clicked FEATURED.
+            // The Return button only ever lives in the centred panel, so anything outside that
+            // region is not it, whatever the text similarity says.
+            int SWp = Screen.PrimaryScreen.Bounds.Width, SHp = Screen.PrimaryScreen.Bounds.Height;
+            List<Hit> near = new List<Hit>();
+            foreach (Hit hh in h)
+                if (hh.X > SWp * 25 / 100 && hh.X < SWp * 78 / 100 && hh.Y > SHp * 28 / 100 && hh.Y < SHp * 82 / 100) near.Add(hh);
+            if (near.Count == 0)
+            {
+                Log("   'Return' matched at (" + h[0].X + "," + h[0].Y + ") but that is nowhere near the panel - NOT clicking (this is what used to hit FEATURED)");
+                return false;
+            }
+            h = near;
             Log("   pressing the red Return to back out at (" + h[0].X + "," + h[0].Y + ")");
             ClickPrimaryLogged(h[0].X, h[0].Y, "Return");
             return true;
