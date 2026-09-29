@@ -9555,6 +9555,26 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // 0.15 bar: the true-horizon forest line scores 0.21; a diagonal shadow band that
             // used to win scores 0.12. Weak frames (fisher sep < 0.5) are discarded later anyway.
             bool parserOn = _hudParserOn && scoreS >= 0.15f;
+            // VOTE AS REFEREE (v2.9.44, found live 01:26): the parser is only allowed to override
+            // when the vote does NOT take the pixel line's side against it. Seen live: fisher -315,
+            // vote -356 (they agree), parser -126 (score 0.16, just over the bar) - adopting that
+            // parser line would drag the HUD 190px away from everything. In the forest case the
+            // vote AGREES with the parser's low line, so the fix still applies there.
+            if (parserOn && _hudColOk && _hudColAgree >= 2)
+            {
+                float diffPV = Math.Abs(kS - _hudColK);
+                float diffFV = Math.Abs(bestK - _hudColK);
+                if (diffPV > 12f && diffFV < 8f)
+                {
+                    parserOn = false;
+                    if (Environment.TickCount - _hudLogAt >= 2000)
+                    {
+                        _hudLogAt = Environment.TickCount;
+                        Log("horizon det: parser override REJECTED - the vote sides with the pixel line (parser " +
+                            (-kS * HD_DS).ToString("0") + "px vs vote " + (-_hudColK * HD_DS).ToString("0") + "px)");
+                    }
+                }
+            }
             if (parserOn)
             {
                 theta = thetaS;
