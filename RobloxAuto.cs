@@ -8077,6 +8077,16 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (coastBefore > 1500f) gainCap = 0.30f + 0.40f * Math.Min(1f, (coastBefore - 1500f) / 2500f);
             if (aR > gainCap) aR = gainCap;
             if (aP > gainCap) aP = gainCap;
+            // RE-ACQUIRE FLOOR. The gain above can come out TINY - aP = P/(P+Rp) with Rp inflated
+            // by a large measurement variance and divided by a small trust - so a big honest error
+            // that already PASSED the gate gets corrected at a crawl. Measured live: 34 px per
+            // SECOND of correction against a 1300 px error, which looks like it is simply stuck.
+            // A large innovation that the gate accepted deserves a decisive pull.
+            float floorR = 0.05f, floorP = 0.05f;
+            if (Math.Abs(ir) > 4f) floorR = 0.20f;      // ~50 px at f=704
+            if (Math.Abs(ip) > 4f) floorP = 0.20f;
+            if (aR < floorR) aR = floorR;
+            if (aP < floorP) aP = floorP;
 
             // ---- SOLID-LOCK COUNT + HUG ---------------------------------------------------------
             // A frame is SOLID when the detector is confident AND sky is genuinely in view. After
