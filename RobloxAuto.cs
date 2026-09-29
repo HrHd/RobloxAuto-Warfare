@@ -8486,7 +8486,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         {
             _physT0 = Environment.TickCount; _physAt = 0;
             File.WriteAllText(Path.Combine(_appDir, "hudphys.csv"),
-                "t_ms,sx,sy,lx,ly,vision,detRoll,detPitch,conf,fuseRoll,fusePitch,mRoll,mPitch,modelRollRate,modelPitchRate,rollGain,pitchGain\r\n");
+                "t_ms,sx,sy,lx,ly,vision,detRoll,detPitch,conf,fuseRoll,fusePitch,mRoll,mPitch,modelRollRate,modelPitchRate,rollGain,pitchGain,alt,agl\r\n");
             Log("physics log: fresh recording for this flight (" + why + ")");
         }
         catch { }
