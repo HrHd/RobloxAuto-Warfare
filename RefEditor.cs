@@ -109,7 +109,7 @@ class RefEditor : Form
         lt.Font = new Font("Segoe UI", 9F, FontStyle.Bold); pnl.Controls.Add(lt);
         tbTrees = new TrackBar();
         tbTrees.SetBounds(10, 66, 158, 34);
-        tbTrees.Minimum = 0; tbTrees.Maximum = 3; tbTrees.TickFrequency = 1;
+        tbTrees.Minimum = 0; tbTrees.Maximum = 4; tbTrees.TickFrequency = 1;
         tbTrees.SmallChange = 1; tbTrees.LargeChange = 1;
         pnl.Controls.Add(tbTrees);
         lblTreeLevel = new Label(); lblTreeLevel.SetBounds(14, 106, 76, 26);
@@ -382,23 +382,24 @@ class RefEditor : Form
     static int TreeLevelOf(string bn)
     {
         string s = bn.ToLowerInvariant();
-        if (s.IndexOf("-trees-high") >= 0) return 3;
-        if (s.IndexOf("-trees-med") >= 0) return 2;
-        if (s.IndexOf("-trees-low") >= 0) return 1;
-        if (s.IndexOf("-trees") >= 0) return 3;      // legacy "-trees" = HIGH
-        if (s.IndexOf("-clear") >= 0) return 1;      // legacy "-clear" = LOW
+        if (s.IndexOf("-trees-none") >= 0) return 1;
+        if (s.IndexOf("-trees-low") >= 0) return 2;
+        if (s.IndexOf("-trees-med") >= 0) return 3;
+        if (s.IndexOf("-trees-high") >= 0) return 4;
+        if (s.IndexOf("-trees") >= 0) return 4;      // legacy "-trees" = HIGH
+        if (s.IndexOf("-clear") >= 0) return 2;      // legacy "-clear" = LOW
         return 0;
     }
 
     static string StripTree(string bn)
     {
-        return bn.Replace("-trees-high", "").Replace("-trees-med", "").Replace("-trees-low", "")
+        return bn.Replace("-trees-none", "").Replace("-trees-high", "").Replace("-trees-med", "").Replace("-trees-low", "")
                  .Replace("-trees", "").Replace("-clear", "");
     }
 
     static string TreeName(int lv)
     {
-        return lv == 0 ? "AUTO" : (lv == 1 ? "LOW" : (lv == 2 ? "MED" : "HIGH"));
+        return lv == 0 ? "AUTO" : (lv == 1 ? "NONE" : (lv == 2 ? "LOW" : (lv == 3 ? "MED" : "HIGH")));
     }
 
     void SetTreeLevel(int lv)
@@ -409,7 +410,7 @@ class RefEditor : Form
         {
             string bn = Path.GetFileNameWithoutExtension(f);
             if (TreeLevelOf(bn) == lv) return;
-            string nb = StripTree(bn) + (lv == 0 ? "" : (lv == 1 ? "-trees-low" : (lv == 2 ? "-trees-med" : "-trees-high")));
+            string nb = StripTree(bn) + (lv == 0 ? "" : (lv == 1 ? "-trees-none" : (lv == 2 ? "-trees-low" : (lv == 3 ? "-trees-med" : "-trees-high"))));
             string nf = Path.Combine(dir, nb + ".png");
             if (img != null) { img.Dispose(); img = null; }
             File.Move(f, nf);
@@ -609,7 +610,7 @@ class RefEditor : Form
     // ---- rebindable level keys ---------------------------------------------------------------
     // One key per slider cycles AUTO > LOW > MED > HIGH (and back). The buttons show the current
     // keys; click one, press any key, and it is stored in refkeys.ini next to the exe.
-    void CycleTrees() { tbTrees.Value = (tbTrees.Value + 1) % 4; }
+    void CycleTrees() { tbTrees.Value = (tbTrees.Value + 1) % 5; }
     void CycleSky() { tbSky.Value = (tbSky.Value + 1) % 5; }
 
     void StartBind(int which)

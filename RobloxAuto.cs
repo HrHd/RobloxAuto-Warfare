@@ -10406,6 +10406,13 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     }
                     else if (tmn.IndexOf("-trees-med") >= 0) { _hudTreeBelowSm = 0.45f; }
                     else if (tmn.IndexOf("-trees-low") >= 0 || tmn.IndexOf("-clear") >= 0) { _hudTreeBelowSm = 0.20f; }
+                    else if (tmn.IndexOf("-trees-none") >= 0)
+                    {
+                        // a SKY SHOT: no canopy below the line by definition - vision at full authority
+                        _hudTreeBelowSm = 0f;
+                        if (Environment.TickCount - _hudLogAt >= 2000)
+                        { _hudLogAt = Environment.TickCount; Log("horizon det: matched TREES NONE reference " + tmn + " - vision at full authority"); }
+                    }
                 }
                 else if (refGood && _refGround && refD <= _refDist * 0.6f)
                 {
