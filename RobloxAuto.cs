@@ -132,6 +132,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float[] _seedR = new float[80];
     float[] _seedP = new float[80];
     int _seedN = 0;
+    int _hudSettleExt = 0;                         // how many times the spawn baseline window was extended
     float _hudDetSky = 1f;                        // 0..1 - fraction of the frame that is SKY (above the line)
     float _hudSkySm = 1f;                         // smoothed sky fraction (no pops in the gyro/image blend)
     bool _hudDetValid = false;                    // DetectHorizon found a confident line
@@ -6631,7 +6632,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 _hudNeedLock = true;   // start hunting for the spawn horizon immediately
                 _hudSettling = true;   // hold the ladder still while the spawn pose settles
                 _hudSettleUntil = Environment.TickCount + _hudSettleMs;
-                _seedN = 0;
+                _seedN = 0; _hudSettleExt = 0;
                 Log("   spawn settle: holding the horizon for " + (_hudSettleMs / 1000) + "s and averaging what we see");
                 long lockArmedAt = Environment.TickCount + 1200;   // skip the base panel/map frames
                 long lastOcr = 0;      // slower cadence: NO SIGNAL / LINK / heading / AGL
@@ -6819,18 +6820,39 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     {
                         if (Environment.TickCount >= _hudSettleUntil)
                         {
-                            _hudSettling = false;
+                            // A SOLID BASELINE wants several samples that AGREE. A median of one or
+                            // two random frames (or of samples that disagreed wildly) is exactly the
+                            // wobbly anchor that later drifts, so extend the window - twice at most -
+                            // to gather more before committing.
+                            float spread = 0f;
                             if (_seedN >= 3)
                             {
-                                float[] a = new float[_seedN]; Array.Copy(_seedR, a, _seedN); Array.Sort(a);
-                                float[] c = new float[_seedN]; Array.Copy(_seedP, c, _seedN); Array.Sort(c);
-                                _hudFRoll = a[_seedN / 2]; _hudFPitch = c[_seedN / 2];
-                                _hudLocked = true; _hudNeedLock = false;
-                                _kfSeeded = false;      // re-seed the estimator from the settled value
-                                Log("   horizon settled: roll " + _hudFRoll.ToString("0") + " deg, pitch " +
-                                    _hudFPitch.ToString("0") + "px   (median of " + _seedN + " samples)");
+                                float[] sp = new float[_seedN]; Array.Copy(_seedP, sp, _seedN); Array.Sort(sp);
+                                spread = sp[_seedN - 1] - sp[0];
                             }
-                            else Log("   settle done but only " + _seedN + " samples - locking from the next good frame");
+                            if ((_seedN < 6 || spread > 160f) && _hudSettleExt < 2)
+                            {
+                                _hudSettleExt++;
+                                _hudSettleUntil = Environment.TickCount + _hudSettleMs / 2;
+                                Log("   spawn baseline not solid yet (" + _seedN + " samples, spread " +
+                                    spread.ToString("0") + "px) - sampling a bit longer");
+                            }
+                            else
+                            {
+                                _hudSettling = false;
+                                if (_seedN >= 3)
+                                {
+                                    float[] a = new float[_seedN]; Array.Copy(_seedR, a, _seedN); Array.Sort(a);
+                                    float[] c = new float[_seedN]; Array.Copy(_seedP, c, _seedN); Array.Sort(c);
+                                    _hudFRoll = a[_seedN / 2]; _hudFPitch = c[_seedN / 2];
+                                    _hudLocked = true; _hudNeedLock = false;
+                                    _kfSeeded = false;      // re-seed the estimator from the settled value
+                                    Log("   horizon settled: roll " + _hudFRoll.ToString("0") + " deg, pitch " +
+                                        _hudFPitch.ToString("0") + "px   (median of " + _seedN + " samples, spread " +
+                                        spread.ToString("0") + "px)");
+                                }
+                                else Log("   settle done but only " + _seedN + " samples - locking from the next good frame");
+                            }
                         }
                         else if (Environment.TickCount - lastDet >= 120)
                         {
@@ -7999,7 +8021,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // trust: confident frame, sky in view, and the stick NOT yanking (anti-false-flag)
             float skyT = Smooth01(_hudSkySm, 0.04f, 0.20f);
             float actT = Smooth01(Math.Max(Math.Abs(sxS), Math.Abs(syS)), 0.15f, 0.30f);
-            float trust = (0.55f + 0.45f * _hudMConf) * (0.40f + 0.60f * skyT) * (1f - 0.45f * actT);
+            // SOFTER WHILE FLYING: once the stick is working the frames are far more random (the dive,
+            // turns, the ground rushing past), so the image gets LESS say than it did at the spawn
+            // baseline. The damping was 0.45; at 0.75 a worked stick leaves the estimator largely to
+            // the control model, which is what stops a random frame yanking the line.
+            float trust = (0.55f + 0.45f * _hudMConf) * (0.40f + 0.60f * skyT) * (1f - 0.75f * actT);
             if (trust < 0.03f) trust = 0.03f;
 
             float Rr = _hudMRollVar / trust;                        // deg^2
