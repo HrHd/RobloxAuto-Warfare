@@ -250,6 +250,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     string _hudScene = "?";                      // matched base scene (snow/fog/grey/normal)
     float _hudSceneD = 9f;                        // distance to that base scene
     float _hudCoastMs = 0f;                       // how long the vision has been missing (ms)
+    bool _hudLockedOnce = false;                  // a good hug formed at least once this flight
+    int _hudBigRn = 0, _hudBigRat = 0, _hudBigRsg = 0;   // consecutive large ROLL innovations (persistent-pull gate)
+    int _hudBigPn = 0, _hudBigPat = 0, _hudBigPsg = 0;   // consecutive large PITCH innovations
     float _hudSceneTol = 0.10f;                   // max RMS distance to claim a scene match
     int _hudSceneTick = 0;
     float _hudSkyMin = 0.10f;                      // dial "sky min": discard a frame with less verified sky than this
@@ -6938,6 +6941,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _kfRollGain = 1f; _kfPitGain = 1f; _kfRollP = 25f; _kfPitP = 25f; _kfRollZAt = 0; _kfPitZAt = 0;
             _kfSmSeeded = false; _kfSmRoll = 0f; _kfSmPit = 0f;
             _hudSolid = 0; _hugSm = 0f; _hugDisR = 0; _hugDisP = 0; _hugSignR = 0; _hugSignP = 0; _hugLogged = false;
+            _hudLockedOnce = false; _hudBigRn = 0; _hudBigPn = 0; _hudBigRat = 0; _hudBigPat = 0; _hudBigRsg = 0; _hudBigPsg = 0;
             OverlayHub.I.SetFlight(true, 0.18f, 0);
 
             Thread t = new Thread(delegate ()
@@ -8523,13 +8527,28 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // SECOND of correction against a 1300 px error, which looks like it is simply stuck.
             // A large innovation that the gate accepted deserves a decisive pull.
             float floorR = 0.05f, floorP = 0.05f;
-            // ...but a GENUINE divergence must still be rescued fast. The detector only PUBLISHES
-            // every 2-3 s in practice (it discards most frames), so a 0.20 gain closes a 500 px
-            // error at about 10%/second - twenty to thirty seconds - while the model keeps
-            // integrating. Measured live: fused +168 against a measured -324, drifting further
-            // apart. A large innovation therefore pulls hard; a small one still barely moves it.
-            if (Math.Abs(ir) > 4f) floorR = 0.55f;      // ~50 px at f=704
-            if (Math.Abs(ip) > 4f) floorP = 0.55f;
+            // ...but a GENUINE divergence must still be rescued fast. A large innovation that
+            // PERSISTS pulls hard; ONE big frame does not. v2.9.32: a single confident-but-wrong
+            // detection (a tree line during low flight) used to get the 0.55 floor and yank the
+            // estimate - that is exactly "it works at first and then slowly loses itself". A big
+            // pull now needs the same direction three frames in a row (within 1.2 s); a lone
+            // contradicting frame only gets the normal capped gain.
+            if (Math.Abs(ir) > 4f)
+            {
+                int sg = ir > 0f ? 1 : -1;
+                if (Environment.TickCount - _hudBigRat < 1200 && sg == _hudBigRsg) _hudBigRn++; else _hudBigRn = 1;
+                _hudBigRat = Environment.TickCount; _hudBigRsg = sg;
+                if (_hudBigRn >= 3) floorR = 0.55f;
+            }
+            else _hudBigRn = 0;
+            if (Math.Abs(ip) > 4f)
+            {
+                int sg = ip > 0f ? 1 : -1;
+                if (Environment.TickCount - _hudBigPat < 1200 && sg == _hudBigPsg) _hudBigPn++; else _hudBigPn = 1;
+                _hudBigPat = Environment.TickCount; _hudBigPsg = sg;
+                if (_hudBigPn >= 3) floorP = 0.55f;
+            }
+            else _hudBigPn = 0;
             if (aR < floorR) aR = floorR;
             if (aP < floorP) aP = floorP;
 
@@ -8539,8 +8558,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // the CONTROLLER (the integrated stick model) and lets the vision pull only a small
             // fraction as fast, so it stops chasing every noisy frame. A SUSTAINED disagreement in
             // one direction is a real move, so that releases the hug and lets it re-lock.
-            bool solidFrame = (_hudMConf >= 0.70f && _hudDetSky >= 0.18f);
-            if (solidFrame) { if (_hudSolid < 40) _hudSolid++; }
+            // v2.9.32: after a good hug has formed once, low-sky frames (banked / below the
+            // treeline, where sky is 4-18%) count as solid too - otherwise the hug dissolves
+            // exactly when the view gets hard and the vision starts chasing again ("works at
+            // first, then slowly loses it").
+            bool solidFrame = (_hudMConf >= 0.70f && (_hudDetSky >= 0.18f || (_hudLockedOnce && _hudDetSky >= 0.04f)));
+            if (solidFrame) { if (_hudSolid < 40) _hudSolid++; if (_hudSolid >= 40) _hudLockedOnce = true; }
             else if (_hudSolid > 0) _hudSolid -= 4;
             if (_hudSolid < 0) _hudSolid = 0;
             // A HUG MUST NOT SURVIVE MANEUVERING. While you work the stick - especially banking - the
@@ -8575,6 +8598,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
             // hug = trust the model; only ~25% of the vision gain gets through
             float hg = 1f - 0.75f * _hugSm;
+            // v2.9.32: once the lock is mature and nothing is moving, the vision pull fades
+            // further - it only TRIMS the controls. Stick input (the hug drops itself) or a
+            // sustained divergence (releases the hug) brings the full trim back.
+            if (_hudLockedOnce && _hugSm > 0.9f && stickNow < 0.12f) hg *= 0.55f;
             aR *= hg; aP *= hg;
 
             // Mahalanobis-style gate: reject a frame that jumps further than a real horizon could in
