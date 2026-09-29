@@ -4002,23 +4002,42 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         int W, H; int[] px = Grab(out W, out H);
         int baseOff = 85 + _whRowNudge;
         int bestOff = baseOff, bestDx = -colStep, bestHits = -1;
-        for (int dx = -140; dx <= 60; dx += 6)
+        int bestCS = colStep, bestRS = rowStep, bestScore = int.MinValue;
+        // Auto-fit the SPACING as well as the offset. The card pitch is NOT always 106x52 - at this
+        // resolution the real cells sit ~86x46 apart (measured off a live TEAM BASE shot). With a
+        // hardcoded step the fitted grid drifts ~20px per column, so the click for column 3 landed
+        // between cards, nothing turned green, and the DEFAULT warhead (Standard Frag) stayed
+        // equipped - which is exactly what "it skipped the bomb" looked like.
+        for (int dx = -150; dx <= 70; dx += 6)
         {
             for (int off = 15; off <= 150; off += 5)
             {
-                int hits = 0;
-                for (int r = 0; r < 2; r++)
-                    for (int c = 0; c < 3; c++)
+                for (int cs = (int)(78 * sc); cs <= (int)(126 * sc); cs += 2)
+                {
+                    for (int rs = (int)(40 * sc); rs <= (int)(60 * sc); rs += 2)
                     {
-                        if (r * 3 + c >= count) continue;
-                        int cx = ax + dx + c * colStep;
-                        int cy = ay + (int)((off + r * 52) * sc);
-                        if (LooksLikeCell(px, W, H, cx, cy)) hits++;
+                        int hits = 0;
+                        for (int r = 0; r < 2; r++)
+                            for (int c = 0; c < 3; c++)
+                            {
+                                if (r * 3 + c >= count) continue;
+                                int cx = ax + dx + c * cs;
+                                int cy = ay + (int)(off * sc) + r * rs;
+                                if (LooksLikeCell(px, W, H, cx, cy)) hits++;
+                            }
+                        // Most cells wins; between equal fits prefer the spacing closest to the
+                        // nominal 106x52 and the offset closest to the sane default, so a bogus
+                        // spacing that happens to clip several dark patches does not win.
+                        int score = hits * 1000
+                            - Math.Abs(cs - (int)(106 * sc)) - Math.Abs(rs - (int)(52 * sc))
+                            - Math.Abs(off - baseOff) / 2;
+                        if (score > bestScore)
+                        { bestScore = score; bestHits = hits; bestOff = off; bestDx = dx; bestCS = cs; bestRS = rs; }
                     }
-                if (hits > bestHits || (hits == bestHits && Math.Abs(off - baseOff) < Math.Abs(bestOff - baseOff)))
-                { bestHits = hits; bestOff = off; bestDx = dx; }
+                }
             }
         }
+        colStep = bestCS; rowStep = bestRS;
         int col0 = ax + bestDx;
         int row0 = ay + (int)(bestOff * sc);
 
@@ -4028,7 +4047,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 grid.Add(new Point(col0 + c * colStep, row0 + r * rowStep));
         Log("   warhead grid under Deploy As Drone (" + ax + "," + ay + "): fitted dx " + bestDx +
             " offset " + bestOff + " (cell hits " + bestHits + "/" + count + "), col0 " + col0 +
-            ", step " + colStep + "x" + rowStep);
+            ", step " + colStep + "x" + rowStep + (bestHits < count ? "  (only " + bestHits + " of " + count + " cells matched - the panel may be mid-scroll)" : ""));
         return grid;
     }
 
