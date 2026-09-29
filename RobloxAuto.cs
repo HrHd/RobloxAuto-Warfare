@@ -7907,7 +7907,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // Only learn from a frame we actually TRUST, and only while the stick is clearly
             // commanding. A stubborn gain that winds up makes the model over-rotate and the vision
             // fight it - that is the visible "jump". Clamped tight (0.5..1.8) and very slow.
-            if (trust < 0.50f || Math.Abs(stick) < minStick) { lastAt = 0; return; }
+            // trust here is the MEASUREMENT quality passed in by the caller (see HudFuse), not the
+            // stick-dependent vision trust.
+            if (trust < 0.30f || Math.Abs(stick) < minStick) { lastAt = 0; return; }
             if (lastAt == 0) { lastZ = z; lastAt = now; return; }
             float dtZ = (now - lastAt) / 1000f;
             // HOLD THE REFERENCE until the measurement has had time to actually update. This runs
@@ -8130,8 +8132,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (_kfPitOb > 6f) _kfPitOb = 6f; if (_kfPitOb < -6f) _kfPitOb = -6f;
 
             // slow gain learning (system ID)
-            if (okR && _hugSm < 0.6f) LearnGain(ref _kfRollGain, ref _kfRollZ, ref _kfRollZAt, zr, -sxS * _hudRollRate, sxS, now, 0.30f, trust);
-            if (okP && _hugSm < 0.6f) LearnGain(ref _kfPitGain, ref _kfPitZ, ref _kfPitZAt, zp, -syS * HudPitchRateDeg(), syS, now, 0.30f, trust);
+            // LearnGain must judge whether the MEASUREMENT is any good - NOT whether we are allowed
+            // to move the state quickly this frame. Those are different questions, and using the vision
+            // trust made learning impossible: trust contains (1 - 0.95*actT), so any stick big enough to
+            // pass the |stick| >= 0.30 test had already driven trust to ~0.03. The two conditions could
+            // never both hold, which is why the gain never moved however long you flew.
+            float mq = _hudMConf * (0.5f + 0.5f * skyT);
+            if (okR && _hugSm < 0.6f) LearnGain(ref _kfRollGain, ref _kfRollZ, ref _kfRollZAt, zr, -sxS * _hudRollRate, sxS, now, 0.30f, mq);
+            if (okP && _hugSm < 0.6f) LearnGain(ref _kfPitGain, ref _kfPitZ, ref _kfPitZAt, zp, -syS * HudPitchRateDeg(), syS, now, 0.30f, mq);
         }
 
         // ---- OUTPUT (roll deg, pitch px for the ladder) ----
