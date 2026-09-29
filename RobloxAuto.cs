@@ -194,7 +194,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudPitStick = 280f;                      // px - DIRECT horizon offset from the RIGHT stick Y (dial "stick pitch")
                                                     //      push forward = line UP, pull back = line DOWN (signed: set - to invert)
     float _hudPitStickSm = 0f;                      // smoothed stick-pitch offset (glides, never jumps)
-    float _hudRollStick = 25f;                      // DEG - direct bank from the right stick X (dial "stick tilt")
+    float _hudRollStick = 8f;                       // DEG - direct bank from the right stick X (dial "stick tilt").
+                                                    // The DETECTED roll already follows the real bank (the camera rolls
+                                                    // with the drone), so this ADDS on top of it: at 30 the ladder swung
+                                                    // far further than the world tilted, which is what made aiming hard in
+                                                    // a hard turn. Kept small as a fine-tilt assist; set 0 to remove it.
     float _hudRollStickSm = 0f;                     // smoothed stick-tilt offset
     // ---- HORIZON ESTIMATOR ------------------------------------------------------------------
     // The old fusion smoothed the horizon in PIXELS with a fixed decay average. Pixels are not
