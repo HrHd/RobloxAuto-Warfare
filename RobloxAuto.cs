@@ -3725,9 +3725,41 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
     // The actual shape search, split out so the exact same code can also run on a saved frame
     // (RobloxAuto.exe --tenttest <png>) - that is how it is verified against real map screenshots.
+    //
+    // COLOUR-FIRST ("can we not just search for the hex"). The Base icon is drawn in the PLAYER'S
+    // TEAM COLOUR and only that team's Base is on the map, so the team decides what to look for.
+    // Measured from real crops:
+    //   red team   tent #FE2023 (R254)   pin #D91B1E (R217)   front line #E12B2E (R225)
+    //   blue team  tent #007AFE (B254)   front line #1076E2 (B226)
+    // The tent is the BRIGHTEST thing of its colour: a high channel cut drops the pins AND the
+    // front line, so the tent can no longer merge with the pin glued beneath it (that merge made
+    // the blob too tall and the aspect gate threw it away). Shape filters still run as the net.
     bool TentScan(int[] px, int W, int H, out int bx, out int by)
     {
         bx = by = -1;
+        try
+        {
+            bool blueTeam = _team == "Blue";
+            int first = blueTeam ? 2 : 1, other = blueTeam ? 1 : 2;
+            Rectangle t;
+            if (TentPick(px, W, H, first, out t) ||
+                TentPick(px, W, H, other, out t) ||
+                TentPick(px, W, H, 0, out t))
+            {
+                bx = t.X + t.Width / 2;
+                by = t.Y + t.Height - 8;             // near the bottom, so ClickBaseAt walks up onto it
+                return true;
+            }
+            return false;
+        }
+        catch (Exception e) { Log("   tent detect failed: " + e.Message); return false; }
+    }
+
+    // mode 1 = bright RED (red-team icon), 2 = bright BLUE (blue-team icon), 0 = loose colour
+    // (any saturated red OR blue) as the last resort.
+    bool TentPick(int[] px, int W, int H, int mode, out Rectangle found)
+    {
+        found = Rectangle.Empty;
         try
         {
             bool[] m = new bool[W * H];
@@ -3735,7 +3767,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             {
                 int c = px[i];
                 int b = c & 0xFF, g = (c >> 8) & 0xFF, r = (c >> 16) & 0xFF;
-                m[i] = r > 150 && g < 95 && b < 95;
+                if (mode == 1) m[i] = r >= 238 && g < 70 && b < 70;
+                else if (mode == 2) m[i] = b >= 238 && r < 90 && g > 60 && g < 180;
+                else m[i] = (r > 150 && g < 95 && b < 95) || (b > 130 && r < 110 && g < 160);
             }
             List<Rectangle> blobs = new List<Rectangle>();
             bool[] seen = new bool[m.Length];
@@ -3756,8 +3790,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     if (y < H-1 && m[p+W] && !seen[p+W]) { seen[p+W]=true; stack[sp++]=p+W; }
                 }
                 int bw = x1-x0+1, bh = y1-y0+1;
-                // drop the thin front-line strip (bh ~10) and the tiny diamond specks (~30x29)
-                if (area < 500 || bw < 30 || bh < 35 || bw > 400 || bh > 400) continue;
+                // Keep EVERY real fragment, however small. The white label and the grid lines CUT
+                // the tent into pieces; if the size gate runs before the merge those pieces are
+                // thrown away and the tent is never rebuilt - that was the bug where the bright
+                // mask held 2748 pixels and still produced no blob over 500px. Only true
+                // hairlines go: the front-line strip is ~3px thick.
+                if (area < 60 || bw < 6 || bh < 6) continue;
                 blobs.Add(new Rectangle(x0, y0, bw, bh));
             }
 
@@ -3776,10 +3814,21 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     }
             }
 
-            // Pick the BIGGEST near-square red mass. There is NO fixed size window any more: the
-            // tent scales with the map zoom (~73x77 at one zoom, ~150x130 at another - proven by
-            // two real crops), so the old 40..100px height band missed it at half the zooms. The
-            // POINT pins are teardrops (aspect ~0.69) and are rejected by shape alone.
+            // NOW the size gates apply - on the merged icon, not on its fragments
+            List<Rectangle> keep = new List<Rectangle>();
+            foreach (Rectangle bb in blobs)
+            {
+                if (bb.Width * bb.Height < 500) continue;      // too small to be an icon
+                if (bb.Width < 45 || bb.Height < 35) continue;
+                if (bb.Width > 400 || bb.Height > 400) continue;
+                keep.Add(bb);
+            }
+            blobs = keep;
+
+            // Pick the BIGGEST near-square mass. There is NO fixed size window any more: the tent
+            // scales with the map zoom (~73x77 at one zoom, ~150x130 at another), so the old
+            // 40..100px height band missed it at half the zooms. POINT pins are teardrops and are
+            // rejected by shape alone.
             int best = -1; double bestScore = -1;
             for (int i = 0; i < blobs.Count; i++)
             {
@@ -3798,18 +3847,18 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             {
                 // leave the measurements in the log so a miss is diagnosable from a real run
                 for (int i = 0; i < blobs.Count && i < 4; i++)
-                    Log("   tent scan: red blob " + blobs[i].Width + "x" + blobs[i].Height +
+                    Log("   tent scan (mode " + mode + "): blob " + blobs[i].Width + "x" + blobs[i].Height +
                         " aspect " + ((double)blobs[i].Width / blobs[i].Height).ToString("0.00"));
                 return false;
             }
 
-            Rectangle t = blobs[best];
-            bx = t.X + t.Width / 2;
-            by = t.Y + t.Height - 8;                 // near the bottom, so ClickBaseAt walks up onto it
-            Log("   Base tent detected at (" + bx + "," + by + ") size " + t.Width + "x" + t.Height);
+            found = blobs[best];
+            Log("   Base tent detected at (" + (found.X + found.Width / 2) + "," + (found.Y + found.Height - 8) +
+                ") size " + found.Width + "x" + found.Height +
+                (mode == 1 ? " (bright red)" : mode == 2 ? " (bright blue)" : " (loose colour)"));
             return true;
         }
-        catch (Exception e) { Log("   tent detect failed: " + e.Message); return false; }
+        catch (Exception e) { Log("   tent pick failed: " + e.Message); return false; }
     }
 
     // The warhead buttons carry tiny, low-contrast labels the OCR mangles ("TBG-7B" read
@@ -9846,6 +9895,57 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                    (GetForegroundWindow() == rw ? "roblox" : "OTHER") + "  cursor=" + Cursor.Position.X + "," + Cursor.Position.Y);
             return;
         }
+        // --hexscan <png> : print the dominant RED colour buckets of a frame (exact avg RGB, count,
+        // bounding box). Used to tune the Base-tent colour mask against real screenshots.
+        if (args.Length > 1 && args[0] == "--hexscan")
+        {
+            _selfTest = true;
+            RobloxAuto st = new RobloxAuto();
+            try
+            {
+                using (Bitmap bmp = new Bitmap(args[1]))
+                {
+                    int W = bmp.Width, H = bmp.Height;
+                    int[] px = new int[W * H];
+                    System.Drawing.Imaging.BitmapData bd = bmp.LockBits(new Rectangle(0, 0, W, H),
+                        System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                    for (int y = 0; y < H; y++)
+                        Marshal.Copy(IntPtr.Add(bd.Scan0, y * bd.Stride), px, y * W, W);
+                    bmp.UnlockBits(bd);
+                    int n = 1 << 15;
+                    int[] cnt = new int[n];
+                    long[] sr = new long[n], sg = new long[n], sb = new long[n];
+                    int[] x0 = new int[n], y0 = new int[n], x1 = new int[n], y1 = new int[n];
+                    for (int i = 0; i < n; i++) { x0[i] = W; y0[i] = H; x1[i] = -1; y1[i] = -1; }
+                    for (int i = 0; i < px.Length; i++)
+                    {
+                        int cc = px[i] & 0xFFFFFF;
+                        int bb = cc & 255, gg = (cc >> 8) & 255, rr = (cc >> 16) & 255;
+                        int mx = Math.Max(rr, Math.Max(gg, bb)), mn = Math.Min(rr, Math.Min(gg, bb));
+                        if (mx - mn <= 60 || mx < 120) continue;   // strongly saturated colours only
+                        int k = ((rr >> 3) << 10) | ((gg >> 3) << 5) | (bb >> 3);
+                        cnt[k]++; sr[k] += rr; sg[k] += gg; sb[k] += bb;
+                        int x = i % W, y = i / W;
+                        if (x < x0[k]) x0[k] = x; if (y < y0[k]) y0[k] = y;
+                        if (x > x1[k]) x1[k] = x; if (y > y1[k]) y1[k] = y;
+                    }
+                    st.Log("hexscan " + System.IO.Path.GetFileName(args[1]) + " (" + W + "x" + H + ")");
+                    for (int t = 0; t < 10; t++)
+                    {
+                        int best = -1;
+                        for (int k = 0; k < n; k++) if (cnt[k] > 0 && (best < 0 || cnt[k] > cnt[best])) best = k;
+                        if (best < 0) break;
+                        long ar = sr[best] / cnt[best], ag = sg[best] / cnt[best], ab = sb[best] / cnt[best];
+                        st.Log("   #" + ar.ToString("X2") + ag.ToString("X2") + ab.ToString("X2") +
+                               "  n=" + cnt[best] + "  R" + ar + " G" + ag + " B" + ab +
+                               "  box=(" + x0[best] + "," + y0[best] + ")-(" + x1[best] + "," + y1[best] + ")");
+                        cnt[best] = 0;
+                    }
+                }
+            }
+            catch (Exception ex) { st.Log("hexscan error: " + ex.Message); }
+            return;
+        }
         // --tenttest <png> : run the Base tent shape scan on a saved frame and log the result.
         // This is how the icon detector is verified against real map screenshots.
         if (args.Length > 1 && args[0] == "--tenttest")
@@ -9863,6 +9963,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     for (int y = 0; y < H; y++)
                         Marshal.Copy(IntPtr.Add(bd.Scan0, y * bd.Stride), px, y * W, W);
                     bmp.UnlockBits(bd);
+                    // optional: --tenttest file.png [red|blue] overrides the team, so the colour
+                    // order (own team first, other colour as fallback) can be tested on a saved frame
+                    if (args.Length > 2 && args[2] == "red") st._team = "Red";
+                    if (args.Length > 2 && args[2] == "blue") st._team = "Blue";
                     int tx, ty;
                     bool ok = st.TentScan(px, W, H, out tx, out ty);
                     st.Log("tenttest " + System.IO.Path.GetFileName(args[1]) + " (" + W + "x" + H + "): found=" + ok +
