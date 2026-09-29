@@ -211,6 +211,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _kfRollZ = 0f, _kfPitZ = 0f; long _kfRollZAt = 0, _kfPitZAt = 0;
     float _kfRollP = 25f, _kfPitP = 25f;  // state variance (deg^2) - drives the Kalman gains
     bool _kfSeeded = false;
+    long _kfMeasAt = 0;                   // which measurement the filter has already consumed
     // ---- REFERENCE FRAMES ("base photos") -----------------------------------------------------
     // Labelled example frames in "<exe>\hudref\" are matched against the live frame by a coarse
     // 6x6 colour signature. A name containing "bad" (or "no_"/"false") marks a BAD example - e.g.
@@ -6599,7 +6600,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _hudSmSeeded = false;   // re-seed the smoothed horizon for this flight
             _hudPitchVel = 0f; _hudRollVel = 0f; _hudPitStickSm = 0f; _hudRollStickSm = 0f; _hudSkySm = 1f;   // start each flight clean
             _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f;           // reset the weighted average
-            _kfSeeded = false; _kfRollV = 0f; _kfPitV = 0f; _kfRollOb = 0f; _kfPitOb = 0f;                 // reset the estimator
+            _kfSeeded = false; _kfRollV = 0f; _kfPitV = 0f; _kfRollOb = 0f; _kfPitOb = 0f; _kfMeasAt = 0;                 // reset the estimator
             _kfRollGain = 1f; _kfPitGain = 1f; _kfRollP = 25f; _kfPitP = 25f; _kfRollZAt = 0; _kfPitZAt = 0;
             _kfSmSeeded = false; _kfSmRoll = 0f; _kfSmPit = 0f;
             _hudSolid = 0; _hugSm = 0f; _hugDisR = 0; _hugDisP = 0; _hugSignR = 0; _hugSignP = 0; _hugLogged = false;
@@ -8007,9 +8008,17 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         if (_kfPitP > 900f) _kfPitP = 900f;
 
         // ---- UPDATE (vision), when a fresh line is available ----
-        bool det = _hudDetValid && (now - _hudDetAt) < 2000;
+        // APPLY EACH MEASUREMENT ONCE. The detector produces a new reading ~10x/s but this runs at
+        // 50 Hz, and the 2000 ms freshness window meant the SAME reading was reused ~100 times -
+        // pulling 30% of the innovation on every pass. That massively over-weighted one stale
+        // number and actively fought the model: during a hard pull-up the measurement stayed frozen
+        // while the model correctly integrated the stick, so the line barely moved (86 px against a
+        // ~400 px model response), then snapped when the reading finally updated. Between
+        // measurements the MODEL should carry the attitude - that is exactly what acro means.
+        bool det = _hudDetValid && (now - _hudDetAt) < 2000 && _hudDetAt != _kfMeasAt;
         if (det)
         {
+            _kfMeasAt = _hudDetAt;                 // consume this measurement exactly once
             // AXIS/MEASUREMENT SMOOTHING (dial "axis smooth"): low-pass the detector's measurement
             // BEFORE the estimator sees it, so a jittery per-frame colour-axis lock cannot wobble the
             // line. 0 = no smoothing (use the raw frame measurement).
