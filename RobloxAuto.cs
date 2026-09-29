@@ -158,8 +158,6 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudAccelTau = 0.12f;                    // s - how fast the velocity chases the stick (accel/brake)
     float _hudV1 = 15.0f, _hudV2 = 15.0f;          // simulated FPV pack voltages (4S), driven by throttle
     float _hudVBat = 0.5f, _hudVVel = 0f;          // internal spring state of the battery sim
-    float _hudLockTau = 0.25f;                     // s - camera lock time constant when centred (small = snappy)
-    float _hudFlyTau = 0.9f;                       // s - camera correction while flying
     float _hudBias = 6f;                           // px - constant downward offset of the detected line
     // Pitch-ladder geometry (the "math" knobs):
     //   rung n sits at  y = cy + pit + dpp * d        (d = rung angle in degrees)
@@ -169,20 +167,13 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudLen = 1f;
     float _hudMaxTilt = 30f;                       // DEG - hard cap on how far the rungs may tilt (dial "max tilt")
     float _hudRungTilt = 0f;                       // 0 = rungs stay FLAT/horizontal, 1 = rungs parallel to the horizon                             // rung length scale
-    float _hudImgGain = 1f;                         // how hard the image horizon corrects the gyro (complementary)
     float _hudRollOff = 0f;                         // manual roll offset, degrees (dial "roll off")
     float _hudPitOff = 0f;                          // manual pitch offset, px (dial "pitch off")
-    float _hudBadLift = 5f;                         // DEGREES to lift the horizon when detector quality is
-                                                    // poor (dial "bad lift") - a weak lock lands low, so
-                                                    // we raise it back toward where it belongs
     float _hudSpreadAccel = 0f;                     // expo on how the ladder fan builds up (dial "spread accel")
-    float _hudStickThr = 15f;                        // % - right-stick travel at which the STICK takes over from the image (dial "stick override")
     float _hudMinSpread = 5f;                        // reject frames whose colour spread is below this (dial "min colour")
     float _hudClutter = 0f;                          // 0..1 detected clutter (trees/structures) around the horizon
     float _hudTreeDrop = 3f;                         // DEG to push the horizon DOWN when clutter is high (dial "tree drop")
     float _hudSpreadAmt = 2.2f;                      // how fast the ladder FANS OUT with tilt (dial "spread")
-    float _hudDownLim = 60f;                         // px - soft limit: image cannot push the line DOWN past this (dial "down limit")
-    float _hudImgRate = 150f;                        // deg/s - max rate the IMAGE may correct (dial "image limit")
     float _hudTexW = 1f;                            // how hard the TEXTURE cue (smooth sky / busy ground)
                                                     // backs the colour cue (dial "texture"); 0 = off
     float _hudAccPitch = 0.65f;                     // expo/acceleration on the right-stick Y (dial "pitch accel")
@@ -202,7 +193,6 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // ANGLE, with the stick as a control input, plus (a) a Mahalanobis outlier gate, (b) a learned
     // constant offset, and (c) a learned stick->rate gain (system ID against the image). With no
     // usable frame it COASTS on the last rate - exactly "hold where the horizon would be".
-    bool _hudEstimator = true;            // dial "estimator": 1 = alpha-beta estimator, 0 = legacy
     float _hudFovY = 70f;                 // vertical FOV, degrees (dial "fov") - the camera model
     float _hudManeuver = 40f;             // deg^2/s the attitude uncertainty grows (dial "maneuver")
     int _hudFrameH = 1080;                // frame height the detector saw (camera model)
@@ -236,7 +226,6 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudCoastMs = 0f;                       // how long the vision has been missing (ms)
     float _hudSceneTol = 0.10f;                   // max RMS distance to claim a scene match
     int _hudSceneTick = 0;
-    float _hudSkyFlatMax = 0.70f;                 // dial "sky flat": max top-band texture as a FRACTION of the whole frame (real sky is far smoother)
     float _hudSkyMin = 0.10f;                      // dial "sky min": discard a frame with less verified sky than this
     int _hudNoSkyFrames = 0;                       // frames discarded for having no usable sky
     float _kfSmRoll = 0f, _kfSmPit = 0f;           // smoothed measurement fed to the estimator
@@ -249,9 +238,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hugSm = 0f;
     int _hugDisR = 0, _hugDisP = 0, _hugSignR = 0, _hugSignP = 0;
     bool _hugLogged = false;
-    NumericUpDown numPitch, numRoll, numLock, numFly, numBias, numAccel, numFov, numManeuver, numEstimator, numRefDist, numAxisW, numMsTau, numSkyMin, numSkyFlat;
+    NumericUpDown numPitch, numRoll, numBias, numAccel, numFov, numManeuver, numRefDist, numAxisW, numMsTau, numSkyMin, numSkyTex;
     Button btnReloadRefs, btnCapRef;
-    NumericUpDown numDpp, numShear, numLen, numImg, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numBadLift, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numImgRate, numDownLim, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numStickThr;
+    NumericUpDown numDpp, numShear, numLen, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numSpread, numSpreadAccel, numTreeDrop, numMinSpread;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
@@ -883,15 +872,10 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         y += 22;
 
         numPitch = MkTune(x, y, "pitch speed", (decimal)_hudPitchRate, 80m, 4000m, 40m, 0);
+        numPitch = MkTune(x, y, "pitch speed", (decimal)_hudPitchRate, 80m, 4000m, 40m, 0);
         numRoll = MkTune(x + 168, y, "roll speed", (decimal)_hudRollRate, 20m, 900m, 10m, 0);
         numPitch.ValueChanged += delegate { _hudPitchRate = (float)numPitch.Value; SaveCfg(); };
         numRoll.ValueChanged += delegate { _hudRollRate = (float)numRoll.Value; SaveCfg(); };
-        y += 28;
-
-        numLock = MkTune(x, y, "lock speed", (decimal)_hudLockTau, 0.05m, 2.0m, 0.05m, 2);
-        numFly = MkTune(x + 168, y, "drift speed", (decimal)_hudFlyTau, 0.10m, 3.0m, 0.1m, 2);
-        numLock.ValueChanged += delegate { _hudLockTau = (float)numLock.Value; SaveCfg(); };
-        numFly.ValueChanged += delegate { _hudFlyTau = (float)numFly.Value; SaveCfg(); };
         y += 28;
 
         numBias = MkTune(x, y, "height adj", (decimal)_hudBias, -120m, 120m, 2m, 0);
@@ -913,14 +897,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         y += 28;
 
         numMaxTilt = MkTune(x, y, "max tilt", (decimal)_hudMaxTilt, 0m, 90m, 5m, 0);
-        numImgRate = MkTune(x + 168, y, "image limit", (decimal)_hudImgRate, 0m, 600m, 10m, 0);
-        numMaxTilt.ValueChanged += delegate { _hudMaxTilt = (float)numMaxTilt.Value; SaveCfg(); };
-        numImgRate.ValueChanged += delegate { _hudImgRate = (float)numImgRate.Value; SaveCfg(); };
-        y += 28;
-
-        numDownLim = MkTune(x, y, "down limit", (decimal)_hudDownLim, 0m, 800m, 20m, 0);
         numSpread = MkTune(x + 168, y, "spread", (decimal)_hudSpreadAmt, 0m, 5m, 0.2m, 1);
-        numDownLim.ValueChanged += delegate { _hudDownLim = (float)numDownLim.Value; SaveCfg(); };
+        numMaxTilt.ValueChanged += delegate { _hudMaxTilt = (float)numMaxTilt.Value; SaveCfg(); };
         numSpread.ValueChanged += delegate { _hudSpreadAmt = (float)numSpread.Value; SaveCfg(); };
         y += 28;
 
@@ -931,72 +909,61 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         y += 28;
 
         numMinSpread = MkTune(x, y, "min colour", (decimal)_hudMinSpread, 0m, 40m, 1m, 0);
-        numMinSpread.ValueChanged += delegate { _hudMinSpread = (float)numMinSpread.Value; SaveCfg(); };
-        numStickThr = MkTune(x + 168, y, "override %", (decimal)_hudStickThr, 5m, 100m, 5m, 0);
-        numStickThr.ValueChanged += delegate { _hudStickThr = (float)numStickThr.Value; SaveCfg(); };
-        y += 28;
-
-        numImg = MkTune(x, y, "camera trust", (decimal)_hudImgGain, 0m, 4m, 0.1m, 1);
-        numThr = MkTune(x + 168, y, "throttle", (decimal)_hudLeftPx, 0m, 120m, 2m, 0);
-        numImg.ValueChanged += delegate { _hudImgGain = (float)numImg.Value; SaveCfg(); };
-        numThr.ValueChanged += delegate { _hudLeftPx = (float)numThr.Value; SaveCfg(); };
-        y += 28;
-
-        numRollOff = MkTune(x, y, "roll shift", (decimal)_hudRollOff, -180m, 180m, 1m, 0);
-        numPitOff = MkTune(x + 168, y, "height shift", (decimal)_hudPitOff, -400m, 400m, 5m, 0);
-        numRollOff.ValueChanged += delegate { _hudRollOff = (float)numRollOff.Value; SaveCfg(); };
-        numPitOff.ValueChanged += delegate { _hudPitOff = (float)numPitOff.Value; SaveCfg(); };
-        y += 28;
-
-        numBadLift = MkTune(x, y, "bad lift", (decimal)_hudBadLift, -30m, 30m, 1m, 0);
         numTexW = MkTune(x + 168, y, "texture", (decimal)_hudTexW, 0m, 3m, 0.1m, 1);
-        numBadLift.ValueChanged += delegate { _hudBadLift = (float)numBadLift.Value; SaveCfg(); };
+        numMinSpread.ValueChanged += delegate { _hudMinSpread = (float)numMinSpread.Value; SaveCfg(); };
         numTexW.ValueChanged += delegate { _hudTexW = (float)numTexW.Value; SaveCfg(); };
         y += 28;
 
-        numAccPitch = MkTune(x, y, "pitch accel", (decimal)_hudAccPitch, 0m, 1m, 0.05m, 2);
-        numAccRoll = MkTune(x + 168, y, "tilt accel", (decimal)_hudAccRoll, 0m, 1m, 0.05m, 2);
+        numThr = MkTune(x, y, "throttle", (decimal)_hudLeftPx, 0m, 120m, 2m, 0);
+        numRollOff = MkTune(x + 168, y, "roll shift", (decimal)_hudRollOff, -180m, 180m, 1m, 0);
+        numThr.ValueChanged += delegate { _hudLeftPx = (float)numThr.Value; SaveCfg(); };
+        numRollOff.ValueChanged += delegate { _hudRollOff = (float)numRollOff.Value; SaveCfg(); };
+        y += 28;
+
+        numPitOff = MkTune(x, y, "height shift", (decimal)_hudPitOff, -400m, 400m, 5m, 0);
+        numAccPitch = MkTune(x + 168, y, "pitch accel", (decimal)_hudAccPitch, 0m, 1m, 0.05m, 2);
+        numPitOff.ValueChanged += delegate { _hudPitOff = (float)numPitOff.Value; SaveCfg(); };
         numAccPitch.ValueChanged += delegate { _hudAccPitch = (float)numAccPitch.Value; SaveCfg(); };
+        y += 28;
+
+        numAccRoll = MkTune(x, y, "tilt accel", (decimal)_hudAccRoll, 0m, 1m, 0.05m, 2);
+        numFineP = MkTune(x + 168, y, "fine gain", (decimal)_hudFineP, 0m, 3m, 0.1m, 1);
         numAccRoll.ValueChanged += delegate { _hudAccRoll = (float)numAccRoll.Value; SaveCfg(); };
-        y += 28;
-
-        numFineP = MkTune(x, y, "fine gain", (decimal)_hudFineP, 0m, 3m, 0.1m, 1);
-        numPitStick = MkTune(x + 168, y, "stick pitch", (decimal)_hudPitStick, -350m, 350m, 10m, 0);
         numFineP.ValueChanged += delegate { _hudFineP = (float)numFineP.Value; SaveCfg(); };
-        numPitStick.ValueChanged += delegate { _hudPitStick = (float)numPitStick.Value; SaveCfg(); };
         y += 28;
 
-        numRollStick = MkTune(x, y, "stick tilt", (decimal)_hudRollStick, -80m, 80m, 5m, 0);
+        numPitStick = MkTune(x, y, "stick pitch", (decimal)_hudPitStick, -350m, 350m, 10m, 0);
+        numRollStick = MkTune(x + 168, y, "stick tilt", (decimal)_hudRollStick, -80m, 80m, 5m, 0);
+        numPitStick.ValueChanged += delegate { _hudPitStick = (float)numPitStick.Value; SaveCfg(); };
         numRollStick.ValueChanged += delegate { _hudRollStick = (float)numRollStick.Value; SaveCfg(); };
         y += 28;
 
-        // estimator: 1 = the alpha-beta/Kalman fusion in ANGLE space, 0 = the legacy px filter.
-        // fov = the game's vertical FOV (the camera model); maneuver = how fast the horizon may swing.
-        numEstimator = MkTune(x, y, "estimator", (decimal)(_hudEstimator ? 1 : 0), 0m, 1m, 1m, 0);
-        numFov = MkTune(x + 168, y, "fov", (decimal)_hudFovY, 40m, 120m, 1m, 0);
-        numEstimator.ValueChanged += delegate { _hudEstimator = numEstimator.Value >= 0.5m; _kfSeeded = false; SaveCfg(); };
+        // fov = the game's vertical FOV (the camera model that turns pixels into angles);
+        // maneuver = how far a measurement may sit from the model before it looks wrong.
+        numFov = MkTune(x, y, "fov", (decimal)_hudFovY, 40m, 120m, 1m, 0);
+        numManeuver = MkTune(x + 168, y, "maneuver", (decimal)_hudManeuver, 1m, 400m, 1m, 0);
         numFov.ValueChanged += delegate { _hudFovY = (float)numFov.Value; SaveCfg(); };
-        y += 28;
-
-        numManeuver = MkTune(x, y, "maneuver", (decimal)_hudManeuver, 1m, 400m, 1m, 0);
-        numRefDist = MkTune(x + 168, y, "ref match", (decimal)(_refDist * 100f), 2m, 60m, 1m, 0);
         numManeuver.ValueChanged += delegate { _hudManeuver = (float)numManeuver.Value; SaveCfg(); };
-        numRefDist.ValueChanged += delegate { _refDist = (float)numRefDist.Value / 100f; SaveCfg(); };
         y += 28;
 
-        // INFLUENCE of the new sky/ground COLOUR-AXIS math (per-frame luminance-vs-blueness cue).
-        // 0 = ignore the axis entirely (old behaviour: gradient + texture only), 1 = the tuned
-        // default, higher = it pulls the lock harder toward "sky above / ground below".
-        numAxisW = MkTune(x, y, "axis weight", (decimal)_hudAxisW, 0m, 3m, 0.1m, 1);
+        numRefDist = MkTune(x, y, "ref match", (decimal)(_refDist * 100f), 2m, 60m, 1m, 0);
+        numAxisW = MkTune(x + 168, y, "axis weight", (decimal)_hudAxisW, 0m, 3m, 0.1m, 1);
+        numRefDist.ValueChanged += delegate { _refDist = (float)numRefDist.Value / 100f; SaveCfg(); };
         numAxisW.ValueChanged += delegate { _hudAxisW = (float)numAxisW.Value; SaveCfg(); };
-        numMsTau = MkTune(x + 168, y, "axis smooth", (decimal)_hudMsTau, 0m, 1m, 0.02m, 2);
-        numMsTau.ValueChanged += delegate { _hudMsTau = (float)numMsTau.Value; SaveCfg(); };
         y += 28;
+
+        // axis smooth = low-pass on the detector measurement BEFORE the estimator (seconds);
+        // sky tex = how much smoother the region above the line must be than the region below it.
+        // That is the test that stops a road or a field boundary INSIDE the ground being taken for
+        // a horizon, and it is why the sky cannot be "learned" from a frame pointing at the ground.
+        numMsTau = MkTune(x, y, "axis smooth", (decimal)_hudMsTau, 0m, 1m, 0.02m, 2);
+        numSkyTex = MkTune(x + 168, y, "sky tex", (decimal)_hudSkyTex, 1m, 30m, 1m, 0);
+        numMsTau.ValueChanged += delegate { _hudMsTau = (float)numMsTau.Value; SaveCfg(); };
+        numSkyTex.ValueChanged += delegate { _hudSkyTex = (float)numSkyTex.Value; SaveCfg(); };
+        y += 28;
+
         numSkyMin = MkTune(x, y, "sky min", (decimal)(_hudSkyMin * 100f), 0m, 80m, 1m, 0);
         numSkyMin.ValueChanged += delegate { _hudSkyMin = (float)numSkyMin.Value / 100f; SaveCfg(); };
-        y += 28;
-        numSkyFlat = MkTune(x, y, "sky flat", (decimal)(_hudSkyFlatMax * 100f), 0m, 100m, 5m, 0);
-        numSkyFlat.ValueChanged += delegate { _hudSkyFlatMax = (float)numSkyFlat.Value / 100f; SaveCfg(); };
         y += 28;
 
         // reload the reference photos ("base photos") without restarting
@@ -5326,81 +5293,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // so the roll stays a steady acro rate and HOLDS the bank when you centre.
         float sxS = Shape(sx, _hudAccRoll);
         bool det = _hudDetValid && (now - _hudDetAt) < 2000;
-        float badLift = 0f;
-
-        // Smoothed sky coverage - drives the image trust in BOTH fusions (never pops).
-        if (det) _hudSkySm += (_hudDetSky - _hudSkySm) * (1f - (float)Math.Pow(0.5, dt / 0.12f)); // ~0.12s ease
-
-        if (_hudEstimator)
-        {
-            // ---- PROPER FUSION: scalar Kalman/alpha-beta per axis, in ANGLE space (see HudFuse) ----
-            // Stick = control input, vision = measurement, coast when the vision drops out.
-            HudFuse(dt, sxS, syS, now);
-        }
-        else
-        {
-        float vTargetRoll = -sxS * _hudRollRate;    // deg/s (bank RATE)
-        float vTargetPitch = -syS * _hudPitchRate;  // px/s; inverted on purpose: pitching up moves it DOWN
-        float av = 1f - (float)Math.Pow(0.5, dt / _hudAccelTau);
-        _hudRollVel += (vTargetRoll - _hudRollVel) * av;
-        _hudPitchVel += (vTargetPitch - _hudPitchVel) * av;
-        _hudFRoll += _hudRollVel * dt;
-        _hudFPitch += _hudPitchVel * dt;
-
-        // ACCEL = the image horizon: slow, but ABSOLUTE. Cross-reference the gyro against it, pulling
-        // harder the more confident the detector is. Stops drift and settles the lines flat when the
-        // camera is genuinely level - without self-levelling a real bank (the image sees the bank too).
-        if (det)
-        {
-            float conf = _hudDetConf; if (conf < 0.05f) conf = 0.05f; if (conf > 1f) conf = 1f;
-            // SMOOTH gyro<->image blend - no hard switch anywhere. Every factor is a smoothstep, so
-            // the image's trust SLIDES continuously between 0 (pure stick) and full as the situation
-            // changes: sky appears/disappears, the stick moves, the detector gets confident. Nothing
-            // pops. The gyro still integrates the stick; this only sets how fast the image pulls it.
-            // Measured on real flights: you see ~20-25% sky most of the time, so full image trust now
-            // arrives at ~20% sky (was 40%, which left the image under-powered where you actually fly).
-            // Below ~4% sky it hands fully to the stick.
-            float skyT = Smooth01(_hudSkySm, 0.04f, 0.20f);   // 0 = all ground, 1 = plenty of sky
-            // STICK OVERRIDE: the image keeps most of the control until the right stick is pushed past
-            // "stick override" (dial, default 15%), then the stick takes over. Below the threshold the
-            // image is FULL; past it the image yields smoothly over the next ~15% of travel.
-            float stickAmt = Math.Max(Math.Abs(sx), Math.Abs(sy));
-            float sThr = _hudStickThr / 100f;
-            float actT = Smooth01(stickAmt, sThr, sThr + 0.15f);
-            float gain = _hudImgGain; if (gain < 0f) gain = 0f; if (gain > 4f) gain = 4f;
-            // The more SKY is in view the more the image is allowed to pull (up to ~1.45x at full sky) -
-            // a clear sky/ground line is trustworthy, so it should win harder there.
-            float imgW = (0.50f + 0.50f * conf) * skyT * (1f - 0.90f * actT) * gain * (0.55f + 0.90f * skyT);
-            float tau = (0.08f + 0.9f * (1f - conf)) / Math.Max(0.02f, imgW);
-            if (tau > 60f) tau = 60f;                          // no sky -> the image is effectively silent
-            // SKY RECAPTURE: the moment the sky is clearly showing again, pull the line back to the true
-            // horizon FAST (smooth but decisive) instead of easing in slowly from the last gyro value.
-            if (skyT > 0.40f && tau > 0.12f) tau = 0.12f;
-            float a = 1f - (float)Math.Pow(0.5f, dt / tau);
-            // SOFT DOWN LIMIT: we never pull up toward the sky, so the image is not allowed to drive
-            // the horizon DOWN past this many px. Past the limit the pull is heavily compressed (a soft
-            // spring, not a hard wall), so a low/sky false-lock can only nudge it a little.
-            float tgtP = _hudDetPitch;
-            if (tgtP > _hudDownLim) tgtP = _hudDownLim + (tgtP - _hudDownLim) * 0.15f;
-            float dR = (_hudDetRoll - _hudFRoll) * a;
-            float dP = (tgtP - _hudFPitch) * a;
-            // ANTI-FALSE-FLAG LIMIT: the image may only move the fused attitude so fast, and only as
-            // hard as the stick was ACTUALLY moving. A sudden bogus lock therefore cannot yank the
-            // lines - it just nudges, unless the controller genuinely moved there.
-            float allow = 0.30f + 0.70f * actT;                 // more authority while the stick moves
-            float maxR = _hudImgRate * allow * dt;              // deg this update
-            float maxP = _hudImgRate * 6f * allow * dt;         // px this update
-            if (dR > maxR) dR = maxR; if (dR < -maxR) dR = -maxR;
-            if (dP > maxP) dP = maxP; if (dP < -maxP) dP = -maxP;
-            _hudFRoll += dR;
-            _hudFPitch += dP;
-            // LOW-QUALITY LIFT: a weak/unsure detector tends to land LOW (on a terrain edge) - the
-            // foggier the worse. Nudge the line UP by up to the "bad lift" dial (in DEGREES, same units
-            // as the ladder), scaled by how bad the confidence is, so poor-quality frames sit where they
-            // should instead of dragging low.
-            badLift = (1f - conf) * _hudBadLift * _hudDpp;
-        }
-        }
+        // ---- PROPER FUSION: scalar Kalman/alpha-beta per axis, in ANGLE space (see HudFuse) ----
+        // Stick = control input, vision = measurement, coast when the vision drops out.
+        // The old second (pixel-space) fusion, and the "bad lift" knob that only it used,
+        // are gone: one estimator, one set of numbers, and no dial that silently does nothing.
+        HudFuse(dt, sxS, syS, now);
 
         // The LEFT stick (throttle) is a small, BOUNDED proportional nudge, NOT integrated. Adding
         // it to the rate meant holding throttle walked the horizon clean off the screen.
@@ -5431,7 +5328,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         _hudRoll = _hudFRoll + _hudRollOff + stickRoll;     // + manual roll offset + direct stick bank
         // low-quality LIFT (up) and clutter DROP (down) - both in px, off the dials
         float treeDrop = _hudClutter * _hudTreeDrop * _hudDpp;   // trees/structures -> push the line DOWN
-        _hudPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff - badLift + treeDrop;
+        _hudPitch = _hudFPitch + leftPitch + stickPitch + _hudPitOff + treeDrop;
 
         // Simulated FPV pack voltage. It starts at half, rises with throttle (left stick Y up), and
         // a spring + ripple gives the sag/bounce of a real pack under load. 4S range 13.2V..16.8V.
@@ -6019,8 +5916,6 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hud") _hudOn = v == "1";
             else if (k == "hudPitch") _hudPitchRate = ParseF(v);
             else if (k == "hudRoll") _hudRollRate = ParseF(v);
-            else if (k == "hudLock") _hudLockTau = ParseF(v);
-            else if (k == "hudFly") _hudFlyTau = ParseF(v);
             else if (k == "hudBias") _hudBias = ParseF(v);
             else if (k == "hudAccel") _hudAccelTau = ParseF(v);
             else if (k == "hudDpp") _hudDpp = ParseF(v);
@@ -6028,33 +5923,27 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudLen") _hudLen = ParseF(v);
             else if (k == "hudRungTilt") _hudRungTilt = ParseF(v);
             else if (k == "hudMaxTilt") _hudMaxTilt = ParseF(v);
-            else if (k == "hudImgRate") _hudImgRate = ParseF(v);
-            else if (k == "hudDownLim") _hudDownLim = ParseF(v);
             else if (k == "hudSpread") _hudSpreadAmt = ParseF(v);
             else if (k == "hudSpreadAccel") _hudSpreadAccel = ParseF(v);
             else if (k == "hudTreeDrop") _hudTreeDrop = ParseF(v);
             else if (k == "hudMinSpread") _hudMinSpread = ParseF(v);
-            else if (k == "hudStickThr") _hudStickThr = ParseF(v);
-            else if (k == "hudImg") _hudImgGain = ParseF(v);
             else if (k == "hudRollOff") _hudRollOff = ParseF(v);
             else if (k == "hudPitOff") _hudPitOff = ParseF(v);
             else if (k == "hudThr") _hudLeftPx = ParseF(v);
             else if (k == "hudPStick") _hudPitStick = ParseF(v);
-            else if (k == "hudBadLift") _hudBadLift = ParseF(v);
             else if (k == "hudTexW") _hudTexW = ParseF(v);
             else if (k == "hudAccPitch") _hudAccPitch = ParseF(v);
             else if (k == "hudAccRoll") _hudAccRoll = ParseF(v);
             else if (k == "hudFineP") _hudFineP = ParseF(v);
             else if (k == "hudRollStick") _hudRollStick = ParseF(v);
             else if (k == "hudCap") _hudCapturable = v == "1";
-            else if (k == "hudEstimator") _hudEstimator = v != "0";
             else if (k == "hudFov") _hudFovY = ParseF(v);
             else if (k == "hudManeuver") _hudManeuver = ParseF(v);
             else if (k == "hudRef") _refDist = ParseF(v) / 100f;
             else if (k == "hudAxisW") _hudAxisW = ParseF(v);
             else if (k == "hudMsTau") _hudMsTau = ParseF(v);
             else if (k == "hudSkyMin") _hudSkyMin = ParseF(v) / 100f;
-            else if (k == "hudSkyFlat") _hudSkyFlatMax = ParseF(v) / 100f;
+            else if (k == "hudSkyTex") { _hudSkyTex = ParseF(v); if (_hudSkyTex < 0f) _hudSkyTex = 0f; if (_hudSkyTex > 60f) _hudSkyTex = 60f; }
             else if (k == "hudSettleMs") { _hudSettleMs = (int)ParseF(v); if (_hudSettleMs < 0) _hudSettleMs = 0; if (_hudSettleMs > 60000) _hudSettleMs = 60000; }
             else if (k == "hudColdMs") { _hudColdMs = (int)ParseF(v); if (_hudColdMs < 0) _hudColdMs = 0; if (_hudColdMs > 60000) _hudColdMs = 60000; }
             else if (k == "uav") _hudStyleUav = v == "1";
@@ -6119,8 +6008,6 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hud=" + (_hudOn ? "1" : "0"),
             "hudPitch=" + _hudPitchRate.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRoll=" + _hudRollRate.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "hudLock=" + _hudLockTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "hudFly=" + _hudFlyTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudBias=" + _hudBias.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAccel=" + _hudAccelTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudDpp=" + _hudDpp.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -6128,28 +6015,22 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudLen=" + _hudLen.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRungTilt=" + _hudRungTilt.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudMaxTilt=" + _hudMaxTilt.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "hudImgRate=" + _hudImgRate.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "hudDownLim=" + _hudDownLim.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSpread=" + _hudSpreadAmt.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSpreadAccel=" + _hudSpreadAccel.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudTreeDrop=" + _hudTreeDrop.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudMinSpread=" + _hudMinSpread.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "hudStickThr=" + _hudStickThr.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "hudEstimator=" + (_hudEstimator ? "1" : "0"),
             "hudFov=" + _hudFovY.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudManeuver=" + _hudManeuver.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRef=" + (_refDist * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAxisW=" + _hudAxisW.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudMsTau=" + _hudMsTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSkyMin=" + (_hudSkyMin * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "hudSkyFlat=" + (_hudSkyFlatMax * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "hudSkyTex=" + _hudSkyTex.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSettleMs=" + _hudSettleMs, "hudColdMs=" + _hudColdMs,
-            "hudImg=" + _hudImgGain.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudRollOff=" + _hudRollOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPitOff=" + _hudPitOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudThr=" + _hudLeftPx.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudPStick=" + _hudPitStick.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "hudBadLift=" + _hudBadLift.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudTexW=" + _hudTexW.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAccPitch=" + _hudAccPitch.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAccRoll=" + _hudAccRoll.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -8250,14 +8131,185 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         return true;
     }
 
+    // ================= HORIZON DETECTOR v2 =====================================================
+    //
+    // This replaces seven competing estimators (block gradient, full-res refine, TWO separate
+    // sky-onset passes, a global line search, a RANSAC fallback, a cold-start median and a
+    // reference-photo override) that were arbitrated by a chain of "if (!found)". They disagreed
+    // systematically - the block pass was quantised to ~43px, the onset passes were full-res - so
+    // WHICH one happened to succeed decided the answer, while the estimator's noise model assumed
+    // there was only one of them.
+    //
+    // There is now ONE method, in four stages, built the way this problem is actually solved
+    // (Ettinger et al. 2002, "Towards Flight Autonomy: Vision-Based Horizon Detection for Micro Air
+    // Vehicles": the horizon is the line that best SEPARATES the sky and ground regions'
+    // statistics, NOT the strongest edge - 30Hz, >99.9% correct over roads, buildings, meadows,
+    // woods and water).
+    //
+    //   STAGE 1 - DOWNSAMPLE once and build luminance, blueness (B-R) and texture maps. The
+    //     downsample IS the blur, so there is no separate coarse pass and full-res refinement.
+    //
+    //   STAGE 2 - SKY MODEL. A TEMPORAL colour model of the sky, learned from the pixels ABOVE
+    //     the line, and only while the region above is genuinely the smoother one. The old code
+    //     re-read "the top 6% of THIS frame" on every frame, so the moment the drone pitched down
+    //     the sky reference became GROUND, the "first row that leaves the sky" fired at once, and
+    //     the line snapped to the top of the screen. That is the "it works, then it gets lost".
+    //     A model does not care where the camera is pointing.
+    //
+    //   STAGE 3 - ONE GLOBAL SCORER. The horizon is the VANISHING LINE of the ground plane, so it
+    //     is parameterised the way that geometry actually is: an inclination (which IS the camera
+    //     roll) plus a PERPENDICULAR offset from the principal point (which IS f*tan(pitch)). For
+    //     each angle the pixels are projected onto the line's normal and histogrammed, so every
+    //     candidate offset costs O(1) - the whole frame is scored at every angle in one pass. The
+    //     score is the classic sky/ground separation, multiplied by three physical requirements:
+    //     the region above must match the sky model, must be SMOOTHER than the region below, and
+    //     must reach the top of the frame.
+    //
+    //   STAGE 4 - ONSET PRECISION. The winning offset is quantised to the histogram bin, so it is
+    //     sharpened with the per-column "first row that leaves the sky" - the definition of a
+    //     horizon - by taking the median of those rows. The ANGLE is never re-estimated there, so
+    //     this cannot become a second opinion about direction; it only moves the height.
+    //
+    // Downstream there is one consistent measurement: roll in degrees and a PERPENDICULAR pitch
+    // offset in pixels. (The old code published the VERTICAL offset at x=W/2, which is the
+    // perpendicular distance divided by cos(roll) - a 15% pitch error at 30 degrees of bank, 41%
+    // at 45.)
+
+    // ---- detector working set (downsampled) ----
+    float[] _hdL, _hdBR, _hdT, _hdR, _hdG, _hdB;
+    int _hdW = 0, _hdH = 0;
+    const int HD_DS = 6;                  // downsample factor: 6 -> 320x180 at 1080p
+
+    // ---- STAGE 2: the temporal sky model ----
+    float _skyMuL = 0f, _skyMuB = 0f;     // sky colour model: luminance, blueness (B-R)
+    float _skySdL = 30f, _skySdB = 30f;   // how tight that model is
+    bool _skyModelOk = false;
+    float _hudSkyTex = 8f;                // dial "sky tex": how much smoother the region above must be
+
+    // ---- last accepted line, NORMAL FORM ----
+    // theta = inclination in degrees (this IS the camera roll); m = tan(theta); k = signed
+    // PERPENDICULAR distance from the frame centre in working pixels, k > 0 = line ABOVE centre.
+    float _hnTheta = 0f, _hnM = 0f, _hnK = 0f;
+    bool _hnOk = false;
+
+    // STAGE 1. One downsample, six maps. Every stage below reads these, so no two stages can ever
+    // be looking at different pictures - which is exactly what the old version could not promise.
+    bool HudBuildMaps(int[] px, int W, int H)
+    {
+        int dw = W / HD_DS, dh = H / HD_DS;
+        if (dw < 40 || dh < 24) return false;
+        int n = dw * dh;
+        if (_hdL == null || _hdW != dw || _hdH != dh)
+        {
+            _hdL = new float[n]; _hdBR = new float[n]; _hdT = new float[n];
+            _hdR = new float[n]; _hdG = new float[n]; _hdB = new float[n];
+            _hdW = dw; _hdH = dh;
+        }
+        for (int gy = 0; gy < dh; gy++)
+            for (int gx = 0; gx < dw; gx++)
+            {
+                int srr = 0, sgg = 0, sbb = 0, c = 0, td = 0, tc = 0;
+                int y1 = gy * HD_DS + HD_DS; if (y1 > H) y1 = H;
+                int x1 = gx * HD_DS + HD_DS; if (x1 > W) x1 = W;
+                for (int y = gy * HD_DS; y < y1; y++)
+                {
+                    int prev = -1, row = y * W;
+                    for (int x = gx * HD_DS; x < x1; x++)
+                    {
+                        int p = px[row + x];
+                        int cr = (p >> 16) & 0xFF, cg = (p >> 8) & 0xFF, cb = p & 0xFF;
+                        srr += cr; sgg += cg; sbb += cb; c++;
+                        int l = (cr * 299 + cg * 587 + cb * 114) / 1000;
+                        if (prev >= 0) { int d = l - prev; td += d < 0 ? -d : d; tc++; }
+                        prev = l;
+                    }
+                }
+                if (c == 0) c = 1;
+                float fr = srr / (float)c, fg = sgg / (float)c, fb = sbb / (float)c;
+                int i = gy * dw + gx;
+                _hdR[i] = fr; _hdG[i] = fg; _hdB[i] = fb;
+                _hdL[i] = 0.299f * fr + 0.587f * fg + 0.114f * fb;
+                _hdBR[i] = fb - fr;
+                _hdT[i] = tc > 0 ? td / (float)tc : 0f;     // mean |dL/dx|: sky smooth, ground busy
+            }
+        return true;
+    }
+
+    // STAGE 2. Learn the sky. Two guards, both load-bearing:
+    //   - only pixels with a margin either side of the line are used, so the transition itself
+    //     never contaminates either region;
+    //   - the region ABOVE must be the SMOOTHER one, so however the camera is pointed, ground can
+    //     never be learned as sky. That single test is what makes the model survive a pitch-down.
+    void HudLearnSky(float m, float k, float norm)
+    {
+        int dw = _hdW, dh = _hdH;
+        double sl = 0, sb = 0, st = 0, sl2 = 0, sb2 = 0, gt = 0;
+        int nA = 0, nB = 0;
+        float cx = dw * 0.5f, cy = dh * 0.5f;
+        for (int y = 0; y < dh; y++)
+        {
+            float yy = y - cy;
+            int row = y * dw;
+            for (int x = 0; x < dw; x++)
+            {
+                float s = ((x - cx) * m - yy) / norm;
+                int i = row + x;
+                if (s > k + 2f)
+                {
+                    sl += _hdL[i]; sb += _hdBR[i]; st += _hdT[i];
+                    sl2 += _hdL[i] * _hdL[i]; sb2 += _hdBR[i] * _hdBR[i]; nA++;
+                }
+                else if (s < k - 2f) { gt += _hdT[i]; nB++; }
+            }
+        }
+        if (nA < 60 || nB < 60) return;
+        float muL = (float)(sl / nA), muB = (float)(sb / nA), muT = (float)(st / nA);
+        float vL = (float)(sl2 / nA - (sl / nA) * (sl / nA));
+        float vB = (float)(sb2 / nA - (sb / nA) * (sb / nA));
+        float gTex = (float)(gt / nB);
+        if (muT > gTex * 0.9f) return;                    // the "sky" is the busy part - it is not sky
+        if (vL < 4f) vL = 4f;
+        if (vB < 4f) vB = 4f;
+        float kap = _skyModelOk ? 0.10f : 1f;
+        if (!_skyModelOk) { _skyMuL = muL; _skyMuB = muB; }
+        else { _skyMuL += (muL - _skyMuL) * kap; _skyMuB += (muB - _skyMuB) * kap; }
+        _skySdL += ((float)Math.Sqrt(vL) - _skySdL) * kap;
+        _skySdB += ((float)Math.Sqrt(vB) - _skySdB) * kap;
+        if (_skySdL < 6f) _skySdL = 6f;
+        if (_skySdB < 6f) _skySdB = 6f;
+        _skyModelOk = true;
+    }
+
+    // ONE place that publishes a measurement, so there is a single definition of what the detector
+    // hands the estimator. roll = degrees; pitch = PERPENDICULAR pixels from centre, + = below.
+    void HudPublish(float roll, float pitch, float skyFrac, float conf, float pitchVar, float rollVar)
+    {
+        float mw = conf;
+        if (!_hudSmSeeded)
+        {
+            _hudSmSeeded = true; _hudSmRoll = roll; _hudSmPitch = pitch;
+            _hudW = mw; _hudSRoll = mw * roll; _hudSPitch = mw * pitch;
+        }
+        else
+        {
+            float decay = 0.75f;                        // ~4-frame memory
+            _hudW = _hudW * decay + mw;
+            _hudSRoll = _hudSRoll * decay + mw * roll;
+            _hudSPitch = _hudSPitch * decay + mw * pitch;
+            if (_hudW > 1e-4f) { _hudSmRoll = _hudSRoll / _hudW; _hudSmPitch = _hudSPitch / _hudW; }
+        }
+        _hudDetRoll = _hudSmRoll; _hudDetPitch = _hudSmPitch; _hudDetConf = conf;
+        _hudMRoll = roll; _hudMPitch = pitch; _hudMConf = conf;
+        _hudMRollVar = rollVar; _hudMPitchVar = pitchVar;
+        _hudDetSky = skyFrac < 0f ? 0f : (skyFrac > 1f ? 1f : skyFrac);
+    }
+
     void DetectHorizon()
     {
         try
         {
             // NOT-USEFUL FRAMES: a menu / loading screen has no horizon in it, and feeding one to the
-            // estimator poisons it. Our own profile strip (the username is printed on EVERY menu) and
-            // the "Joining server / connecting" loading lines are the give-aways. This reads the
-            // CACHED OCR only - it never triggers a fresh (slow) OCR from the detector thread.
+            // estimator poisons it. Cached OCR only - this never triggers a fresh (slow) OCR.
             if (MenuishFrame())
             {
                 _hudDetValid = false;
@@ -8268,73 +8320,38 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
             int W, H; int[] px = Grab(out W, out H);
             _hudFrameH = H;
-            int yTop = H / 12, yBot = H * 80 / 100;
+            if (!HudBuildMaps(px, W, H)) { _hudDetValid = false; return; }
+            int dw = _hdW, dh = _hdH, N = dw * dh;
+            float cx = dw * 0.5f, cy = dh * 0.5f;
 
-            // Sky reference = mean colour of the TOP BAND of the current frame. Sampling it per
-            // frame is what makes this survive map changes: hazy, dusk, snow and night maps all
-            // get their own reference instead of relying on a hard-coded brightness step.
-            int sr = 0, sg = 0, sb = 0, sn = 0;
-            for (int y = 4; y < H / 14; y += 2)
-                for (int x = W / 10; x < W * 9 / 10; x += 8)
-                {
-                    int c = px[y * W + x];
-                    sr += (c >> 16) & 0xFF; sg += (c >> 8) & 0xFF; sb += c & 0xFF; sn++;
-                }
-            if (sn == 0) { _hudDetValid = false; return; }
-            sr /= sn; sg /= sn; sb /= sn;
-
-            // FRAME QUALITY GATE - "get rid of useless photos that are too close in colour". A frame
-            // whose whole picture is one tone (a flat wall of fog / sky / ground) has no horizon in it,
-            // so it must NOT be pushed into the estimate. Compute the luminance spread on a coarse
-            // grid (cheap) and drop the frame when it is nearly uniform.
+            // ---- FRAME QUALITY: a frame that is one flat tone has no horizon in it --------------
             {
-                double lsum = 0, lsum2 = 0; int lc = 0;
-                for (int y = H / 10; y < H * 9 / 10; y += 8)
-                    for (int x = W / 10; x < W * 9 / 10; x += 12)
-                    {
-                        int c = px[y * W + x];
-                        float l = 0.299f * ((c >> 16) & 0xFF) + 0.587f * ((c >> 8) & 0xFF) + 0.114f * (c & 0xFF);
-                        lsum += l; lsum2 += l * l; lc++;
-                    }
-                float lvar = lc > 0 ? (float)(lsum2 / lc - (lsum / lc) * (lsum / lc)) : 0f;
-                float spread = (float)Math.Sqrt(lvar < 0 ? 0 : lvar);
-                if (spread < _hudMinSpread)     // too close in colour -> useless frame
+                double m1 = 0, m2 = 0;
+                for (int i = 0; i < N; i++) { float l = _hdL[i]; m1 += l; m2 += l * l; }
+                m1 /= N; m2 /= N;
+                float sd = (float)Math.Sqrt(Math.Max(0.0, m2 - m1 * m1));
+                if (sd < _hudMinSpread)
                 {
                     _hudDetValid = false;
                     if (Environment.TickCount - _hudLogAt >= 2000)
-                    { _hudLogAt = Environment.TickCount; Log("horizon det: flat frame (spread " + spread.ToString("0") + ") - skipped"); }
+                    { _hudLogAt = Environment.TickCount; Log("horizon det: flat frame (spread " + sd.ToString("0") + ") - skipped"); }
                     return;
                 }
             }
 
-            // ---- COLD START ---------------------------------------------------------------------
-            // First seconds of a flight: the full detector is the thing most likely to swing the
-            // ladder - it hunts for a strong sky/ground transition and terrain happily supplies one.
-            // So until the cold window closes we skip it entirely and hand the estimator the plain
-            // median-of-the-image line instead. Boring on purpose: it cannot be yanked sideways by
-            // one bad frame. When the window closes the normal detector takes over, by which point
-            // there is a solid line to fall back on.
+            // ---- COLD START: the plain median of the image until the flight settles -------------
             if (Environment.TickCount < _hudColdUntil)
             {
                 float cSl, cIc, cSky; int cN;
-                // Also demand the line lands somewhere a horizon actually can be. A median that says
-                // "the horizon is 7% from the top" is almost always a mis-read top band, and locking
-                // the ladder there for the whole cold window is worse than letting the real detector
-                // have the frame. Outside this band we fall through instead.
                 if (MedianHorizonLine(px, W, H, out cSl, out cIc, out cSky, out cN)
                     && cSky > 0.12f && cSky < 0.88f)
                 {
+                    float cNorm = (float)Math.Sqrt(1f + cSl * cSl);
                     float cRoll = (float)(Math.Atan(cSl) * 180.0 / Math.PI);
-                    if (cRoll > 45f) cRoll = 45f; if (cRoll < -45f) cRoll = -45f;
-                    float cPitch = (cSl * (W / 2f) + cIc) - H / 2f;
-                    _hudSmSeeded = false;                    // let the smoother re-seed off the median
-                    _hudDetRoll = cRoll; _hudDetPitch = cPitch;
-                    _hudDetSky = cSky; _hudDetConf = 0.55f;
-                    _hudMConf = 0.55f;                       // this is the one the fusion actually reads
-                    _hudMRoll = cRoll; _hudMPitch = cPitch;
-                    _hudMPitchVar = 400f; _hudMRollVar = 4f;
-                    _hudTrkM = cSl; _hudTrkB = cIc; _hudTrkAt = Environment.TickCount;
-                    _hudDetValid = true; _hudDetAt = Environment.TickCount;
+                    float cPitch = ((cSl * (W * 0.5f) + cIc) - H * 0.5f) / cNorm;   // PERPENDICULAR
+                    HudPublish(cRoll, cPitch, cSky, 0.55f, 400f, 4f);
+                    _hnOk = true; _hnTheta = cRoll; _hnM = cSl; _hnK = -cPitch / HD_DS;
+                    HudLearnSky(cSl, _hnK, cNorm);
                     if (!_hudColdLogged || Environment.TickCount - _hudLogAt >= 2000)
                     {
                         _hudLogAt = Environment.TickCount; _hudColdLogged = true;
@@ -8343,850 +8360,292 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     }
                     return;
                 }
-                // no usable median this frame -> fall through to the normal detector
+                // no usable median this frame -> fall through to the full scorer
             }
 
-            int maxPts = W / 4 + 4;
-            float[] pxs = new float[maxPts], pys = new float[maxPts];
-            int n = 0;
-            bool gOk = false; float slope = 0f, icept = 0f; float conf = 0f; float detSky = -1f;
-            float frameSig = 3f; int frameN = 40;    // robust fit spread / inlier count (for the estimator)
-            bool onsetAnchored = false;              // did the sky-onset anchor move the line this frame?
-            bool noSky = false;                      // the band ABOVE the line is not smooth -> it is ground, not sky
-            bool refHit = false;                     // did a labelled reference supply the answer?
-            // Per-frame sky/ground DISCRIMINATING AXIS (chosen below from this frame's own bands).
-            bool axUseLum = true; float axSign = 1f; float axGnd = 0f;
+            // ---- STAGE 2: keep the sky model current, from the LAST ACCEPTED line --------------
+            if (_hnOk) HudLearnSky(_hnM, _hnK, (float)Math.Sqrt(1f + _hnM * _hnM));
 
-            // --- PRIMARY: BLURRED sky/ground transition (the "blur then find the medium in the centre"
-            // idea). Block-averaging the frame is a heavy blur that erases local detail - trees, roads,
-            // a smoke plume - leaving only the broad sky->ground change. In the CENTRE columns we find
-            // the row of the strongest vertical transition and fit a line through those points. Tested:
-            // a ~24px blur lands the horizon at y=233 / roll -1.7 on a frame where every full-res edge
-            // search locked onto the road. ---
+            // ---- STAGE 3: the one global scorer -------------------------------------------------
+            // For each angle, project every pixel onto the line's normal and histogram it. Every
+            // candidate offset is then just a split of that histogram, so the whole frame is scored
+            // at every angle in one pass.
+            const int NTH = 25;
+            const int NBI = 400;
+            const float TH0 = -45f, TH1 = 45f, KSTEP = 1.5f;
+            float[] thScore = new float[NTH], thK = new float[NTH], thSky = new float[NTH];
+            float[] thAL = new float[NTH], thBL = new float[NTH];
+            float[] thMul = new float[NTH];
+
+            int[] hn = new int[NBI], ht = new int[NBI];
+            double[] hsL = new double[NBI], hsB = new double[NBI], hsT = new double[NBI];
+            double[] hsL2 = new double[NBI], hsB2 = new double[NBI];
+
+            float axW = _hudAxisW;        // dial "axis weight": how hard blueness pulls the separation
+            float texNeed = _hudSkyTex;   // dial "sky tex"
+            float texW = _hudTexW;        // dial "texture": 0 = ignore the smoothness cue
+            if (texNeed < 1f) texNeed = 1f;
+            int minN = (int)(N * 0.04f);  // each region must be at least 4% of the frame
+            float bestScore = -1f, bestK = 0f; int bestTh = -1;
+            float bestTmL = 1f, bestMmL = 1f, bestTopL = 1f;
+
+            for (int t = 0; t < NTH; t++)
             {
-                int B = Math.Max(8, H / 25);
-                int gw = W / B, gh = H / B;
-                // Block images for R, G and B. The channel that SEES the horizon best depends on the
-                // scene (blue sky vs green ground vs dust), so we try all three and keep whichever
-                // gives the strongest sky/ground step. (Inverting is pointless - the step is the same.)
-                float[] imR = new float[gw * gh], imG = new float[gw * gh], imB = new float[gw * gh];
-                // TEXTURE map - the "blurred vs not" difference the user suggested, done cheaply: the mean
-                // local detail of each block. Sky is smooth (low), ground is busy (high), so this works
-                // even when the COLOURS are identical (fog/snow). Fused with the colour cue so a column
-                // only wins if it looks like sky/ground in BOTH colour and texture.
-                float[] imT = new float[gw * gh];
-                // BLUENESS map (B - R per block). MEASURED over 206 real FPV frames across every map
-                // family we have: the sky is bluer than the ground in 74% of frames, and crucially the
-                // relationship holds even where BRIGHTNESS INVERTS - the dark-green map has a sky
-                // (#15190B, lum 22) DARKER than its ground (#475525, lum 75), which is why a
-                // brightness-gradient horizon slips there. Brightness only managed 60%. So B-R is the
-                // dependable sky/ground axis and is used both in the per-column score and the onset.
-                float[] im_bR = new float[gw * gh];
-                float _blueW = _hudAxisW;   // dial "axis weight" - how hard the sky/ground colour axis pulls the score
-                for (int gy = 0; gy < gh; gy++)
-                    for (int gx = 0; gx < gw; gx++)
-                    {
-                        long sr2 = 0, sg2 = 0, sb2 = 0, td = 0; int c = 0, tc = 0;
-                        for (int y = gy * B; y < gy * B + B && y < H; y++)
-                        {
-                            int prev = -1;
-                            for (int x = gx * B; x < gx * B + B && x < W; x++)
-                            {
-                                int p = px[y * W + x];
-                                sr2 += (p >> 16) & 0xFF; sg2 += (p >> 8) & 0xFF; sb2 += p & 0xFF; c++;
-                                int l = (((p >> 16) & 255) * 299 + ((p >> 8) & 255) * 587 + (p & 255) * 114) / 1000;
-                                if (prev >= 0) { int d = l - prev; td += d < 0 ? -d : d; tc++; }
-                                prev = l;
-                            }
-                        }
-                        int ii = gy * gw + gx;
-                        imR[ii] = c > 0 ? sr2 / (float)c : 0f;
-                        imG[ii] = c > 0 ? sg2 / (float)c : 0f;
-                        imB[ii] = c > 0 ? sb2 / (float)c : 0f;
-                        imT[ii] = tc > 0 ? td / (float)tc : 0f;
-                        im_bR[ii] = c > 0 ? (sb2 - sr2) / (float)c : 0f;
-                    }
-                int gx0 = gw * 20 / 100, gx1 = gw * 80 / 100, gy0 = gh * 8 / 100, gy1 = gh * 88 / 100;
+                float thDeg = TH0 + (TH1 - TH0) * t / (NTH - 1f);
+                float m = (float)Math.Tan(thDeg * Math.PI / 180.0);
+                float norm = (float)Math.Sqrt(1f + m * m);
+                float s1 = ((0f - cx) * m - (0f - cy)) / norm;
+                float s2 = ((dw - 1f - cx) * m - (0f - cy)) / norm;
+                float s3 = ((0f - cx) * m - (dh - 1f - cy)) / norm;
+                float s4 = ((dw - 1f - cx) * m - (dh - 1f - cy)) / norm;
+                float smin = Math.Min(Math.Min(s1, s2), Math.Min(s3, s4));
+                float smax = Math.Max(Math.Max(s1, s2), Math.Max(s3, s4));
+                int nb = (int)((smax - smin) / KSTEP) + 2;
+                if (nb > NBI) nb = NBI;
+                Array.Clear(hn, 0, nb); Array.Clear(ht, 0, nb);
+                Array.Clear(hsL, 0, nb); Array.Clear(hsB, 0, nb); Array.Clear(hsT, 0, nb);
+                Array.Clear(hsL2, 0, nb); Array.Clear(hsB2, 0, nb);
 
-                // ---- CHOOSE THIS FRAME'S SKY/GROUND AXIS -------------------------------------------------
-                // Surveyed across every map we have: BRIGHTNESS separates sky from ground on the SNOW
-                // maps (sky #41494E lum 71 over snow #C6CFD7 lum 205 - the ground is the BRIGHTER one)
-                // but INVERTS on the dark-green map (#15190B sky lum 22 over #475525 ground lum 75);
-                // BLUENESS (B-R) does the opposite. Neither alone is universal, so measure BOTH
-                // separations from this frame's own sky and ground bands and use whichever is LARGER.
-                float skyL2 = 0f, gndL2 = 0f, skyB2 = 0f, gndB2 = 0f; int nA = 0, nB = 0;
+                for (int y = 0; y < dh; y++)
                 {
-                    int tr2 = Math.Max(1, gh * 6 / 100);
-                    for (int gy = 0; gy < tr2; gy++) for (int gx = gx0; gx < gx1; gx++)
-                    { int i = gy * gw + gx; skyL2 += 0.299f * imR[i] + 0.587f * imG[i] + 0.114f * imB[i]; skyB2 += im_bR[i]; nA++; }
-                    for (int gy = gh * 84 / 100; gy < gh; gy++) for (int gx = gx0; gx < gx1; gx++)
-                    { int i = gy * gw + gx; gndL2 += 0.299f * imR[i] + 0.587f * imG[i] + 0.114f * imB[i]; gndB2 += im_bR[i]; nB++; }
-                    if (nA > 0) { skyL2 /= nA; skyB2 /= nA; }
-                    if (nB > 0) { gndL2 /= nB; gndB2 /= nB; }
-                }
-                axUseLum = Math.Abs(gndL2 - skyL2) >= Math.Abs(gndB2 - skyB2);
-                axSign = axUseLum ? (skyL2 >= gndL2 ? 1f : -1f) : (skyB2 >= gndB2 ? 1f : -1f);
-                axGnd = axUseLum ? gndL2 : gndB2;
-                float axSky = axUseLum ? skyL2 : skyB2;
-                // --- SCENE CLASSIFIER: match this frame against the baked base maps (snow / fog /
-                // grey). SNOW inverts sky/ground brightness (the ground is the BRIGHT one); FOG and
-                // flat overcast GREY have almost no colour horizon at all. Knowing the scene tells us
-                // whether a colour lock is even meaningful and which axis to trust.
-                if (_hudSceneTick++ % 20 == 0)
-                {
-                    float sd; int mi = MatchMap(SigFromBlocks(imR, imG, imB, gw, gh), out sd);
-                    _hudSceneD = sd;
-                    _hudScene = (mi >= 0 && sd <= _hudSceneTol) ? MapNames[mi] : "normal";
-                }
-                // On SNOW force the brightness axis (ground brighter than sky). The bands already say
-                // so, but snow is exactly where a single frame's guess flips - the base map is surer.
-                if (_hudScene == "snow") { axUseLum = true; axSign = (skyL2 >= gndL2 ? 1f : -1f); axGnd = gndL2; axSky = skyL2; }
-                float[] imAX = new float[gw * gh];
-                for (int i = 0; i < gw * gh; i++)
-                {
-                    float v = axUseLum ? (0.299f * imR[i] + 0.587f * imG[i] + 0.114f * imB[i]) : im_bR[i];
-                    imAX[i] = (v - axSky) * axSign;          // > 0 sky-like (above), < 0 ground-like (below)
-                }
-                // TOP-BAND SANITY. The "sky reference" is only sky if the top band is SMOOTH. Point
-                // the camera down and the top band is ground - busy - and the whole sky/ground logic
-                // can invert ("it thinks the ground is the sky"). Compare the top band's texture with
-                // the scene's; when the top is clearly the busier part it is NOT sky.
-                float skyTex = 0f, allTex = 0f; int stc = 0, atc = 0;
-                {
-                    int trows2 = Math.Max(1, gh * 6 / 100);
-                    for (int gy = 0; gy < trows2; gy++) for (int gx = gx0; gx < gx1; gx++) { skyTex += imT[gy * gw + gx]; stc++; }
-                    if (stc > 0) skyTex /= stc;
-                    for (int gy = 0; gy < gh; gy += 2) for (int gx = gx0; gx < gx1; gx += 2) { allTex += imT[gy * gw + gx]; atc++; }
-                    if (atc > 0) allTex /= atc;
-                }
-                // REFERENCE MATCH: compare this frame's coarse colour layout with the labelled
-                // examples in hudref\ (cheap - reuses the block images).
-                if (!_refLoaded) LoadHudRefs();
-                float refD = 9f; bool refGood = true;
-                if (_refSigs.Count > 0)
-                {
-                    float[] rl;
-                    refD = MatchRefs(SigFromBlocks(imR, imG, imB, gw, gh), out refGood, out rl);
-                    _refD = refD; _refGood = refGood; _refBestLine = rl;
-                }
-                float[] bx2 = new float[gw], by2 = new float[gw], bg2 = new float[gw];
-                float[] chRoll = new float[3], chY = new float[3], chGrad = new float[3], chSig = new float[3];
-                int[] chN = new int[3];
-                int cn = 0;
-                float bestGrad = 0f;
-                for (int ch = 0; ch < 3; ch++)
-                {
-                    float[] im = ch == 0 ? imR : (ch == 1 ? imG : imB);
-                    int pn = 0;
-                    // Sky reference for THIS channel = mean of the top band. The horizon is where we
-                    // LEAVE the sky going down, so we pick the strongest transition that still has
-                    // SKY above it - that is what stops a strong terrain edge lower down from winning.
-                    float skyRef = 0f;
+                    float yy = y - cy;
+                    int row = y * dw;
+                    for (int x = 0; x < dw; x++)
                     {
-                        int sc = 0, trows = Math.Max(1, gh * 6 / 100);   // sky reference from the top sliver only (pure sky)
-                        for (int gy = 0; gy < trows; gy++) for (int gx = gx0; gx < gx1; gx++) { skyRef += im[gy * gw + gx]; sc++; }
-                        skyRef = sc > 0 ? skyRef / sc : 0f;
-                    }
-                    bool trk = _hudTrkAt != 0 && (Environment.TickCount - _hudTrkAt) < 3000;
-                    for (int gx = gx0; gx < gx1; gx++)
-                    {
-                        float best = -1e9f; int by = -1; float byGrad = 0f;
-                        // LOCAL sky test: a real horizon has SKY in the few blocks just ABOVE it and
-                        // ground just below. Using the whole column above (a running mean) stayed
-                        // sky-ish for terrain edges near the top, so at altitude sharp tree/field lines
-                        // just under the horizon stole the lock and parked the roll near -10. Local fixes it.
-                        for (int gy = (gy0 > 2 ? gy0 : 2); gy < gy1 - 2; gy++)
-                        {
-                            bool inBand = true;
-                            if (trk)
-                            {
-                                int pyb = (int)((_hudTrkM * (gx * B + B / 2f) + _hudTrkB) / B);
-                                inBand = gy >= pyb - 6 && gy <= pyb + 6;
-                            }
-                            if (!inBand) continue;
-                            float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
-                            float above = (im[(gy - 1) * gw + gx] + im[(gy - 2) * gw + gx]) / 2f;
-                            float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx]) / 2f;
-                            float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f
-                                        + ((imT[(gy + 1) * gw + gx] + imT[(gy + 2) * gw + gx]) - (imT[(gy - 1) * gw + gx] + imT[(gy - 2) * gw + gx])) * 0.5f * _hudTexW
-                                        + ((imAX[(gy - 1) * gw + gx] + imAX[(gy - 2) * gw + gx]) - (imAX[(gy + 1) * gw + gx] + imAX[(gy + 2) * gw + gx])) * 0.5f * _blueW;
-                            if (score > best) { best = score; by = gy; byGrad = g; }
-                        }
-                        if (by < 0 && trk)      // band empty -> fall back to the whole column
-                        {
-                            for (int gy = (gy0 > 2 ? gy0 : 2); gy < gy1 - 2; gy++)
-                            {
-                                float g = Math.Abs(im[(gy + 1) * gw + gx] - im[(gy - 1) * gw + gx]);
-                                float above = (im[(gy - 1) * gw + gx] + im[(gy - 2) * gw + gx]) / 2f;
-                                float below = (im[(gy + 1) * gw + gx] + im[(gy + 2) * gw + gx]) / 2f;
-                                float score = g - Math.Abs(above - skyRef) * 0.8f + Math.Abs(below - skyRef) * 0.25f
-                                        + ((imT[(gy + 1) * gw + gx] + imT[(gy + 2) * gw + gx]) - (imT[(gy - 1) * gw + gx] + imT[(gy - 2) * gw + gx])) * 0.5f * _hudTexW
-                                        + ((imAX[(gy - 1) * gw + gx] + imAX[(gy - 2) * gw + gx]) - (imAX[(gy + 1) * gw + gx] + imAX[(gy + 2) * gw + gx])) * 0.5f * _blueW;
-                                if (score > best) { best = score; by = gy; byGrad = g; }
-                            }
-                        }
-                        if (by < 0) continue;
-                        // SUB-PIXEL: parabolic interpolation of the gradient peak.
-                        float gA = Math.Abs(im[by * gw + gx] - im[(by - 2) * gw + gx]);
-                        float gB = Math.Abs(im[(by + 1) * gw + gx] - im[(by - 1) * gw + gx]);
-                        float gC = Math.Abs(im[(by + 2) * gw + gx] - im[by * gw + gx]);
-                        float dnm = gA - 2f * gB + gC;
-                        float sub = Math.Abs(dnm) > 0.0001f ? 0.5f * (gA - gC) / dnm : 0f;
-                        if (sub > 0.5f) sub = 0.5f; if (sub < -0.5f) sub = -0.5f;
-                        bx2[pn] = gx * B + B / 2f;
-                        by2[pn] = (by + sub) * B + B / 2f;
-                        bg2[pn] = byGrad;
-                        pn++;
-                    }
-                    if (pn < 12) continue;
-                    // ROBUST fit (RANSAC + TLS/PCA + Huber IRLS) instead of a plain weighted LS:
-                    // a localized strong edge (tree line, road, plume) cannot drag the consensus,
-                    // and the fit also hands us its residual spread to weight the measurement.
-                    float fm, fb, fsig; int finl;
-                    if (!FitLineRobust(bx2, by2, bg2, pn, out fm, out fb, out fsig, out finl)) continue;
-                    float gsum = 0f, wsum = 0f;
-                    for (int i = 0; i < pn; i++) if (Math.Abs(by2[i] - (fm * bx2[i] + fb)) <= 24f) { gsum += bg2[i] * bg2[i]; wsum += bg2[i]; }
-                    float gm = wsum > 0 ? gsum / wsum : 0f;
-                    chRoll[cn] = (float)(Math.Atan(fm) * 180.0 / Math.PI);
-                    chY[cn] = fm * (W / 2f) + fb;
-                    chGrad[cn] = gm;
-                    chSig[cn] = fsig;
-                    chN[cn] = finl > 0 ? finl : pn;
-                    if (gm > bestGrad) bestGrad = gm;
-                    cn++;
-                }
-                if (cn > 0)
-                {
-                    // COMBINE the R/G/B channel fits. When they AGREE (the normal case - all three see
-                    // the same edge) take the inverse-variance WEIGHTED MEAN: the optimal estimate,
-                    // more accurate than the median. Only when they DISAGREE does one channel risk
-                    // being wrong, so fall back to the robust median.
-                    float spread = 0f;
-                    for (int i = 0; i < cn; i++)
-                        for (int j = i + 1; j < cn; j++) { float d = Math.Abs(chY[i] - chY[j]); if (d > spread) spread = d; }
-                    float medRoll, medY, medSig; int medN;
-                    if (cn >= 2 && spread <= 6f)
-                    {
-                        double wsum = 0, wy = 0, wr = 0; double sv = 0; int sNw = 0;
-                        for (int i = 0; i < cn; i++)
-                        {
-                            float sGw = chSig[i] > 0.5f ? chSig[i] : 0.5f;
-                            double w = 1.0 / (sGw * sGw);
-                            wsum += w; wy += w * chY[i]; wr += w * chRoll[i];
-                            sv += sGw * chN[i]; sNw += chN[i];
-                        }
-                        medY = (float)(wy / wsum);
-                        medRoll = (float)(wr / wsum);
-                        medSig = sNw > 0 ? (float)(sv / sNw) : 3f;
-                        medN = sNw > 0 ? sNw : 40;
-                    }
-                    else
-                    {
-                        float[] rr = new float[cn]; Array.Copy(chRoll, rr, cn); Array.Sort(rr);
-                        float[] yy2 = new float[cn]; Array.Copy(chY, yy2, cn); Array.Sort(yy2);
-                        medRoll = rr[cn / 2];
-                        medY = yy2[cn / 2];
-                        medSig = chSig[0] > 0.5f ? chSig[0] : 3f;
-                        medN = chN[0] > 0 ? chN[0] : 40;
-                    }
-                    frameSig = medSig; frameN = medN;
-                    float fm = (float)Math.Tan(medRoll * Math.PI / 180.0);
-                    float fb = medY - fm * (W / 2f);
-                    // Require a real sky/ground step across the line (mostly-one-colour -> no lock), and
-                    // reject a wild jump from the last good fix. Green channel used for the contrast test.
-                    float above = 0f, below = 0f; int cc = 0;
-                    for (int gx = gx0; gx < gx1; gx++)
-                    {
-                        int yb = (int)((fm * (gx * B + B / 2f) + fb) / B);
-                        if (yb - 3 < 0 || yb + 3 >= gh) continue;
-                        above += imG[(yb - 3) * gw + gx];
-                        below += imG[(yb + 3) * gw + gx];
-                        cc++;
-                    }
-                    float contrast = cc > 0 ? Math.Abs(below - above) / cc : 0f;
-                    float rollNow = (float)(Math.Atan(fm) * 180.0 / Math.PI);
-                    bool jump = _hudSmSeeded && Math.Abs(rollNow - _hudSmRoll) > 50f;
-                    if (bestGrad > 1.5f && contrast > 2.5f && !jump)
-                    {
-                        // Sky-quality factor (0 = the "sky" is not sky at all). Combines the top-band
-                        // texture test with the above/below test computed below, so a frame whose
-                        // "sky" is busy, or whose smoother region is BELOW, is heavily distrusted
-                        // instead of being taken as gospel.
-                        float skyClean = 1f;
-                        if (allTex > 0.5f) skyClean = Smooth01(allTex * 1.25f - skyTex, -1.5f, 1.5f);
-                        // HARD SKY CONSTRAINT (dial "sky flat"): the band ABOVE the line must be
-                        // genuinely SMOOTH. Real sky is flat; grass, ruins and trees are busy. If the
-                        // "sky" above the line is busy then this is not a horizon at all - it is a
-                        // boundary INSIDE the ground. Refuse the lock so we go off the stick model.
-                        if (allTex > 0.5f && skyTex > _hudSkyFlatMax * allTex) noSky = true;
-                        slope = fm; icept = fb; gOk = true; conf = Math.Min(1f, bestGrad / 12f) * (0.35f + 0.65f * skyClean);
-                        // A near match to a labelled BAD frame (bad-*.png) means "this is the kind of
-                        // view that fooled us before" - kill the lock. A match to a GOOD frame boosts it.
-                        if (_refSigs.Count > 0 && refD <= _refDist)
-                        {
-                            if (!refGood) { conf *= 0.15f; skyClean *= 0.25f; }
-                            else conf = Math.Min(1f, conf * 1.35f + 0.05f);
-                        }
-                        _hudTrkM = fm; _hudTrkB = fb; _hudTrkAt = Environment.TickCount;   // remember for tracking
-                        // TEXTURE-VERIFIED SKY FRACTION: the region ABOVE the line must be SMOOTHER than the
-                        // region BELOW (real sky over ground). A lock on a terrain edge has busy ground on
-                        // BOTH sides, so this collapses toward 0 and the CONTROLLER takes over - exactly what
-                        // we want when the view is mostly ground. Everything is a smoothstep, so no popping.
-                        float aT = 0f, bT = 0f; int ac = 0, bc = 0;
-                        for (int gx = gx0; gx < gx1; gx++)
-                        {
-                            int yb = (int)((fm * (gx * B + B / 2f) + fb) / B);
-                            if (yb - 4 < 0 || yb + 5 >= gh) continue;
-                            for (int k = 1; k <= 3; k++) { aT += imT[(yb - k) * gw + gx]; ac++; bT += imT[(yb + k) * gw + gx]; bc++; }
-                        }
-                        aT = ac > 0 ? aT / ac : 0f; bT = bc > 0 ? bT / bc : 0f;
-                        float hf = (fm * (W / 2f) + fb) / H;
-                        if (hf < 0f) hf = 0f; if (hf > 1f) hf = 1f;
-                        // The horizon's HEIGHT is the reliable sky measure. The texture check only nudges
-                        // it (0.6..1.0) - at full strength it was reading ~0% sky on real, valid locks,
-                        // which silently disabled the image entirely (the "no influence" bug).
-                        float texConf = Smooth01(bT - aT, 0f, 10f);
-                        // INVERSION GUARD: below the horizon must be the BUSIER part (ground); above
-                        // it must be the smoother part (sky). If the region BELOW the line is clearly
-                        // smoother than the region above, the "sky" is under the ground - the lock is
-                        // inverted - so distrust it hard rather than letting the line walk down.
-                        if (bT - aT < -3f) { skyClean *= 0.25f; conf *= 0.5f; }
-                        detSky = hf * (0.6f + 0.4f * texConf) * (0.40f + 0.60f * skyClean);
-                        // CLUTTER meter: mean local texture of the blocks around the line. Trees / structures
-                        // make it high, and a clutter-heavy scene drags the lock UP onto the canopy - the
-                        // caller drops the horizon in proportion (dial "tree drop").
-                        float clSum = 0f; int clN = 0;
-                        for (int gx = gx0; gx < gx1; gx++)
-                        {
-                            int yb = (int)((fm * (gx * B + B / 2f) + fb) / B);
-                            if (yb - 2 < 0 || yb + 2 >= gh) continue;
-                            for (int k = -2; k <= 2; k++) { clSum += imT[(yb + k) * gw + gx]; clN++; }
-                        }
-                        _hudClutter = clN > 0 ? Smooth01(clSum / clN, 3f, 22f) : 0f;
+                        float s = ((x - cx) * m - yy) / norm;
+                        int b = (int)((s - smin) / KSTEP);
+                        if (b < 0) b = 0; if (b >= nb) b = nb - 1;
+                        int i = row + x;
+                        hn[b]++; hsL[b] += _hdL[i]; hsB[b] += _hdBR[i]; hsT[b] += _hdT[i];
+                        hsL2[b] += _hdL[i] * _hdL[i]; hsB2[b] += _hdBR[i] * _hdBR[i];
+                        if (y == 0) ht[b]++;                      // the top row, for the "reaches the top" test
                     }
                 }
+
+                double totL = 0, totB = 0, totT = 0, totL2 = 0, totB2 = 0;
+                for (int b = 0; b < nb; b++)
+                { totL += hsL[b]; totB += hsB[b]; totT += hsT[b]; totL2 += hsL2[b]; totB2 += hsB2[b]; }
+
+                double an = 0, aL = 0, aB = 0, aT = 0, aL2 = 0, aB2 = 0, aTop = 0;
+                float bScore = -1f; int bIdx = -1;
+                for (int b = nb - 1; b >= 1; b--)
+                {
+                    an += hn[b]; aL += hsL[b]; aB += hsB[b]; aT += hsT[b];
+                    aL2 += hsL2[b]; aB2 += hsB2[b]; aTop += ht[b];
+                    int nA = (int)an, nB = N - nA;   // nA is the region ABOVE the line: the sky side
+                    if (nA < minN || nB < minN) continue;
+
+                    double muAL = aL / nA, muBL = (totL - aL) / nB;
+                    double muAB = aB / nA, muBB = (totB - aB) / nB;
+                    double vAL = aL2 / nA - muAL * muAL; if (vAL < 0) vAL = 0;
+                    double vBL = (totL2 - aL2) / nB - muBL * muBL; if (vBL < 0) vBL = 0;
+                    double vAB = aB2 / nA - muAB * muAB; if (vAB < 0) vAB = 0;
+                    double vBB = (totB2 - aB2) / nB - muBB * muBB; if (vBB < 0) vBB = 0;
+                    double dL = muAL - muBL, dB = muAB - muBB;
+                    double pooled = 0.5 * (vAL + vBL) + 1.0 + axW * (0.5 * (vAB + vBB));
+                    double fisher = (dL * dL + axW * dB * dB) / pooled;
+
+                    // the region ABOVE must be the SMOOTHER one (sky is flat, ground is busy)
+                    double aTx = aT / nA, bTx = (totT - aT) / nB;
+                    float tm = Smooth01((float)(bTx - aTx), 0f, texNeed);
+                    tm = 1f - texW * (1f - tm);
+                    if (tm < 0f) tm = 0f;
+                    // the region ABOVE must look like the sky we have learned
+                    float mm = 1f;
+                    if (_skyModelOk)
+                    {
+                        float dA = (float)Math.Abs(muAL - _skyMuL) / _skySdL + (float)Math.Abs(muAB - _skyMuB) / _skySdB;
+                        float dBm = (float)Math.Abs(muBL - _skyMuL) / _skySdL + (float)Math.Abs(muBB - _skyMuB) / _skySdB;
+                        mm = 0.25f + 0.75f * Smooth01(dBm - dA, 0f, 1.2f);
+                    }
+                    // and the region ABOVE must REACH THE TOP of the frame
+                    float topFrac = (float)(aTop / dw);
+                    float tpm = Smooth01(topFrac, 0.45f, 0.90f);
+
+                    float sc = (float)fisher * tm * mm * tpm;
+                    if (sc >= bScore) { bScore = sc; bIdx = b; bestTmL = tm; bestMmL = mm; bestTopL = tpm; }
+                }
+                if (bIdx < 0) { thScore[t] = 0f; continue; }
+
+                thScore[t] = bScore;
+                thK[t] = smin + bIdx * KSTEP;
+                thMul[t] = bestTmL * bestMmL * bestTopL;
+                double n2 = 0, l2 = 0, b2 = 0;
+                for (int b = bIdx; b < nb; b++) { n2 += hn[b]; l2 += hsL[b]; b2 += hsB[b]; }
+                if (n2 < 1) n2 = 1;
+                thAL[t] = (float)(l2 / n2);
+                thBL[t] = (float)((totL - l2) / Math.Max(1.0, N - n2));
+                thSky[t] = (float)(n2 / N);
+                if (bScore > bestScore) { bestScore = bScore; bestK = thK[t]; bestTh = t; }
             }
 
-            // --- FULL-RES REFINEMENT (only when the blurred pass locked). The block fit is coarse
-            // (~B px per row). Walk columns near the coarse line and snap each to the strongest
-            // FULL-RESOLUTION sky/ground step within a small window, then refit. This feeds the fit
-            // every pixel row (far more data) at a BOUNDED cost - it only searches around the line,
-            // so it stays cheap. The whole point: a sharper guess without a second full scan.
-            if (gOk)
+            if (bestTh < 0 || bestScore <= 0f)
             {
-                int B = Math.Max(8, H / 25);                              // same block size as the coarse pass
-                float lumSky = 0.299f * sr + 0.587f * sg + 0.114f * sb;    // top-band luminance
-                int rwin = B;                                             // search window (px)
-                double sw = 0, swx = 0, swy = 0, swxy = 0, swxx = 0; int used = 0;
-                for (int x = W * 12 / 100; x < W * 88 / 100; x += 4)
-                {
-                    int cy = (int)(slope * x + icept);
-                    int y0 = cy - rwin; if (y0 < 6) y0 = 6;
-                    int y1 = cy + rwin; if (y1 > H - 8) y1 = H - 8;
-                    float bScore = -1e9f; int by = -1;
-                    for (int y = y0; y <= y1; y++)
-                    {
-                        int p1 = px[(y + 2) * W + x], p0 = px[(y - 2) * W + x];
-                        int g = Math.Abs(((p1 >> 8) & 0xFF) - ((p0 >> 8) & 0xFF));      // green ch gradient
-                        int q1 = px[(y - 5) * W + x], q2 = px[(y - 3) * W + x];
-                        float above = 0.5f * (
-                            (0.299f * ((q1 >> 16) & 0xFF) + 0.587f * ((q1 >> 8) & 0xFF) + 0.114f * (q1 & 0xFF)) +
-                            (0.299f * ((q2 >> 16) & 0xFF) + 0.587f * ((q2 >> 8) & 0xFF) + 0.114f * (q2 & 0xFF)));
-                        float sc = g - Math.Abs(above - lumSky) * 0.8f;                 // sky must be above
-                        if (sc > bScore) { bScore = sc; by = y; }
-                    }
-                    if (by < 0) continue;
-                    double w = bScore + 1.0;
-                    sw += w; swx += w * x; swy += w * by; swxy += w * x * by; swxx += w * x * x; used++;
-                }
-                if (used >= 80)
-                {
-                    double den = sw * swxx - swx * swx;
-                    if (Math.Abs(den) > 1)
-                    {
-                        float m2 = (float)((sw * swxy - swx * swy) / den);
-                        float b2 = (float)((swy - m2 * swx) / sw);
-                        if (Math.Abs(m2) < 1.0f)
-                        {
-                            slope = 0.5f * slope + 0.5f * m2;      // blend - never let the refine run away
-                            icept = 0.5f * icept + 0.5f * b2;
-                            float hf2 = (slope * (W / 2f) + icept) / H;
-                            if (hf2 < 0f) hf2 = 0f; if (hf2 > 1f) hf2 = 1f;
-                            detSky = hf2;                          // sharpen the sky fraction too
-                        }
-                    }
-                }
+                _hudDetValid = false;
+                if (Environment.TickCount - _hudLogAt >= 2000)
+                { _hudLogAt = Environment.TickCount; Log("horizon det: no separating line in this frame (all ground or all sky) - coasting"); }
+                return;
             }
 
-            // --- SKY-ONSET ANCHOR -----------------------------------------------------------------
-            // The block search can sit one BLOCK (B px - ~43 of them at 1080p!) below the true
-            // sky/ground edge: the sky is smooth, but the hazy near-ground reads smooth too, and the
-            // strong "field / tree-line" edge sits below it - so the lock drifts DOWN onto the ground.
-            // That is the "it thinks the ground is the sky" failure (measured on a real frame: the
-            // block lock landed at y=480 while the true edge was ~435). The physical definition is
-            // "the first row that leaves the sky", so scan that at FULL resolution and re-anchor the
-            // line's height to it whenever the block line is clearly sitting below.
-            if (gOk)
+            // ---- angle precision: parabolic interpolation across the angle scores ----------------
+            float theta = TH0 + (TH1 - TH0) * bestTh / (NTH - 1f);
+            if (bestTh > 0 && bestTh < NTH - 1)
             {
-                // BLUENESS (B-R), not brightness: measured over 206 real frames, B-R separates sky from
-                // ground in 74% of them and - unlike brightness - it still points the right way on the
-                // dark-green map where the sky is DARKER than the ground.
-                float skyL = axUseLum ? (0.299f * sr + 0.587f * sg + 0.114f * sb) : ((float)sb - (float)sr);
-                double gl = 0; int glc = 0;
-                for (int y = H * 88 / 100; y < H * 95 / 100; y += 3)
-                    for (int x = W / 10; x < W * 9 / 10; x += 8)
-                    {
-                        int c = px[y * W + x];
-                        gl += axUseLum
-                            ? 0.299 * ((c >> 16) & 0xFF) + 0.587 * ((c >> 8) & 0xFF) + 0.114 * (c & 0xFF)
-                            : (c & 0xFF) - ((c >> 16) & 0xFF);
-                        glc++;
-                    }
-                float gndL = glc > 0 ? (float)(gl / glc) : 0f;
-                float dl = Math.Abs(gndL - skyL);
-                if (dl > 8f)
+                float a = thScore[bestTh - 1], b = thScore[bestTh], c = thScore[bestTh + 1];
+                float den = a - 2f * b + c;
+                if (Math.Abs(den) > 1e-6f)
                 {
-                    int cap = (W * 8 / 10) / 12 + 8;
-                    float[] oxs = new float[cap], oys = new float[cap], ows = new float[cap];
-                    int on = 0;
-                    for (int x = W / 10; x < W * 9 / 10 && on < cap; x += 12)
+                    float frac = 0.5f * (a - c) / den;                   // in units of one angle step
+                    if (frac > 0.9f) frac = 0.9f; if (frac < -0.9f) frac = -0.9f;
+                    theta += frac * (TH1 - TH0) / (NTH - 1f);
+                }
+            }
+            // how much better is this angle than the next best ANGLE (not the next bin)
+            float second = 0f;
+            for (int t = 0; t < NTH; t++) if (Math.Abs(t - bestTh) >= 2 && thScore[t] > second) second = thScore[t];
+
+            float mFin = (float)Math.Tan(theta * Math.PI / 180.0);
+            float normF = (float)Math.Sqrt(1f + mFin * mFin);
+            float kHist = bestK;
+
+            // ---- STAGE 4: onset precision on the HEIGHT only --------------------------------------
+            // The winning offset is quantised to a bin, so sharpen it with the per-column "first row
+            // that leaves the sky" - the definition of a horizon. The reference is the frame's OWN
+            // above-region mean, not the top band, so this does not care where the camera points.
+            float kFinal = kHist, onsetSd = 6f; int onN = 0;
+            {
+                float aRef = thAL[bestTh], bRef = thBL[bestTh];
+                float spreadL = Math.Abs(bRef - aRef);
+                if (spreadL > 8f)
+                {
+                    float[] oks = new float[dw];
+                    for (int x = 1; x < dw - 1; x++)
                     {
-                        for (int y = H / 12; y < H * 80 / 100 - 6; y += 2)
+                        for (int y = 1; y < dh - 3; y++)
                         {
-                            int c = px[y * W + x];
-                            float l = axUseLum
-                                ? 0.299f * ((c >> 16) & 0xFF) + 0.587f * ((c >> 8) & 0xFF) + 0.114f * (c & 0xFF)
-                                : (c & 0xFF) - ((c >> 16) & 0xFF);
-                            if (Math.Abs(l - skyL) > 0.25f * dl)
+                            float l = _hdL[y * dw + x];
+                            if (Math.Abs(l - aRef) > 0.30f * spreadL)
                             {
-                                int q = px[(y + 4) * W + x];
-                                float l2 = axUseLum
-                                    ? 0.299f * ((q >> 16) & 0xFF) + 0.587f * ((q >> 8) & 0xFF) + 0.114f * (q & 0xFF)
-                                    : (q & 0xFF) - ((q >> 16) & 0xFF);
-                                if (Math.Abs(l2 - skyL) > 0.22f * dl) { oxs[on] = x; oys[on] = y; ows[on] = 3f; on++; }
+                                float l2 = _hdL[(y + 2) * dw + x];
+                                if (Math.Abs(l2 - aRef) > 0.27f * spreadL)
+                                    oks[onN++] = ((x - cx) * mFin - (y - cy)) / normF;
                                 break;
                             }
                         }
                     }
-                    if (on >= 40)
+                    if (onN >= 24)
                     {
-                        float om, ob, osig; int oinl;
-                        if (FitLineRobust(oxs, oys, ows, on, out om, out ob, out osig, out oinl) && oinl >= on * 6 / 10)
+                        float[] tmp = new float[onN]; Array.Copy(oks, tmp, onN); Array.Sort(tmp);
+                        float med = tmp[onN / 2];
+                        double acc = 0; int cc = 0;
+                        for (int i = 0; i < onN; i++) if (Math.Abs(oks[i] - med) <= 12f) { acc += oks[i]; cc++; }
+                        if (cc >= 16)
                         {
-                            float onY = om * (W / 2f) + ob;
-                            float grY = slope * (W / 2f) + icept;
-                            if (onY < grY - 25f)          // the block line is clearly below the sky -> pull it up
+                            float rm = (float)(acc / cc);
+                            if (Math.Abs(rm - kHist) < dh * 0.25f)
                             {
-                                icept = onY - slope * (W / 2f);   // keep the gradient SLOPE, re-anchor the HEIGHT
-                                float hf3 = (slope * (W / 2f) + icept) / H;
-                                if (hf3 < 0f) hf3 = 0f; if (hf3 > 1f) hf3 = 1f;
-                                detSky = hf3;
-                                onsetAnchored = true;
+                                kFinal = rm;
+                                double v = 0;
+                                for (int i = 0; i < onN; i++) if (Math.Abs(oks[i] - med) <= 12f) v += (oks[i] - rm) * (oks[i] - rm);
+                                onsetSd = cc > 1 ? (float)Math.Sqrt(v / (cc - 1)) : 6f;
                             }
                         }
                     }
                 }
             }
 
-            // --- FALLBACK (only if the blurred search found nothing): full-res gradient + sky term.
-            // Score = ROBUST gradient (40th percentile, so a localized
-            // high-contrast streak - a smoke plume, a road - cannot win) PLUS a SKY/GROUND colour term:
-            // the band ABOVE the line should match the sky reference, the band BELOW should not. That is
-            // the logical definition of a horizon, and it is what separates the sky/ground edge from any
-            // strong terrain edge. Coarse sweep, then fine sweep around the winner. ---
-            float[] ns = new float[(W * 5 / 6 - W / 6) / 2 + 4];
-            if (!gOk)
+            // ---- measurement ---------------------------------------------------------------------
+            float pitchPerp = -kFinal * HD_DS;          // PERPENDICULAR px, + = line below centre
+            int skyN = 0;
+            for (int y = 0; y < dh; y++)
             {
-                float bestScore = 0f; float bm = 0f; int bb = H / 2;
-                for (int m100 = -60; m100 <= 60; m100 += 4)
-                {
-                    float m = m100 / 100f;
-                    for (int b = (int)(H * 0.14f); b <= (int)(H * 0.86f); b += 6)
-                    {
-                        int cnt = 0; float distAb = 0f, distBe = 0f; int scc = 0;
-                        for (int x = W / 6; x < W * 5 / 6; x += 5)
-                        {
-                            int yl = (int)(m * x + b);
-                            if (yl < 16 || yl >= H - 16) continue;
-                            int a = px[(yl - 2) * W + x], c = px[(yl + 2) * W + x];
-                            ns[cnt++] = Math.Abs(((a >> 16) & 0xFF) - ((c >> 16) & 0xFF))
-                                      + Math.Abs(((a >> 8) & 0xFF) - ((c >> 8) & 0xFF))
-                                      + Math.Abs((a & 0xFF) - (c & 0xFF));
-                            int ar = 0, ag = 0, ab2 = 0, br = 0, bg2 = 0, bb2 = 0, k2 = 0;
-                            for (int k = 3; k <= 15; k += 3)
-                            {
-                                int u = px[(yl - k) * W + x], d = px[(yl + k) * W + x];
-                                ar += (u >> 16) & 0xFF; ag += (u >> 8) & 0xFF; ab2 += u & 0xFF;
-                                br += (d >> 16) & 0xFF; bg2 += (d >> 8) & 0xFF; bb2 += d & 0xFF; k2++;
-                            }
-                            ar /= k2; ag /= k2; ab2 /= k2; br /= k2; bg2 /= k2; bb2 /= k2;
-                            distAb += Math.Abs(ar - sr) + Math.Abs(ag - sg) + Math.Abs(ab2 - sb);
-                            distBe += Math.Abs(br - sr) + Math.Abs(bg2 - sg) + Math.Abs(bb2 - sb);
-                            scc++;
-                        }
-                        if (cnt < 40 || scc < 40) continue;
-                        int cov = 0; for (int q = 0; q < cnt; q++) if (ns[q] > 10f) cov++;
-                        if ((float)cov / cnt < 0.4f) continue;       // a real horizon spans the width
-                        Array.Sort(ns, 0, cnt);
-                        float gp = ns[(int)(cnt * 0.40f)];           // robust 40th percentile
-                        float sky = (distBe - distAb) / scc;         // sky above (small), ground below (large)
-                        float s2 = gp + sky * 0.6f;
-                        if (s2 > bestScore) { bestScore = s2; bm = m; bb = b; }
-                    }
-                }
-                if (bestScore > 6f)
-                {
-                    for (int m100 = (int)(bm * 100f) - 4; m100 <= (int)(bm * 100f) + 4; m100++)
-                    {
-                        float m = m100 / 100f;
-                        for (int b = bb - 6; b <= bb + 6; b += 1)
-                        {
-                            if (b < 16 || b > H - 16) continue;
-                            int cnt = 0; float distAb = 0f, distBe = 0f; int scc = 0;
-                            for (int x = W / 6; x < W * 5 / 6; x += 2)
-                            {
-                                int yl = (int)(m * x + b);
-                                if (yl < 16 || yl >= H - 16) continue;
-                                int a = px[(yl - 2) * W + x], c = px[(yl + 2) * W + x];
-                                ns[cnt++] = Math.Abs(((a >> 16) & 0xFF) - ((c >> 16) & 0xFF))
-                                          + Math.Abs(((a >> 8) & 0xFF) - ((c >> 8) & 0xFF))
-                                          + Math.Abs((a & 0xFF) - (c & 0xFF));
-                                int ar = 0, ag = 0, ab2 = 0, br = 0, bg2 = 0, bb2 = 0, k2 = 0;
-                                for (int k = 3; k <= 15; k += 3)
-                                {
-                                    int u = px[(yl - k) * W + x], d = px[(yl + k) * W + x];
-                                    ar += (u >> 16) & 0xFF; ag += (u >> 8) & 0xFF; ab2 += u & 0xFF;
-                                    br += (d >> 16) & 0xFF; bg2 += (d >> 8) & 0xFF; bb2 += d & 0xFF; k2++;
-                                }
-                                ar /= k2; ag /= k2; ab2 /= k2; br /= k2; bg2 /= k2; bb2 /= k2;
-                                distAb += Math.Abs(ar - sr) + Math.Abs(ag - sg) + Math.Abs(ab2 - sb);
-                                distBe += Math.Abs(br - sr) + Math.Abs(bg2 - sg) + Math.Abs(bb2 - sb);
-                                scc++;
-                            }
-                            if (cnt < 40 || scc < 40) continue;
-                            Array.Sort(ns, 0, cnt);
-                            float gp = ns[(int)(cnt * 0.40f)];
-                            float sky = (distBe - distAb) / scc;
-                            float s2 = gp + sky * 0.6f;
-                            if (s2 > bestScore) { bestScore = s2; slope = m; icept = b; gOk = true; }
-                        }
-                    }
-                    if (!gOk) { slope = bm; icept = bb; gOk = true; }
-                    conf = Math.Min(1f, bestScore / 100f);
-                }
+                float yy = y - cy; int row = y * dw;
+                for (int x = 0; x < dw; x++)
+                    if (((x - cx) * mFin - yy) / normF > kFinal) skyN++;
             }
+            float skyFrac2 = skyN / (float)N;
 
-            // --- fallback (only if the global search found nothing, e.g. looking straight down):
-            //     per-column edges + RANSAC ---
-            if (!gOk)
-            {
-                // method A: GREEN dominance step
-                for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)
-                {
-                    for (int y = yTop + 8; y + 24 < yBot; y += 2)
-                    {
-                        int above = 0, below = 0;
-                        for (int kk = 1; kk <= 8; kk++) { int c = px[(y - kk) * W + x]; above += ((c >> 8) & 0xFF) - (c & 0xFF); }
-                        for (int kk = 0; kk < 8; kk++) { int c = px[(y + kk) * W + x]; below += ((c >> 8) & 0xFF) - (c & 0xFF); }
-                        if (below - above > 100) { pxs[n] = x; pys[n] = y; n++; break; }
-                    }
-                }
-                // method B: signed brightness step
-                if (n < 40)
-                {
-                    n = 0;
-                    for (int x = W / 12; x < W * 11 / 12 && n < maxPts; x += 4)
-                    {
-                        int bestY = -1, bestG = 32;
-                        for (int y = yTop; y < yBot; y += 2)
-                        {
-                            int c1 = px[(y - 4) * W + x], c2 = px[(y + 4) * W + x];
-                            int g1 = ((c1 >> 8) & 0xFF) + (c1 & 0xFF) + ((c1 >> 16) & 0xFF);
-                            int g2 = ((c2 >> 8) & 0xFF) + (c2 & 0xFF) + ((c2 >> 16) & 0xFF);
-                            int d = g1 - g2;
-                            if (d > bestG) { bestG = d; bestY = y; }
-                        }
-                        if (bestY >= 0) { pxs[n] = x; pys[n] = bestY; n++; }
-                    }
-                }
-                if (n < 30)
-                {
-                    _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f;
-                    if (Environment.TickCount - _hudLogAt >= 2000) { _hudLogAt = Environment.TickCount; Log("horizon det: no global line, too few points (" + n + ") - no lock"); }
-                    return;
-                }
-                Random rng = new Random();
-                float bs = 0f, bi = 0f; int bestIn = -1;
-                for (int it = 0; it < 240; it++)
-                {
-                    int i1 = rng.Next(n), i2 = rng.Next(n);
-                    if (i1 == i2) continue;
-                    float x1 = pxs[i1], y1 = pys[i1], x2 = pxs[i2], y2 = pys[i2];
-                    if (Math.Abs(x2 - x1) < 60f) continue;
-                    float m = (y2 - y1) / (x2 - x1);
-                    if (m > 0.8f || m < -0.8f) continue;
-                    float b = y1 - m * x1;
-                    int inl = 0;
-                    for (int i = 0; i < n; i++)
-                        if (Math.Abs(pys[i] - (m * pxs[i] + b)) < 8f) inl++;
-                    if (inl > bestIn) { bestIn = inl; bs = m; bi = b; }
-                }
-                if (bestIn < n * 40 / 100)
-                {
-                    _hudDetValid = false; _hudDetRoll = 0f; _hudDetPitch = 0f;
-                    if (Environment.TickCount - _hudLogAt >= 2000) { _hudLogAt = Environment.TickCount; Log("horizon det: weak line (" + bestIn + "/" + n + " inliers) - no lock"); }
-                    return;
-                }
-                conf = (float)bestIn / Math.Max(1, n);   // inlier fraction -> confidence
-                float sx = 0, sy = 0, sxy = 0, sxx = 0; int ck = 0;
-                for (int i = 0; i < n; i++)
-                {
-                    if (Math.Abs(pys[i] - (bs * pxs[i] + bi)) >= 8f) continue;
-                    sx += pxs[i]; sy += pys[i]; sxy += pxs[i] * pys[i]; sxx += pxs[i] * pxs[i]; ck++;
-                }
-                float den = ck * sxx - sx * sx;
-                if (ck < 20 || Math.Abs(den) < 1f) { _hudDetValid = false; return; }
-                slope = (ck * sxy - sx * sy) / den;
-                icept = (sy - slope * sx) / ck;
-            }
-
-            // --- refinement: snap each column to the first row within +-20px of the line where the
-            //     colour clearly departs from the sky reference, then refit. Tightens the coarse
-            //     (20px step) global search onto the actual edge. ---
-            float rsx = 0, rsy = 0, rsxy = 0, rsxx = 0; int rk = 0;
-            for (int x = W / 12; x < W * 11 / 12; x += 2)
-            {
-                int cy = (int)(slope * x + icept);
-                int lo = cy - 20, hi = cy + 20;
-                if (lo < yTop + 8) lo = yTop + 8;
-                if (hi > yBot - 24) hi = yBot - 24;
-                for (int y = lo; y <= hi; y++)
-                {
-                    int c = px[y * W + x];
-                    int d2 = Math.Abs(((c >> 16) & 0xFF) - sr) + Math.Abs(((c >> 8) & 0xFF) - sg) + Math.Abs((c & 0xFF) - sb);
-                    if (d2 > 36) { rsx += x; rsy += y; rsxy += x * y; rsxx += x * x; rk++; break; }
-                }
-            }
-            if (rk >= 40)
-            {
-                float rden = rk * rsxx - rsx * rsx;
-                if (Math.Abs(rden) > 1f)
-                {
-                    slope = (rk * rsxy - rsx * rsy) / rden;
-                    icept = (rsy - slope * rsx) / rk;
-                }
-            }
-
-            if (rk >= 40) conf += 0.25f;   // the per-column refinement agreeing is extra confidence
+            float margin = bestScore > 1e-3f ? (bestScore - second) / bestScore : 1f;
+            float conf = Smooth01(margin, 0.03f, 0.25f) * thMul[bestTh] * Smooth01(bestScore, 0.3f, 2f);
             if (conf < 0.05f) conf = 0.05f; if (conf > 1f) conf = 1f;
 
-            float roll = (float)(Math.Atan(slope) * 180.0 / Math.PI);
-            if (roll > 45f) roll = 45f; if (roll < -45f) roll = -45f;   // cap the image-driven tilt so the ladder cannot swing way out
-            float pitch = (slope * (W / 2f) + icept) - H / 2f;
-            pitch += _hudBias;   // tunable downward bias (dial "bias px")
-            // Allow nearly the whole frame - a +-H/4 clamp meant the IMAGE TARGET could never sit more
-            // than ~270px from centre, so when the horizon was high (sky view) the line crept part-way
-            // and stalled instead of reaching it. This is the "moves very slowly" bug.
-            float plim = H * 0.95f;
-            if (pitch > plim) pitch = plim; if (pitch < -plim) pitch = -plim;
-            // smooth across measurements - now that we measure ~10x/s the smoothing can track fast
-            // (it used to be 0.55/0.45 at ~3/s, which felt laggy); seeded on the first good fix
-            // CONFIDENCE-WEIGHTED AVERAGE (the "probability pushes into the queue" idea). Each
-            // measurement is pushed into a decaying weighted mean, weighted by how confident the
-            // detector was. A high-probability frame - a clean sky/ground line - pulls the estimate
-            // hard; a low-probability frame (trees, clutter, haze) barely moves it. So the guess is
-            // dominated by the GOOD frames instead of every frame counting the same.
-            float mw = conf;                                    // 0.05..1 weight of this frame
-            if (!_hudSmSeeded)
+            // clutter: how busy it is right around the line (trees/structures drag a lock up)
             {
-                _hudSmSeeded = true;
-                _hudSmRoll = roll; _hudSmPitch = pitch;
-                _hudW = mw; _hudSRoll = mw * roll; _hudSPitch = mw * pitch;
-            }
-            else
-            {
-                float decay = 0.75f;                            // ~4-frame memory
-                _hudW = _hudW * decay + mw;
-                _hudSRoll = _hudSRoll * decay + mw * roll;
-                _hudSPitch = _hudSPitch * decay + mw * pitch;
-                if (_hudW > 1e-4f) { _hudSmRoll = _hudSRoll / _hudW; _hudSmPitch = _hudSPitch / _hudW; }
-            }
-            _hudDetRoll = _hudSmRoll;
-            _hudDetPitch = _hudSmPitch;
-            _hudDetConf = conf;
-            // RAW robust measurement for the ESTIMATOR (captured BEFORE any smoothing). The pitch is
-            // the un-biased offset from the optical axis - the estimator learns its own offset, so
-            // the manual bias is deliberately NOT folded in here.
-            _hudMRoll = roll;
-            _hudMPitch = (slope * (W / 2f) + icept) - H / 2f;
-            _hudMConf = conf;
-            // REFERENCE ANSWER ("trained on your photos"): a VERY close match to a labelled reference
-            // that carries its own horizon line means we have seen exactly this view before - so use
-            // that line outright instead of the live guess.
-            if (_refBestLine != null && _refGood && _refD <= _refDist * 0.6f)
-            {
-                _hudMRoll = _refBestLine[0];
-                _hudMPitch = _refBestLine[1];
-                _hudMConf = 0.95f;
-                refHit = true;
-            }
-            {
-                float sig = frameSig > 0.5f ? frameSig : 3f;
-                _hudMPitchVar = sig * sig * 4f / Math.Max(1, frameN) + 1f;      // px^2
-                float rsd = sig / (0.30f * W) * 57.29578f;                      // slope err -> degrees
-                _hudMRollVar = rsd * rsd + 0.05f;                               // deg^2
-            }
-            // Sky fraction trusted for the gyro/image blend. Prefer the TEXTURE-verified value from the
-            // primary lock (which zeroes out when the "horizon" is really just a terrain edge, so the
-            // controller takes over); fall back to the plain height fraction if the primary path did not run.
-            float skyFrac = detSky >= 0f ? detSky : (slope * (W / 2f) + icept) / H;
-            if (skyFrac < 0f) skyFrac = 0f; if (skyFrac > 1f) skyFrac = 1f;
-            _hudDetSky = skyFrac;
-            // ---- TOPMOST-SKY CONSTRAINT (runs for BOTH paths) ---------------------------------------
-            // THE "it sat on the road / green line" BUG. The line must sit at the FIRST place the view
-            // leaves the sky, not at some strong edge further down (a road, a field boundary, a wall).
-            // Walking down from the top, find where each column first stops matching the frame's own
-            // sky reference; the MEDIAN of those rows is the real horizon height. If the fit is sitting
-            // well below it, pull the line up to it (keeping the slope). The existing anchor only ran
-            // on the global path - this frame went down the fallback, which had no such check.
-            if (gOk)
-            {
-                float sLy = axUseLum ? (0.299f * sr + 0.587f * sg + 0.114f * sb) : ((float)sb - (float)sr);
-                double gs = 0; int gc = 0;
-                for (int y = H * 86 / 100; y < H * 95 / 100; y += 4)
-                    for (int x = W / 10; x < W * 9 / 10; x += 10)
-                    {
-                        int c = px[y * W + x];
-                        gs += axUseLum
-                            ? 0.299 * ((c >> 16) & 0xFF) + 0.587 * ((c >> 8) & 0xFF) + 0.114 * (c & 0xFF)
-                            : (c & 0xFF) - ((c >> 16) & 0xFF);
-                        gc++;
-                    }
-                float gLy = gc > 0 ? (float)(gs / gc) : 0f;
-                float dly = Math.Abs(gLy - sLy);
-                if (dly > 10f)
+                double cs = 0; int cn2 = 0;
+                for (int y = 0; y < dh; y++)
                 {
-                    int onN = 0; float[] onY = new float[W / 12 + 4]; float[] onX = new float[W / 12 + 4];
-                    for (int x = W / 10; x < W * 9 / 10; x += 12)
+                    float yy = y - cy; int row = y * dw;
+                    for (int x = 0; x < dw; x++)
                     {
-                        for (int y = H / 14; y < H * 82 / 100 - 6; y += 2)
-                        {
-                            int c = px[y * W + x];
-                            float l = axUseLum
-                                ? 0.299f * ((c >> 16) & 0xFF) + 0.587f * ((c >> 8) & 0xFF) + 0.114f * (c & 0xFF)
-                                : (c & 0xFF) - ((c >> 16) & 0xFF);
-                            if (Math.Abs(l - sLy) > 0.30f * dly)
-                            {
-                                int q = px[(y + 4) * W + x];
-                                float l2 = axUseLum
-                                    ? 0.299f * ((q >> 16) & 0xFF) + 0.587f * ((q >> 8) & 0xFF) + 0.114f * (q & 0xFF)
-                                    : (q & 0xFF) - ((q >> 16) & 0xFF);
-                                if (Math.Abs(l2 - sLy) > 0.27f * dly)
-                                { if (onN < onY.Length) { onX[onN] = x; onY[onN] = y; onN++; } }
-                                break;
-                            }
-                        }
-                    }
-                    if (onN >= 25)
-                    {
-                        // SECOND SYSTEM, from the same pixels but parsed properly. The per-column "first
-                        // row that leaves the sky" IS the horizon, one sample per column - far more of
-                        // the frame than the block-gradient search uses, and far harder to fool with a
-                        // texture edge inside the ground (a road has sky ABOVE it neither column-by-
-                        // column nor in bulk). Fit a robust line through those points (RANSAC + TLS +
-                        // Huber, the same fitter used elsewhere) and blend toward it. The old code only
-                        // stole the HEIGHT and kept the block search's slope, throwing away half of
-                        // what the onset points were telling us.
-                        float[] wts = new float[onN];
-                        for (int i = 0; i < onN; i++) wts[i] = 3f;
-                        float om, ob, osig; int oinl;
-                        bool onFit = FitLineRobust(onX, onY, wts, onN, out om, out ob, out osig, out oinl)
-                                     && oinl >= onN * 6 / 10 && Math.Abs(om) < 1.0f;
-                        float med;
-                        Array.Sort(onY, 0, onN);
-                        med = onY[onN / 2];
-                        float cy = slope * (W / 2f) + icept;
-                        if (onFit)
-                        {
-                            // trust the onset line; blend so a wild fit cannot slam the ladder
-                            float onYc = om * (W / 2f) + ob;
-                            if (onYc < cy - 20f || Math.Abs(om - slope) > 0.25f)
-                            {
-                                slope = 0.30f * slope + 0.70f * om;
-                                icept = 0.30f * icept + 0.70f * ob;
-                                float hf5 = (slope * (W / 2f) + icept) / H;
-                                if (hf5 < 0f) hf5 = 0f; if (hf5 > 1f) hf5 = 1f;
-                                detSky = hf5;
-                                onsetAnchored = true;
-                            }
-                        }
-                        else if (cy > med + 30f)     // no usable fit - at least pull the HEIGHT up
-                        {
-                            icept = med - slope * (W / 2f);
-                            float hf4 = (slope * (W / 2f) + icept) / H;
-                            if (hf4 < 0f) hf4 = 0f; if (hf4 > 1f) hf4 = 1f;
-                            detSky = hf4;
-                            onsetAnchored = true;
-                        }
+                        float s = ((x - cx) * mFin - yy) / normF;
+                        if (Math.Abs(s - kFinal) <= 2f) { cs += _hdT[row + x]; cn2++; }
                     }
                 }
+                _hudClutter = cn2 > 0 ? Smooth01((float)(cs / cn2), 3f, 22f) : 0f;
             }
-            // ---- SPAWN-DIVE PRIOR -------------------------------------------------------------------
-            // We spawn HIGH and DIVE for speed, so for the first seconds of a flight the nose is
-            // down and the horizon sits HIGH in the frame - the view is mostly ground. A lock that
-            // lands LOW in that window is nearly always a ground edge (a road, a field boundary)
-            // rather than the horizon, so reject it and coast until the dive levels out. Once the
-            // settle window ends the constraint disappears and the normal logic governs.
-            if (_hudSettling && (slope * (W / 2f) + icept) > H * 0.72f)
+
+            // ---- THE GATE: no verified sky in the frame means no measurement ----------------------
+            if (skyFrac2 < _hudSkyMin)
             {
                 _hudDetValid = false;
-                _hudDetAt = Environment.TickCount;
-                if (Environment.TickCount - _hudLogAt >= 2000)
-                {
-                    _hudLogAt = Environment.TickCount;
-                    Log("horizon det: LOW lock during the spawn dive (horizon should be high) - rejected, coasting");
-                }
-                return;
-            }
-            // GROUND-AS-HORIZON GATE (dial "sky flat"): the band above the line was busy, so what
-            // looked like a horizon is really a boundary inside the ground. Throw the frame away.
-            if (noSky)
-            {
-                _hudDetValid = false;
-                _hudDetAt = Environment.TickCount;
                 _hudNoSkyFrames++;
                 if (Environment.TickCount - _hudLogAt >= 2000)
                 {
                     _hudLogAt = Environment.TickCount;
-                    Log("horizon det: frame DISCARDED - region above the line is not sky (busy/ground), coasting on stick model");
+                    Log("horizon det: frame DISCARDED - only " + (skyFrac2 * 100f).ToString("0") +
+                        "% verified sky (min " + (_hudSkyMin * 100f).ToString("0") + "%), coasting on stick model");
                 }
                 return;
             }
-            // NO-USEFUL-IMAGE GATE (dial "sky min"): if the frame shows essentially NO verified sky
-            // (all ground / clutter - e.g. banked hard looking down at a ruin field), then there is no
-            // horizon in it to measure. THROW THE FRAME AWAY rather than let a terrain edge become a
-            // false low "horizon"; the estimator then coasts on the stick model until a real frame
-            // comes back. 0 disables the gate (always accept).
-            if (skyFrac < _hudSkyMin)
+
+            // ---- publish -------------------------------------------------------------------------
+            float pVar = onsetSd * onsetSd * HD_DS * HD_DS / Math.Max(1, onN)
+                       + (KSTEP * HD_DS) * (KSTEP * HD_DS) * 0.25f + 4f;
+            if (pVar > 4000f) pVar = 4000f;
+            float rsd = 0.4f + 4f * (1f - conf);
+            HudPublish(theta, pitchPerp, skyFrac2, conf, pVar, rsd * rsd);
+
+            // remember it in NORMAL FORM - this is what the sky model learns from next frame
+            _hnOk = true; _hnTheta = theta; _hnM = mFin; _hnK = kFinal;
+            _hudTrkM = mFin; _hudTrkB = cy - mFin * cx - normF * kFinal;
+            _hudTrkAt = Environment.TickCount;
+
+            // scene classifier (informational) + the "trained on your photos" override
+            if (_hudSceneTick++ % 20 == 0)
             {
-                _hudDetValid = false;
-                _hudDetAt = Environment.TickCount;
-                _hudNoSkyFrames++;
-                if (Environment.TickCount - _hudLogAt >= 2000)
-                {
-                    _hudLogAt = Environment.TickCount;
-                    Log("horizon det: frame DISCARDED - only " + (skyFrac * 100f).ToString("0") + "% verified sky (min " + (_hudSkyMin * 100f).ToString("0") + "%), coasting on stick model");
-                }
-                return;
+                float sd2; int mi = MatchMap(SigFromBlocks(_hdR, _hdG, _hdB, dw, dh), out sd2);
+                _hudSceneD = sd2;
+                _hudScene = (mi >= 0 && sd2 <= _hudSceneTol) ? MapNames[mi] : "normal";
             }
-            _hudTrkM = slope; _hudTrkB = icept; _hudTrkAt = Environment.TickCount;   // guide the next frame
+            bool refHit = false;
+            if (!_refLoaded) LoadHudRefs();
+            float refD = 9f; bool refGood = true;
+            if (_refSigs.Count > 0)
+            {
+                float[] rl;
+                refD = MatchRefs(SigFromBlocks(_hdR, _hdG, _hdB, dw, dh), out refGood, out rl);
+                _refD = refD; _refGood = refGood; _refBestLine = rl;
+                if (rl != null && refGood && refD <= _refDist * 0.6f)
+                {
+                    // the stored line's pitch is the old VERTICAL offset - convert to perpendicular
+                    float c2 = (float)Math.Cos(rl[0] * Math.PI / 180.0);
+                    if (Math.Abs(c2) < 0.2f) c2 = 0.2f;
+                    HudPublish(rl[0], rl[1] / c2, skyFrac2, 0.95f, 9f, 0.25f);
+                    refHit = true;
+                }
+            }
+
             _hudDetValid = true;
             _hudDetAt = Environment.TickCount;
             if (Environment.TickCount - _hudLogAt >= 2000)
             {
                 _hudLogAt = Environment.TickCount;
-                Log("horizon det: " + (gOk ? "global" : n + " pts") + ", roll " + roll.ToString("0") + " deg, pitch " + pitch.ToString("0") + " px, sky " + (_hudDetSky * 100f).ToString("0") + "% trust " + (_hudDetConf * 100f).ToString("0") + "% clutter " + (_hudClutter * 100f).ToString("0") + "% scene " + _hudScene + "(" + _hudSceneD.ToString("0.00") + ")" + (_refSigs.Count > 0 ? " ref " + (_refD * 100f).ToString("0") + (_refGood ? " good" : " BAD") : "")
-                    + (onsetAnchored ? "  sky-onset-anchored" : "") + (refHit ? "  REF-ANSWER" : ""));
+                Log("horizon det: roll " + theta.ToString("0.0") + " deg, pitch " + pitchPerp.ToString("0") +
+                    " px, sky " + (skyFrac2 * 100f).ToString("0") + "%, conf " + (conf * 100f).ToString("0") +
+                    "%, sep " + bestScore.ToString("0.0") + " (next angle " + second.ToString("0.0") + "), onset " +
+                    onN + ", clutter " + (_hudClutter * 100f).ToString("0") + "%, sky-model " +
+                    (_skyModelOk ? "on" : "none") + ", scene " + _hudScene +
+                    (refHit ? "  REF-ANSWER" : ""));
             }
         }
         catch { }
