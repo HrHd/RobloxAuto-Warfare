@@ -1456,7 +1456,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         gSt.Controls.Add(lMatch);
 
         numMatch = new NumericUpDown();
-        numMatch.Minimum = 50; numMatch.Maximum = 100; numMatch.Increment = 5; numMatch.Value = _matchPct;
+        numMatch.Minimum = 70; numMatch.Maximum = 100; numMatch.Increment = 5; numMatch.Value = _matchPct;
         numMatch.SetBounds(428, 22, 46, 24);
         numMatch.ValueChanged += delegate { _matchPct = (int)numMatch.Value; SaveCfg(); };
         gSt.Controls.Add(numMatch);
@@ -6034,7 +6034,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "ocrWatch") _ocrWatch = v == "1";
             else if (k == "watchWords") _watchWords = v;
             else if (k == "watchStuck") _watchStuckSec = int.Parse(v);
-            else if (k == "matchPct") _matchPct = int.Parse(v);
+            // A match floor below 70 makes words that are NOT on screen match anyway: at 50%
+            // "cash"==="base", "FEATURED"==="return" and "CHANGETEAM"==="TEAMBASE". That one
+            // number caused the Return click on FEATURED, the phantom TEAM BASE panel and the
+            // Base click on "500 Cash". Clamp it so it can never be poisoned again.
+            else if (k == "matchPct") { _matchPct = int.Parse(v); if (_matchPct < 70) _matchPct = 70; }
             else if (k == "userName") _userName = v;
             else if (k == "favMTeam") _favMTeam = v;
             else if (k == "favMDrone") _favMDrone = v;
@@ -9667,8 +9671,60 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         catch { }
     }
 
+    // --selftest: read the CURRENT screen with the exact OCR + matcher the AUTO flow uses and write
+    // every decision to selftest.log, without clicking anything. This is how a false positive like
+    // "Base" on the loadout screen gets caught: the log names the word, its box and its score.
+    static bool _selfTest;
+
+    void SelfTest()
+    {
+        try
+        {
+            Thread.Sleep(800);
+            List<string[]> ws = OcrWords();
+            List<string[]> ww = OcrWordsWhiten();
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            sb.AppendLine("=== SELFTEST " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " ===");
+            sb.AppendLine("ScreenName   : " + ScreenName(ws));
+            sb.AppendLine("MenuOnScreen : " + MenuOnScreen());
+            sb.AppendLine("MapPointLock : " + MapPointLockUp());
+            sb.AppendLine("TeamBasePhraseUp : " + TeamBasePhraseUp(ws) + "   BasePanelVisual: " + BasePanelVisual());
+            sb.AppendLine();
+            string[] probes = { "POINT", "Base", "TEAM BASE", "WARHEAD", "DEPLOY AS DRONE", "DEPLOY", "LOADOUT", "SELECT DRONE", "Return", "PLAYERS IN TEAM", "CHANGE TEAM" };
+            foreach (string pr in probes)
+            {
+                List<Hit> h1 = FindPhraseAll(pr, null, ws);
+                List<Hit> h2 = FindPhraseAll(pr, null, ww);
+                sb.AppendLine("probe \"" + pr + "\"  normal=" + h1.Count + "  whiten=" + h2.Count);
+                foreach (Hit h in h1) sb.AppendLine("    normal (" + h.X + "," + h.Y + ") q=" + h.Quality + " area=" + h.Area + " InPanel=" + InPanel(h.X, h.Y));
+                foreach (Hit h in h2) sb.AppendLine("    whiten (" + h.X + "," + h.Y + ") q=" + h.Quality + " area=" + h.Area + " InPanel=" + InPanel(h.X, h.Y));
+            }
+            sb.AppendLine();
+            sb.AppendLine("--- every on-screen word that fuzzy-matches a case word (this is WHAT matched) ---");
+            string[] cases = { "base", "point", "return", "warhead", "deploy", "drone", "team" };
+            foreach (string[] w in ws)
+                foreach (string c in cases)
+                    if (TokEq(w[4], c))
+                        sb.AppendLine("    normal \"" + w[4] + "\" ~ \"" + c + "\"  @ " + w[0] + "," + w[1] + " " + w[2] + "x" + w[3] + "  sim=" + SimPct(w[4], c) + "%  InPanel=" + InPanel(int.Parse(w[0]), int.Parse(w[1])));
+            foreach (string[] w in ww)
+                foreach (string c in cases)
+                    if (TokEq(w[4], c))
+                        sb.AppendLine("    whiten \"" + w[4] + "\" ~ \"" + c + "\"  @ " + w[0] + "," + w[1] + " " + w[2] + "x" + w[3] + "  sim=" + SimPct(w[4], c) + "%  InPanel=" + InPanel(int.Parse(w[0]), int.Parse(w[1])));
+            sb.AppendLine();
+            sb.AppendLine("--- normal OCR words (" + ws.Count + ") ---");
+            foreach (string[] w in ws) sb.AppendLine("    \"" + w[4] + "\"  @ " + w[0] + "," + w[1] + " " + w[2] + "x" + w[3]);
+            sb.AppendLine("--- whiten OCR words (" + ww.Count + ") ---");
+            foreach (string[] w in ww) sb.AppendLine("    \"" + w[4] + "\"  @ " + w[0] + "," + w[1] + " " + w[2] + "x" + w[3]);
+            File.WriteAllText(Path.Combine(_appDir, "selftest.log"), sb.ToString());
+        }
+        catch (Exception ex)
+        {
+            try { File.WriteAllText(Path.Combine(_appDir, "selftest.log"), "SELFTEST ERROR: " + ex); } catch { }
+        }
+    }
+
     [STAThread]
-    static void Main()
+    static void Main(string[] args)
     {
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
@@ -9684,6 +9740,13 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         {
             SafeLog("WARNING: recovered from an error: " + e.ExceptionObject);
         };
+        if (args.Length > 0 && args[0] == "--selftest")
+        {
+            _selfTest = true;
+            RobloxAuto st = new RobloxAuto();
+            st.SelfTest();
+            return;
+        }
         Application.Run(new RobloxAuto());
     }
 
