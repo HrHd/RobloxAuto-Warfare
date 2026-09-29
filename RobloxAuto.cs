@@ -8498,9 +8498,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         string e2 = Path.GetExtension(s2).ToLowerInvariant();
                         if (e2 == ".png" || e2 == ".jpg" || e2 == ".bmp") have++;
                     }
-                if (have >= 80)
+                if (have >= 150)
                 {
-                    Log("   deploy refs: cap reached (" + have + "/80) - not saving another (delete some in RefEditor)");
+                    Log("   deploy refs: cap reached (" + have + "/150) - not saving another (delete some in RefEditor)");
                     return;
                 }
             }
@@ -10255,7 +10255,13 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     // the stored line's pitch is the old VERTICAL offset - convert to perpendicular
                     float c2 = (float)Math.Cos(rl[0] * Math.PI / 180.0);
                     if (Math.Abs(c2) < 0.2f) c2 = 0.2f;
-                    HudPublish(rl[0], rl[1] / c2, skyFrac2, 0.95f, 9f, 0.25f);
+                    // SKY MARKER (editor slider): how much sky was above the stored line. A true
+                    // open-sky boundary trusts at 0.95; a canopy-threaded line publishes softer so
+                    // the live fusion trims toward it instead of snapping.
+                    float refConf = 0.95f;
+                    if (_refName.IndexOf("-sky-med") >= 0) refConf = 0.80f;
+                    else if (_refName.IndexOf("-sky-low") >= 0) refConf = 0.60f;
+                    HudPublish(rl[0], rl[1] / c2, skyFrac2, refConf, 9f, 0.25f);
                     refHit = true;
                     // HUMAN TREE MARKER: the editor's LOW/MED/HIGH bar for this scene (legacy
                     // "-trees" = HIGH, "-clear" = LOW). Sets the tree belief the moment it matches.

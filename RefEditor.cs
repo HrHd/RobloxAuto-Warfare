@@ -21,12 +21,14 @@ class RefEditor : Form
     int h1x, h1y, h2x, h2y;                 // handle positions in display coords (set each paint)
     TrackBar tbTrees;
     Label lblTreeLevel;
+    TrackBar tbSky;
+    Label lblSkyLevel;
     bool loadingRef = false;                // guard: slider changes during a load must not rename
 
     public RefEditor()
     {
         Text = "Ref Editor - drag the line onto the real horizon, S = save";
-        Width = 1420; Height = 1000;
+        Width = 1480; Height = 1000;
         StartPosition = FormStartPosition.CenterScreen;
         KeyPreview = true;
 
@@ -90,15 +92,16 @@ class RefEditor : Form
         Button bg = new Button(); bg.Text = "GROUND (G)"; bg.SetBounds(1060, Height - 78, 112, 28);
         bg.Click += delegate { GroundRef(); }; Controls.Add(bg);
 
-        // TREE LEVEL SLIDER above the photo: AUTO / LOW / MED / HIGH - a bar, not a cycle.
-        Label lt = new Label(); lt.Text = "trees:"; lt.SetBounds(700, 6, 44, 20);
+        // TREE LEVEL slider lives in the BOTTOM ROW with the buttons (that is where the controls
+        // are; it was reported as missing when it sat at the top).
+        Label lt = new Label(); lt.Text = "trees:"; lt.SetBounds(1180, Height - 74, 44, 20);
         lt.Font = new Font("Segoe UI", 9F, FontStyle.Bold); Controls.Add(lt);
         tbTrees = new TrackBar();
-        tbTrees.SetBounds(744, 2, 190, 30);
+        tbTrees.SetBounds(1222, Height - 82, 190, 30);
         tbTrees.Minimum = 0; tbTrees.Maximum = 3; tbTrees.TickFrequency = 1;
         tbTrees.SmallChange = 1; tbTrees.LargeChange = 1;
         Controls.Add(tbTrees);
-        lblTreeLevel = new Label(); lblTreeLevel.SetBounds(938, 8, 70, 20);
+        lblTreeLevel = new Label(); lblTreeLevel.SetBounds(1416, Height - 74, 70, 20);
         lblTreeLevel.Font = new Font("Segoe UI", 9F, FontStyle.Bold); Controls.Add(lblTreeLevel);
         tbTrees.ValueChanged += delegate
         {
@@ -106,8 +109,26 @@ class RefEditor : Form
             if (!loadingRef) SetTreeLevel(tbTrees.Value);
         };
 
-        lblInfo = new Label(); lblInfo.SetBounds(1286, Height - 74, Width - 1306, 44);
-        lblInfo.Anchor = AnchorStyles.Top | AnchorStyles.Right | AnchorStyles.Bottom;
+        // hint + count live at the TOP above the photo (the bottom row is for controls)
+        // ...and the SKY slider joins it up here: AUTO / LOW / MED / HIGH = how much sky was
+        // above the line (HIGH = a true open-sky boundary; LOW = threading/behind the canopy).
+        Label lk = new Label(); lk.Text = "sky:"; lk.SetBounds(700, 6, 34, 20);
+        lk.Font = new Font("Segoe UI", 9F, FontStyle.Bold); Controls.Add(lk);
+        tbSky = new TrackBar();
+        tbSky.SetBounds(738, 0, 170, 30);
+        tbSky.Minimum = 0; tbSky.Maximum = 3; tbSky.TickFrequency = 1;
+        tbSky.SmallChange = 1; tbSky.LargeChange = 1;
+        Controls.Add(tbSky);
+        lblSkyLevel = new Label(); lblSkyLevel.SetBounds(912, 8, 60, 20);
+        lblSkyLevel.Font = new Font("Segoe UI", 9F, FontStyle.Bold); Controls.Add(lblSkyLevel);
+        tbSky.ValueChanged += delegate
+        {
+            lblSkyLevel.Text = TreeName(tbSky.Value);
+            if (!loadingRef) SetSkyLevel(tbSky.Value);
+        };
+
+        lblInfo = new Label(); lblInfo.SetBounds(984, 6, Width - 1004, 44);
+        lblInfo.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         lblInfo.Text = Hint();
         Controls.Add(lblInfo);
 
@@ -129,12 +150,11 @@ class RefEditor : Form
         RefreshList();
     }
 
-    const int REF_CAP = 80;
+    const int REF_CAP = 150;
 
     string Hint()
     {
-        return "refs " + list.Items.Count + "/" + REF_CAP +
-            "  |  WHITE dot = height | CYAN dot = tilt | trees slider | S save | G ground | Del delete | A/D prev/next";
+        return "refs " + list.Items.Count + "/" + REF_CAP + "   |   S save  |  G ground  |  Del delete  |  A/D prev/next";
     }
 
     void MarkDirty()
@@ -197,11 +217,14 @@ class RefEditor : Form
                 }
             }
             Refresh();
-            // reflect the tree level in the SLIDER (guarded so it does not rename during load)
+            // reflect BOTH sliders (guarded so they do not rename during load)
             int lv = TreeLevelOf(Path.GetFileName(f));
+            int sv = SkyLevelOf(Path.GetFileName(f));
             loadingRef = true;
             tbTrees.Value = lv;
             lblTreeLevel.Text = TreeName(lv);
+            tbSky.Value = sv;
+            lblSkyLevel.Text = TreeName(sv);
             loadingRef = false;
             dirty = false;
             if (lblSaved != null) { lblSaved.Text = "SAVED \u2713"; lblSaved.ForeColor = Color.FromArgb(0, 220, 80); }
@@ -320,16 +343,57 @@ class RefEditor : Form
             string ohz = Path.ChangeExtension(f, ".hzn");
             if (File.Exists(ohz)) File.Move(ohz, Path.ChangeExtension(nf, ".hzn"));
             try { img = new Bitmap(nf); } catch { }
-            lblSaved.Text = "trees = " + (lv == 0 ? "AUTO" : (lv == 1 ? "LOW" : (lv == 2 ? "MED" : "HIGH")));
+            lblSaved.Text = "trees = " + TreeName(lv);
             lblSaved.ForeColor = Color.FromArgb(255, 170, 60);
-            string nowName = Path.GetFileName(nf);
-            int i2 = list.SelectedIndex;
-            RefreshList();
-            int ix = list.Items.IndexOf(nowName);
-            if (ix >= 0) list.SelectedIndex = ix;
-            else if (i2 < list.Items.Count) list.SelectedIndex = i2;
+            ReSelect(nf);
         }
         catch (Exception ex) { lblInfo.Text = "tree mark failed: " + ex.Message; }
+    }
+
+    static int SkyLevelOf(string bn)
+    {
+        string s = bn.ToLowerInvariant();
+        if (s.IndexOf("-sky-high") >= 0) return 3;
+        if (s.IndexOf("-sky-med") >= 0) return 2;
+        if (s.IndexOf("-sky-low") >= 0) return 1;
+        return 0;
+    }
+
+    static string StripSky(string bn)
+    {
+        return bn.Replace("-sky-high", "").Replace("-sky-med", "").Replace("-sky-low", "");
+    }
+
+    void SetSkyLevel(int lv)
+    {
+        string f = CurPath();
+        if (f == null) return;
+        try
+        {
+            string bn = Path.GetFileNameWithoutExtension(f);
+            if (SkyLevelOf(bn) == lv) return;
+            string nb = StripSky(bn) + (lv == 0 ? "" : (lv == 1 ? "-sky-low" : (lv == 2 ? "-sky-med" : "-sky-high")));
+            string nf = Path.Combine(dir, nb + ".png");
+            if (img != null) { img.Dispose(); img = null; }
+            File.Move(f, nf);
+            string ohz = Path.ChangeExtension(f, ".hzn");
+            if (File.Exists(ohz)) File.Move(ohz, Path.ChangeExtension(nf, ".hzn"));
+            try { img = new Bitmap(nf); } catch { }
+            lblSaved.Text = "sky = " + TreeName(lv);
+            lblSaved.ForeColor = Color.FromArgb(255, 170, 60);
+            ReSelect(nf);
+        }
+        catch (Exception ex) { lblInfo.Text = "sky mark failed: " + ex.Message; }
+    }
+
+    void ReSelect(string nf)
+    {
+        string nowName = Path.GetFileName(nf);
+        int i2 = list.SelectedIndex;
+        RefreshList();
+        int ix = list.Items.IndexOf(nowName);
+        if (ix >= 0) list.SelectedIndex = ix;
+        else if (i2 < list.Items.Count) list.SelectedIndex = i2;
     }
 
     void GroundRef()
