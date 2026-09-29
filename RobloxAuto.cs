@@ -7967,7 +7967,9 @@ ComboBox cmbPadThermal;
                                 (1000f / Math.Max(1f, _detMs)).ToString("0") + " fps ceiling)  [grab " +
                                 _detGrabMs.ToString("0.0") + "ms  map " + _detMapMs.ToString("0.0") + "ms  stage3 " +
                                 _detScoreMs.ToString("0.0") + "ms  rest " +
-                                Math.Max(0f, _detMs - _detGrabMs - _detMapMs - _detScoreMs).ToString("0.0") + "ms]");
+                                Math.Max(0f, _detMs - _detGrabMs - _detMapMs - _detScoreMs).ToString("0.0") + "ms" +
+                                "  | pub " + _stPub + " coast " + _stCoast + " disc " + _stDisc + "]");
+                            _stPub = 0; _stCoast = 0; _stDisc = 0;
                         }
                     }
                     // SETTLE first: the drone spawns in odd poses (sometimes under the map), so one
@@ -10171,6 +10173,7 @@ ComboBox cmbPadThermal;
     float _hudCorrPx = 2200f, _hudLockPull = 0.30f, _hudModelDrive = 0.45f;
     int _sideTick = 0;                    // the Hough side pass runs every 3rd detector pass
     float _detMs = 0f; long _detLogAt = 0; // detector pass time (throughput read-out)
+    int _stPub = 0, _stCoast = 0, _stDisc = 0;   // outcomes since the last cadence log (main path)
     float _detGrabMs = 0f, _detMapMs = 0f, _detScoreMs = 0f; // sub-stage read-out (grab / map / stage-3)
     float _sideRoll = 0f, _sidePitch = 0f, _sideConf = 0f;
     long _sideAt = 0;                     // when the side estimate was last computed (freshness gate)
@@ -11623,6 +11626,7 @@ ComboBox cmbPadThermal;
                     // high-priority case: all three quality strips agree -> publish more confidently
                     float vconf = 0.55f + 0.08f * (_hudColAgree - 2);
                     HudPublish(theta, vPitch, 0.30f, vconf, 900f, 9f);
+                    _stPub++;
                     _hudDetValid = true; _hudDetAt = Environment.TickCount;
                     _hnOk = true; _hnTheta = theta; _hnM = mFin; _hnK = _hudColK;
                     if (Environment.TickCount - _hudLogAt >= 2000)
@@ -11639,10 +11643,39 @@ ComboBox cmbPadThermal;
                     Log("horizon det: weak-frame colvote rejected - " + ((int)(Math.Abs(_hudColK - _hnK) * HD_DS)) +
                         "px from the last line (limit " + ((int)(VoteLastAllowed() * HD_DS)) + "px) - too far, too fast");
                 }
+                // PARSER RESCUE (publish-rate work): when the pixel scorer is weak AND the colvote is
+                // not usable (agree < 2 - common mid-maneuver), a confident section-parser line is
+                // the only remaining witness. Publishing it SOFTLY (conf <= 0.55) keeps corrections
+                // flowing through maneuvers instead of coasting for seconds - the fusion weighs it
+                // by confidence, so a bad one trims instead of yanking.
+                if (!coldMedian && parserOn && scoreS >= 0.18f)
+                {
+                    float expectedK = _hnK + _expK;
+                    if (!_hnOk || Math.Abs(kS - expectedK) <= VoteLastAllowed() * 1.3f)
+                    {
+                        float pPitch = -kS * HD_DS;
+                        float pconf = 0.25f + scoreS;
+                        if (pconf > 0.55f) pconf = 0.55f;
+                        HudPublish(thetaS, pPitch, 0.35f, pconf, 900f, 10f);
+                        _stPub++;
+                        _hudDetValid = true; _hudDetAt = Environment.TickCount;
+                        _hnOk = true; _hnTheta = thetaS;
+                        _hnM = (float)Math.Tan(thetaS * Math.PI / 180.0);
+                        _hnK = kS;
+                        if (Environment.TickCount - _hudLogAt >= 2000)
+                        {
+                            _hudLogAt = Environment.TickCount;
+                            Log("horizon det: WEAK frame (sep " + bestScore.ToString("0.0") + ") - parser locks at " +
+                                ((int)pPitch) + "px (score " + scoreS.ToString("0.00") + ")");
+                        }
+                        return;
+                    }
+                }
                 // a scorer miss during the cold start must NOT wipe the median's quick-grab line
                 if (!coldMedian)
                 {
                     _hudDetValid = false;
+                    _stCoast++;
                     if (Environment.TickCount - _hudLogAt >= 2000)
                     { _hudLogAt = Environment.TickCount; Log("horizon det: no usable sky/ground separation (sep " + bestScore.ToString("0.0") + ") - coasting"); }
                 }
@@ -11654,6 +11687,7 @@ ComboBox cmbPadThermal;
                 if (!coldMedian)
                 {
                     _hudDetValid = false;
+                    _stDisc++;
                     if (Environment.TickCount - _hudLogAt >= 2000)
                     {
                         _hudLogAt = Environment.TickCount;
@@ -11669,6 +11703,42 @@ ComboBox cmbPadThermal;
             float pVar = onsetSd * onsetSd * HD_DS * HD_DS / Math.Max(1, onN)
                        + (KSTEP * HD_DS) * (KSTEP * HD_DS) * 0.25f + 4f;
             if (pVar > 4000f) pVar = 4000f;
+            // VOTE CONTRADICTION GUARD (hwatch evidence 13:42:54: published 144px vs colvote
+            // -377px on a low-altitude field frame - the VOTE was the true haze boundary and the
+            // pixel winner sat on a trench). When the vote strongly disagrees:
+            //  - 3/3 strips agree AND the vote matches the model's expectation -> publish the VOTE
+            //    line instead (verified right on the frames we can check);
+            //  - otherwise cap the confidence so a wrong ground lock trims instead of yanks.
+            if (_hudColOk && _hudColAgree >= 2)
+            {
+                float votePitch = -_hudColK * HD_DS;
+                if (Math.Abs(votePitch - pitchPerp) > 120f)
+                {
+                    float expP = -(_hnK + _expK) * HD_DS;
+                    if (_hudColAgree >= 3 && (!_hnOk || Math.Abs(votePitch - expP) <= VoteLastAllowed() * HD_DS * 1.3f))
+                    {
+                        if (Environment.TickCount - _hudLogAt >= 2000)
+                        {
+                            _hudLogAt = Environment.TickCount;
+                            Log("horizon det: VOTE OVERRIDES the pixel line (" + ((int)pitchPerp) + "px -> " +
+                                ((int)votePitch) + "px, vote agrees 3/3)");
+                        }
+                        kFinal = _hudColK;
+                        pitchPerp = votePitch;
+                        if (conf > 0.70f) conf = 0.70f;
+                    }
+                    else
+                    {
+                        conf *= 0.45f;
+                        if (Environment.TickCount - _hudLogAt >= 2000)
+                        {
+                            _hudLogAt = Environment.TickCount;
+                            Log("horizon det: colvote contradicts the published line by " +
+                                ((int)Math.Abs(votePitch - pitchPerp)) + "px (agree " + _hudColAgree + "/3) - confidence trimmed");
+                        }
+                    }
+                }
+            }
             // STICK SAY ON THE MAIN PATH (field): the model predicted where the line should be
             // (last fix + accumulated stick motion). A measurement contradicting that beyond the
             // envelope is SUSPECT until it persists: the first frame gets its confidence cut; a
@@ -11703,6 +11773,7 @@ ComboBox cmbPadThermal;
             }
             float rsd = 0.4f + 4f * (1f - conf);
             HudPublish(theta, pitchPerp, skyFrac2, conf, pVar, rsd * rsd);
+            _stPub++;
 
             // remember it in NORMAL FORM - this is what the sky model learns from next frame
             _hnOk = true; _hnTheta = theta; _hnM = mFin; _hnK = kFinal;
