@@ -292,7 +292,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     bool _hugLogged = false;
     NumericUpDown numPitch, numRoll, numBias, numAccel, numFov, numManeuver, numRefDist, numAxisW, numMsTau, numSkyMin, numSkyTex;
     Button btnReloadRefs, btnCapRef;
-    NumericUpDown numDpp, numShear, numLen, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numSpread, numSpreadAccel, numTreeDrop, numMinSpread;
+    NumericUpDown numDpp, numShear, numLen, numRollOff, numPitOff, numThr, numPitStick, numRollStick, numTexW, numAccPitch, numAccRoll, numFineP, numRungTilt, numMaxTilt, numSpread, numSpreadAccel, numTreeDrop, numMinSpread, numRollGain, numPitchGain;
+    System.Windows.Forms.Timer _gainTick; bool _updGains = false;
     bool _hudCapturable = false;                    // settings "hudCap": allow capturing the monitor HUD (diagnostics)
     bool _hudOn = true;                            // draw the FPV/UAV HUD while flying
     bool _nightVision = false;                     // invert the whole display (Magnifier color effect)
@@ -959,6 +960,39 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         numSpreadAccel.ValueChanged += delegate { _hudSpreadAccel = (float)numSpreadAccel.Value; SaveCfg(); };
         numTreeDrop.ValueChanged += delegate { _hudTreeDrop = (float)numTreeDrop.Value; SaveCfg(); };
         y += 28;
+
+        // LIVE LEARNED VALUES (field request): the fine-tune gains the learner keeps adjusting are
+        // shown here updating live (2.5 Hz). Type a value to take over manually for this flight -
+        // the flight reset returns control to the learner on the next deploy.
+        numRollGain = MkTune(x, y, "roll gain", (decimal)_kfRollGain, 0.15m, 3m, 0.01m, 2);
+        numPitchGain = MkTune(x + 168, y, "pitch gain", (decimal)_kfPitGain, 0.15m, 3m, 0.01m, 2);
+        numRollGain.ValueChanged += delegate { if (!_updGains) _kfRollGain = (float)numRollGain.Value; };
+        numPitchGain.ValueChanged += delegate { if (!_updGains) _kfPitGain = (float)numPitchGain.Value; };
+        y += 28;
+        _gainTick = new System.Windows.Forms.Timer();
+        _gainTick.Interval = 400;
+        _gainTick.Tick += delegate
+        {
+            try
+            {
+                _updGains = true;
+                if (!numRollGain.Focused)
+                {
+                    decimal rg = (decimal)Math.Round(_kfRollGain, 2);
+                    if (rg < 0.15m) rg = 0.15m; if (rg > 3m) rg = 3m;
+                    if (numRollGain.Value != rg) numRollGain.Value = rg;
+                }
+                if (!numPitchGain.Focused)
+                {
+                    decimal pg = (decimal)Math.Round(_kfPitGain, 2);
+                    if (pg < 0.15m) pg = 0.15m; if (pg > 3m) pg = 3m;
+                    if (numPitchGain.Value != pg) numPitchGain.Value = pg;
+                }
+                _updGains = false;
+            }
+            catch { _updGains = false; }
+        };
+        _gainTick.Start();
 
         numMinSpread = MkTune(x, y, "min colour", (decimal)_hudMinSpread, 0m, 40m, 1m, 0);
         numTexW = MkTune(x + 168, y, "texture", (decimal)_hudTexW, 0m, 3m, 0.1m, 1);
