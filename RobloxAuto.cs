@@ -2378,33 +2378,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 InvalidateOcr();
             }
 
-            // Zoom IN FIRST - found to beat zooming out: the Base label separates from the other
-            // map icons instead of piling up with them, so it reads far more reliably. Do NOT bail
-            // early on "no change": the wheel redraw is often too subtle for Signature/WaitChange to
-            // see. Over-scrolling is harmless - the map just clamps at its own max zoom.
-            for (int z = 1; z <= 10 && !sawBase && Alive(g); z++)
-            {
-                List<Hit> bh = FindPhraseAll("Base", null, OcrWordsWhiten());
-                if (bh.Count == 0) bh = FindPhraseAll("Base", null, OcrWords());
-                if (bh.Count > 0)
-                {
-                    sawBase = true;
-                    baseX = bh[0].X; baseY = bh[0].Y;
-                    Log("   Base label is visible at (" + baseX + "," + baseY + ") (after " + (z - 1) + " zoom-ins)");
-                    break;
-                }
-                Log("   Base not visible - zooming in (" + z + "/10)");
-                // the wheel goes to the window under the cursor, and the game must be
-                // in front or the wheel is swallowed - so focus, drift, then scroll
-                FocusRoblox();
-                MoveOverGameSoft(z);
-                ScrollIn(2);
-                Thread.Sleep(140);
-            }
-
-            // If zooming IN did not reveal it, try zooming back OUT (the Base can be inside a clump
-            // that only separates when pulled out). Fewer steps - this is the fallback now.
-            for (int z = 1; z <= 6 && !sawBase && Alive(g); z++)
+            // Pull the map BACK first (zoom OUT): the Base sits at the edge of the map and pulling
+            // back brings the label away from the border, where it is cut off or overlapped by a
+            // POINT pin. Over-scrolling is harmless - the map clamps at its own max zoom.
+            // Every burst is verified against a cheap screen signature. If the map never changes,
+            // say so in the log: "the wheel did nothing" must never be a silent failure again.
+            int[] zsig = Signature();
+            int zQuietOut = 0;
+            for (int z = 1; z <= 10 && !sawBase && Alive(g) && zQuietOut < 4; z++)
             {
                 List<Hit> bh = FindPhraseAll("Base", null, OcrWordsWhiten());
                 if (bh.Count == 0) bh = FindPhraseAll("Base", null, OcrWords());
@@ -2415,12 +2396,46 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     Log("   Base label is visible at (" + baseX + "," + baseY + ") (after " + (z - 1) + " zoom-outs)");
                     break;
                 }
-                Log("   Base still not visible - zooming out (" + z + "/6)");
+                Log("   Base not visible - pulling the map back (" + z + "/10)");
+                // the wheel goes to the window under the cursor, and the game must be
+                // in front or the wheel is swallowed - so focus, drift, then scroll
+                FocusRoblox();
+                MoveOverGameSoft(z);
+                ScrollOut(2);
+                Thread.Sleep(180);
+                int[] znow = Signature();
+                if (DiffPct(zsig, znow) < 1.0) zQuietOut++; else zQuietOut = 0;
+                zsig = znow;
+            }
+            if (zQuietOut >= 4)
+                Log("   the map stopped reacting after " + zQuietOut + " bursts (already at max zoom, or the wheel is not landing)");
+
+            // Then the other way - the Base can be inside a clump that needs pulling IN to separate.
+            // The Base labels separate from POINT pins when zoomed in, so this pass often reads best.
+            int zQuietIn = 0;
+            for (int z = 1; z <= 6 && !sawBase && Alive(g) && zQuietIn < 3; z++)
+            {
+                List<Hit> bh = FindPhraseAll("Base", null, OcrWordsWhiten());
+                if (bh.Count == 0) bh = FindPhraseAll("Base", null, OcrWords());
+                if (bh.Count > 0)
+                {
+                    sawBase = true;
+                    baseX = bh[0].X; baseY = bh[0].Y;
+                    Log("   Base label is visible at (" + baseX + "," + baseY + ") (after " + (z - 1) + " zoom-ins)");
+                    break;
+                }
+                Log("   Base still not visible - coming back in (" + z + "/6)");
                 FocusRoblox();
                 MoveOverGameSoft(z + 10);
-                ScrollOut(3);
-                Thread.Sleep(140);
+                ScrollIn(3);
+                Thread.Sleep(180);
+                int[] znow2 = Signature();
+                if (DiffPct(zsig, znow2) < 1.0) zQuietIn++; else zQuietIn = 0;
+                zsig = znow2;
             }
+            // both directions dead = the wheel is not reaching the game at all; the log must say it
+            if (zQuietOut >= 4 && zQuietIn >= 3)
+                Log("   WARNING: the map never reacted to the wheel (both directions quiet) - zooming is not working, panning instead");
 
             // THEN pan, but only gently - the drag is clamped away from the screen edges so it can
             // never yank the pointer to the top of the window (which dragged the Roblox window
@@ -5060,9 +5075,20 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         int cx = pb.Width / 2, cy = pb.Height / 2;
         int sx = (step % 2 == 0) ? 1 : -1;
         int sy = (step % 3 == 0) ? 1 : -1;
-        int x = cx + sx * (40 + (step * 37) % 160);
-        int y = cy + sy * (30 + (step * 23) % 120);
-        if (Bounds.Contains(x, y)) { x = cx - sx * 90; y = cy - sy * 70; }
+        // A few px of jitter so two calls never land on the exact same pixel: the game ignores the
+        // wheel unless it has seen real pointer movement first.
+        int x = cx + sx * (40 + (step * 37) % 160) + _rng.Next(-6, 7);
+        int y = cy + sy * (30 + (step * 23) % 120) + _rng.Next(-6, 7);
+        // NEVER park on our own panel - the wheel goes to the window under the cursor, so a scroll
+        // aimed at the game would be swallowed by us. The old nudge could still land inside it;
+        // try real quadrant points instead.
+        if (Bounds.Contains(x, y))
+        {
+            int[] px = { pb.Width / 4, pb.Width * 3 / 4, pb.Width / 4, pb.Width * 3 / 4 };
+            int[] py = { pb.Height * 3 / 4, pb.Height * 3 / 4, pb.Height / 4, pb.Height / 4 };
+            for (int i = 0; i < px.Length; i++)
+                if (!Bounds.Contains(px[i], py[i])) { x = px[i]; y = py[i]; break; }
+        }
         MoveTo(x, y);
     }
 
@@ -5086,11 +5112,14 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         ParkOffPanel();
     }
 
+    // Measured on the real map (1920x1080, before/after screen diff over 50%): wheel data +120 is
+    // wheel-up and the game reads it as zoom OUT. The old labels were the other way round, so
+    // "zooming in (z/10)" was actually pulling the map back. Signs are honest now.
     static void ScrollOut(int notches)
     {
         INPUT[] inp = new INPUT[1];
         inp[0].type = IN_MOUSE;
-        inp[0].U.mi.data = (uint)(-120 * notches);
+        inp[0].U.mi.data = (uint)(120 * notches);
         inp[0].U.mi.flags = MV_WHEEL;
         SendInput(1, inp, Marshal.SizeOf(typeof(INPUT)));
     }
@@ -5156,13 +5185,12 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         return false;
     }
 
-    // Positive wheel = zoom IN. The Base is easier to find zoomed IN than zoomed out (the label
-    // separates from the other map icons instead of piling up with them).
+    // wheel data -120 is wheel-down = zoom IN (measured, see ScrollOut).
     static void ScrollIn(int notches)
     {
         INPUT[] inp = new INPUT[1];
         inp[0].type = IN_MOUSE;
-        inp[0].U.mi.data = (uint)(120 * notches);
+        inp[0].U.mi.data = (uint)(-120 * notches);
         inp[0].U.mi.flags = MV_WHEEL;
         SendInput(1, inp, Marshal.SizeOf(typeof(INPUT)));
     }
@@ -9745,6 +9773,49 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _selfTest = true;
             RobloxAuto st = new RobloxAuto();
             st.SelfTest();
+            return;
+        }
+        // --click x y : one real click through the normal click path (focus + human move), for
+        // driving the game from a terminal while testing.
+        if (args.Length > 2 && args[0] == "--click")
+        {
+            _selfTest = true;
+            RobloxAuto st = new RobloxAuto();
+            FocusRoblox(); Thread.Sleep(300);
+            st.ClickLogged(int.Parse(args[1]), int.Parse(args[2]), "test click");
+            Thread.Sleep(500);
+            return;
+        }
+        // --wheel n : focus, drift over the game like the map step does, then one wheel burst.
+        // Logs whether the screen actually changed, so "the wheel did nothing" is never a guess.
+        // --wheel 0 is the control: it does everything except the wheel.
+        if (args.Length > 1 && args[0] == "--wheel")
+        {
+            _selfTest = true;
+            RobloxAuto st = new RobloxAuto();
+            int n = int.Parse(args[1]);
+            FocusRoblox(); Thread.Sleep(250);
+            st.MoveOverGameSoft(1); Thread.Sleep(250);
+            st.MoveOverGameSoft(3); Thread.Sleep(250);   // a second, different point: guarantees real motion
+            int[] sig1 = Signature();
+            ScrollIn(n);
+            Thread.Sleep(500);
+            int[] sig2 = Signature();
+            IntPtr rw = RobloxWindow();
+            st.Log("test wheel " + n + ": screenchange=" + DiffPct(sig1, sig2).ToString("0.0") + "%  fg=" +
+                   (GetForegroundWindow() == rw ? "roblox" : "OTHER") + "  cursor=" + Cursor.Position.X + "," + Cursor.Position.Y);
+            return;
+        }
+        // --auto : run the real AUTO flow exactly as the button/pad trigger does, then exit.
+        // Lets a test run the whole thing from a terminal and read the log.
+        if (args.Length > 0 && args[0] == "--auto")
+        {
+            _selfTest = true;
+            RobloxAuto st = new RobloxAuto();
+            st.AutoRun();
+            int waited = 0;
+            while (st._running && waited < 240000) { Thread.Sleep(500); waited += 500; }
+            st.Log("test auto: finished after " + (waited / 1000.0).ToString("0.0") + "s  deployed=" + st._autoDeployed);
             return;
         }
         Application.Run(new RobloxAuto());
