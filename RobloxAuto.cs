@@ -7021,6 +7021,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 long lastDet = 0;      // horizon measurement cadence (faster than the slow path)
                 int outHits = 0;   // consecutive MENU reads - two in a row back the HUD down
                 bool unfocusedLogged = false;   // one-time "game not focused" note
+                long unfocusAt = 0;             // when the tab-out started (hold expires after 20s)
+                bool unfocusHoldLogged = false; // one-time "hold expired" note
 
                 while (_rfRun)
                 {
@@ -7067,13 +7069,23 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         // Classify NOTHING and hold the last state - tabbing out to another monitor
                         // used to feed the OCR a browser/terminal whose words looked like a menu and
                         // dropped the HUD.
-                        if (!RobloxFocused())
+                        // TAB-OUT HOLD EXPIRES (field, 01:29-01:38: tabbed out at the menu and the
+                        // HUD/flight state stayed on forever because the hold never ended). A quick
+                        // alt-tab still holds the state for 20s; after that the screen is evaluated
+                        // again, so a menu drops the HUD as it should. Refocusing resets it all.
+                        if (!RobloxFocused() && (unfocusAt == 0 || Environment.TickCount - unfocusAt < 20000))
                         {
+                            if (unfocusAt == 0) unfocusAt = Environment.TickCount;
                             if (!unfocusedLogged) { Log("   RF: game not focused - holding the HUD state"); unfocusedLogged = true; }
                         }
                         else
                         {
-                            unfocusedLogged = false;
+                            if (unfocusedLogged && !unfocusHoldLogged)
+                            {
+                                unfocusHoldLogged = true;
+                                Log("   RF: unfocused past 20s - evaluating the screen again so a menu can drop the HUD");
+                            }
+                            unfocusedLogged = false; unfocusAt = 0; unfocusHoldLogged = false;
                             int fs = ReadFlightSecs();   // FLIGHT (MAVIC) / FLY (FPV) clock
                             bool corner = CornerLinked();       // top-right "LINK LIVE" / "RC LIVE"
                             bool droneEv = fs >= 0 || corner || DroneKeyword();
