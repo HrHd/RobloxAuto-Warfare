@@ -255,6 +255,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     int _hudBigRn = 0, _hudBigRat = 0, _hudBigRsg = 0;   // consecutive large ROLL innovations (persistent-pull gate)
     int _hudBigPn = 0, _hudBigPat = 0, _hudBigPsg = 0;   // consecutive large PITCH innovations
     bool _hudParserOn = true;                     // dial "parser" (settings.ini hudParser): 1 = on
+    bool _hudRec = false;                          // dial "hudRec": record working frames for the offline replay harness
+    string _recDir = null; int _recN = 0; int _recTick = 0;
     float _hudParserScore = 0f;                   // last section-parser confidence (log only)
     float _hudParserK = 0f;                       // last parser line (working px), log only
     float _hudTreeBelow = 0f;                     // parser vote: fraction of sections under the line that are canopy
@@ -1998,13 +2000,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // read as a drone, popping the HUD up in the middle of a reconnect where it makes no sense.
         // The HUD can still be started by the flow (Deploy As Drone) - this only silences the SCAN.
         _hudCooldownUntil = unchecked(Environment.TickCount + 20000);
-        StopRfWatch();
-        // KILL THE HUD IMMEDIATELY (field): stopping the watch used to FREEZE the HUD on screen -
-        // the menu-detection that would have dropped it was the very loop being stopped. A quick
-        // reconnect now visibly drops the drone HUD before the relaunch begins.
-        try { OverlayHub.I.SetHud(false, "", "", "", 0f, 0f, false, 0f, 0f); } catch { }
-        try { OverlayHub.I.SetFlight(false, 0f, 0); } catch { }
-        try { if (_hudForm != null) _hudForm.Visible = false; } catch { }
+        StopRfWatch();   // stops the loop AND kills the HUD display (SetHud/SetFlight off, form hidden)
         Log("   reconnect: HUD detect paused for 20s");
 
         FindServer();   // always re-read, so we rejoin the server we are on right now
@@ -5714,8 +5710,11 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         {
             // Tell the OBS overlay too, not just the on-monitor form - otherwise /state keeps
             // reporting hud:true and the stream stays stuck on the last HUD frame instead of
-            // falling back to the CLI terminal.
+            // falling back to the CLI terminal. The FLIGHT state is re-asserted off here as well:
+            // an in-flight RF-loop iteration can land one stale SetFlight(true) after StopRfWatch,
+            // and this 50Hz watchdog is what clears it (the reconnect/STOP HUD flash, field).
             OverlayHub.I.SetHud(false, "", "", "", 0f, 0f, false, 0f, 0f);
+            OverlayHub.I.SetFlight(false, 0f, 0);
             if (_hudForm != null) StopHud();
             return;
         }
@@ -6458,6 +6457,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             else if (k == "hudSkyMin") _hudSkyMin = ParseF(v) / 100f;
             else if (k == "hudSkyTex") { _hudSkyTex = ParseF(v); if (_hudSkyTex < 0f) _hudSkyTex = 0f; if (_hudSkyTex > 60f) _hudSkyTex = 60f; }
             else if (k == "hudParser") _hudParserOn = ParseF(v) != 0f;
+            else if (k == "hudRec") _hudRec = ParseF(v) != 0f;
             else if (k == "physLog") _physLog = v != "0";
             else if (k == "hudSettleMs") { _hudSettleMs = (int)ParseF(v); if (_hudSettleMs < 0) _hudSettleMs = 0; if (_hudSettleMs > 60000) _hudSettleMs = 60000; }
             else if (k == "hudColdMs") { _hudColdMs = (int)ParseF(v); if (_hudColdMs < 0) _hudColdMs = 0; if (_hudColdMs > 60000) _hudColdMs = 60000; }
@@ -6539,6 +6539,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             "hudRef=" + (_refDist * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudAxisW=" + _hudAxisW.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudParser=" + (_hudParserOn ? "1" : "0"),
+            "hudRec=" + (_hudRec ? "1" : "0"),
             "hudMsTau=" + _hudMsTau.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSkyMin=" + (_hudSkyMin * 100f).ToString(System.Globalization.CultureInfo.InvariantCulture),
             "hudSkyTex=" + _hudSkyTex.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -7245,8 +7246,9 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     if (lvl > 1f) lvl = 1f;
                     // MAVIC is an HD digital feed - no analog RF static on it
                     bool staticOn = !_hudStyleUav;
-                    // report the REAL feed state - it used to always say "flight:true" even after
-                    // the drone view was lost, so the OBS side never saw the feed go away
+                    // if the watch was stopped while this iteration was running, DO NOT write the
+                    // stale state back - that final write was the HUD flash on reconnect/STOP.
+                    if (!_rfRun) break;
                     OverlayHub.I.SetFlight(shown, staticOn ? lvl : 0f, secs);
 
                     // only touch the window when something actually changed; the 180ms blink
@@ -7355,6 +7357,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                                 " deg, pitch " + _hudFPitch.ToString("0") + "px");
                         }
                     }
+                    if (!_rfRun) break;
                     _hudShown = shown;   // HudTick reads these
                     _hudSecs = secs;
                     }
@@ -9448,6 +9451,40 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         return Math.Abs(vk - expected) <= VoteLastAllowed();
     }
 
+    // FLIGHT RECORDER (dial hudRec): saves the working-resolution frame (320x180, the exact image
+    // every detector stage reads) every 8th detector call, and ALWAYS on a publish (name ends "p").
+    // These folders are the offline replay harness input: whole flights can be re-scored run after
+    // run, so tuning stops being one-flight-at-a-time.
+    void RecFrame(int evt)
+    {
+        try
+        {
+            if (!_hudRec || _hdR == null) return;
+            if (_recDir == null)
+            {
+                _recDir = Path.Combine(System.Windows.Forms.Application.StartupPath, "hudrec", DateTime.Now.ToString("HHmmss"));
+                System.IO.Directory.CreateDirectory(_recDir);
+            }
+            if (evt == 0) { _recTick++; if ((_recTick & 7) != 0) return; }
+            _recN++;
+            using (Bitmap b = new Bitmap(_hdW, _hdH, System.Drawing.Imaging.PixelFormat.Format24bppRgb))
+            {
+                for (int y = 0; y < _hdH; y++)
+                    for (int x = 0; x < _hdW; x++)
+                    {
+                        int i = y * _hdW + x;
+                        int r = (int)_hdR[i], g = (int)_hdG[i], bl = (int)_hdB[i];
+                        if (r < 0) r = 0; if (r > 255) r = 255;
+                        if (g < 0) g = 0; if (g > 255) g = 255;
+                        if (bl < 0) bl = 0; if (bl > 255) bl = 255;
+                        b.SetPixel(x, y, Color.FromArgb(r, g, bl));
+                    }
+                b.Save(Path.Combine(_recDir, _recN.ToString("D5") + (evt == 1 ? "p" : "") + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
+        }
+        catch { }
+    }
+
     void DetectHorizon()
     {
         try
@@ -9467,6 +9504,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             if (!HudBuildMaps(px, W, H)) { _hudDetValid = false; return; }
             int dw = _hdW, dh = _hdH, N = dw * dh;
             float cx = dw * 0.5f, cy = dh * 0.5f;
+            RecFrame(0);   // replay harness: periodic working frames (every 8th detector call)
 
             // ---- FRAME QUALITY: a frame that is one flat tone has no horizon in it --------------
             {
@@ -10103,6 +10141,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
 
             _hudDetValid = true;
             _hudDetAt = Environment.TickCount;
+            RecFrame(1);   // replay harness: always keep published frames
             // PASSIVE VOTE TEST: if the 3-column vote strongly disagrees with the line that is
             // about to be published, keep the screenshot in hwatch\ for offline review.
             {
