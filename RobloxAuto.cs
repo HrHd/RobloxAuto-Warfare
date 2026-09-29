@@ -374,36 +374,57 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         try { SetWindowDisplayAffinity(h, 0x00000011); } catch { }   // WDA_EXCLUDEFROMCAPTURE
     }
 
-    // ---- night vision ----
-    // There is no way for an overlay window to recolour the game pixels behind it, so a true
-    // invert is done with the Windows Magnification API: a colour matrix applied to the whole
-    // display. It also shows up in screen capture, so OBS records the inverted feed.
+    // ---- thermal / night vision (PER-WINDOW) ----
+    // The game pixels are recoloured with the Windows Magnification API. The FULLSCREEN call
+    // (MagSetFullscreenColorEffect) is desktop-wide - it has no monitor parameter, which is why
+    // the old invert tinted EVERY monitor. Instead a MAGNIFIER CONTROL window is pinned over the
+    // Roblox window only, its source filter is set to INCLUDE just that window, and the colour
+    // matrix is applied to the control (MagSetColorEffect). Result: the thermal look covers the
+    // game and nothing else. Screen capture still sees it, so OBS records the thermal feed.
     [StructLayout(LayoutKind.Sequential)]
     struct MAGCOLOREFFECT
     {
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 25)] public float[] transform;
     }
+    [StructLayout(LayoutKind.Sequential)]
+    struct MAGTRANSFORM
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 9)] public float[] m;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct RECTW { public int L, T, R, B; }
     [DllImport("Magnification.dll")] static extern bool MagInitialize();
     [DllImport("Magnification.dll")] static extern bool MagSetFullscreenColorEffect(ref MAGCOLOREFFECT effect);
+    [DllImport("Magnification.dll")] static extern bool MagSetColorEffect(IntPtr hwnd, ref MAGCOLOREFFECT effect);
+    [DllImport("Magnification.dll")] static extern bool MagSetWindowSource(IntPtr hwnd, RECTW rect);
+    [DllImport("Magnification.dll")] static extern bool MagSetWindowFilterList(IntPtr hwnd, int mode, int count, IntPtr[] hwnds);
+    [DllImport("Magnification.dll")] static extern bool MagSetWindowTransform(IntPtr hwnd, ref MAGTRANSFORM transform);
+    [DllImport("user32.dll")] static extern IntPtr CreateWindowEx(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
+    [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECTW r);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+    IntPtr _thermalWnd = IntPtr.Zero;      // the magnifier control pinned over the game
+    int _thL, _thT, _thW, _thH;            // where it currently is
+    long _thAt = 0;                        // follow throttle (250 ms)
+    const int MW_FILTERMODE_INCLUDE = 0;
+    const uint WSEX_LAYERED = 0x00080000, WSEX_TRANSPARENT = 0x00000020, WSEX_TOPMOST = 0x00000008,
+               WSEX_NOACTIVATE = 0x08000000, WSEX_TOOLWINDOW = 0x00000080,
+               WSPOPUP = 0x80000000, WSVISIBLE = 0x10000000;
+    const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010, SWP_SHOWWINDOW = 0x0040;
 
     void ApplyNightVision(bool on)
     {
         try
         {
-            if (!MagInitialize()) { Log("night vision: the Magnification API is unavailable"); return; }
+            if (!MagInitialize()) { Log("thermal: the Magnification API is unavailable"); return; }
             MAGCOLOREFFECT e = new MAGCOLOREFFECT();
             if (on)
-                // The Magnification colour matrix is applied as a ROW vector (v * M), so the
-                // translation lives in the LAST ROW - exactly like Direct2D/WPF ColorMatrix.
-                // Putting the "+1" in the last column instead makes every channel (1 - v) come
-                // out negative, clamps to 0, and blacks the whole screen out. This is that bug.
-                // WHITE-HOT THERMAL (field request): instead of a plain invert (a photo negative,
-                // the old look) every output channel is driven from the INVERTED LUMINANCE with a
-                // warm ramp (r gain 1.30 > g 1.10 > b 0.90) and a small contrast stretch: dark
-                // game = white-hot, bright game = black, and everything between reads as the warm
-                // heat ramp a thermal camera shows. Linear matrix only - a true palette is not
-                // possible through the Magnification API.
             {
+                // WHITE-HOT THERMAL: every output channel is driven from the INVERTED LUMINANCE
+                // with a warm ramp (r gain 1.30 > g 1.10 > b 0.90) and a small contrast stretch:
+                // dark game = white-hot, bright game = black. (Row vector v*M -> translation in
+                // the LAST ROW; a "+1" in the last column blacks the screen out - that old bug.)
                 float lr = 0.299f, lg = 0.587f, lb = 0.114f;    // luminance weights
                 float gr = 1.30f, gg = 1.10f, gb = 0.90f;       // per-channel gain
                 float or0 = -0.10f, og0 = -0.08f, ob0 = -0.06f; // small contrast offset
@@ -421,10 +442,81 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                      0, 0, 1, 0, 0,
                      0, 0, 0, 1, 0,
                      0, 0, 0, 0, 1 };
-            bool ok = MagSetFullscreenColorEffect(ref e);
-            Log("night vision " + (on ? "ON" : "OFF") + (ok ? "" : " - the call was refused"));
+
+            if (!on)
+            {
+                if (_thermalWnd != IntPtr.Zero) { DestroyWindow(_thermalWnd); _thermalWnd = IntPtr.Zero; }
+                MagSetFullscreenColorEffect(ref e);    // clear any old fullscreen tint (previous builds)
+                Log("thermal OFF");
+                return;
+            }
+
+            IntPtr rw = RobloxWindow();
+            if (rw == IntPtr.Zero) { Log("thermal: no Roblox window found"); return; }
+            RECTW r; if (!GetWindowRect(rw, out r)) { Log("thermal: could not read the game window"); return; }
+            if (_thermalWnd == IntPtr.Zero)
+            {
+                _thermalWnd = CreateWindowEx(
+                    WSEX_LAYERED | WSEX_TRANSPARENT | WSEX_TOPMOST | WSEX_NOACTIVATE | WSEX_TOOLWINDOW,
+                    "Magnifier", "thermal", WSPOPUP | WSVISIBLE,
+                    r.L, r.T, r.R - r.L, r.B - r.T, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                if (_thermalWnd == IntPtr.Zero) { Log("thermal: could not create the magnifier"); return; }
+            }
+            _thL = r.L; _thT = r.T; _thW = r.R - r.L; _thH = r.B - r.T;
+            IntPtr after = ThermalZAfter();
+            SetWindowPos(_thermalWnd, after, r.L, r.T, _thW, _thH, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            IntPtr[] only = new IntPtr[] { rw };
+            MagSetWindowFilterList(_thermalWnd, MW_FILTERMODE_INCLUDE, 1, only);   // ONLY the game
+            MagSetWindowSource(_thermalWnd, r);
+            MAGTRANSFORM t = new MAGTRANSFORM(); t.m = new float[] { 1, 0, 0, 0, 1, 0, 0, 0, 1 };   // 1:1
+            MagSetWindowTransform(_thermalWnd, ref t);
+            bool ok = MagSetColorEffect(_thermalWnd, ref e);
+            Log("thermal ON (game window only)" + (ok ? "" : " - the call was refused"));
         }
-        catch (Exception ex) { Log("night vision failed: " + ex.Message); }
+        catch (Exception ex) { Log("thermal failed: " + ex.Message); }
+    }
+
+    // Both the thermal magnifier and the app's HUD overlay are TOPMOST windows: whoever is raised
+    // last wins, and if that is the magnifier it would hide the ladder. Keep the magnifier just
+    // BELOW the overlay when it is showing.
+    IntPtr ThermalZAfter()
+    {
+        try
+        {
+            if (_hudForm != null && _hudForm.Visible && _hudForm.Handle != IntPtr.Zero) return _hudForm.Handle;
+        }
+        catch { }
+        return new IntPtr(-1);   // HWND_TOPMOST
+    }
+
+    // Keep the magnifier glued to the game window (moves, resizes, focus flips). Runs from the
+    // 20 ms HUD timer; it only touches Win32 when the rect changed or focus flipped.
+    void FollowThermal()
+    {
+        try
+        {
+            if (!_nightVision || _thermalWnd == IntPtr.Zero) return;
+            if (Environment.TickCount - _thAt < 250) return;
+            _thAt = Environment.TickCount;
+            IntPtr rw = RobloxWindow();
+            if (rw == IntPtr.Zero) return;
+            if (IsIconic(rw) || !RobloxFocused()) { ShowWindow(_thermalWnd, 0); return; }   // never cover other apps
+            IntPtr after = ThermalZAfter();
+            RECTW r; if (!GetWindowRect(rw, out r)) return;
+            if (r.L == _thL && r.T == _thT && r.R - r.L == _thW && r.B - r.T == _thH)
+            {
+                // same spot: just re-assert the z-order and re-show if a focus flip hid it
+                SetWindowPos(_thermalWnd, after, 0, 0, 0, 0,
+                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                return;
+            }
+            _thL = r.L; _thT = r.T; _thW = r.R - r.L; _thH = r.B - r.T;
+            SetWindowPos(_thermalWnd, after, r.L, r.T, _thW, _thH, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            IntPtr[] only = new IntPtr[] { rw };
+            MagSetWindowFilterList(_thermalWnd, MW_FILTERMODE_INCLUDE, 1, only);
+            MagSetWindowSource(_thermalWnd, r);
+        }
+        catch { }
     }
 
     // Hotkey + button entry point: flips the flag and drives the checkbox so both stay in sync.
@@ -1258,7 +1350,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         y += 24;
 
         chkNight = new CheckBox();
-        chkNight.Text = "Night vision (invert display)";
+        chkNight.Text = "Thermal (game window only)";
         chkNight.SetBounds(x, y, 260, 22);
         chkNight.Checked = _nightVision;
         chkNight.CheckedChanged += delegate
@@ -5850,6 +5942,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // this every 20ms makes the horizon smooth instead of stepping once per RF-loop tick.
     void HudTick(object sender, EventArgs e)
     {
+        FollowThermal();   // keep the per-window thermal glued to the game, HUD or not
         if (!_hudShown || !_hudOn)
         {
             // Tell the OBS overlay too, not just the on-monitor form - otherwise /state keeps
