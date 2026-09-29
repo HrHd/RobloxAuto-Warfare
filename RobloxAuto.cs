@@ -2232,7 +2232,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         }
 
         bool mapUp = PhraseIn("POINT", ws0) || PhraseIn("Base", ws0);
-        bool panelUp = PhraseIn("TEAM BASE", ws0);
+        bool panelUp = TeamBasePhraseUp(ws0);
 
         // Already FLYING? Then there is nothing to deploy - just bring the RF feed / HUD back up.
         // Pressing AUTO while already in the drone used to sit in step 1 for 120s waiting for a
@@ -2966,6 +2966,17 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // same as PhraseOnScreen but against a word list already read once, so several phrases
     // can be tested from a single OCR pass instead of re-scanning per phrase
     bool PhraseIn(string phrase, List<string[]> ws) { return FindPhraseAll(phrase, null, ws).Count > 0; }
+    // Is the TEAM BASE PANEL really up? The bare phrase is NOT proof: on the MAP screen the nav bar
+    // carries the word TEAM (inside "CHANGE TEAM") and the map carries its own "Base" label, and the
+    // matcher can fuse the two into "TEAM BASE". That made AUTO believe the panel was already open,
+    // SKIP the entire Base step (the "it is not finding the base" report) and then fit the warhead
+    // grid to nav-bar text. The panel also prints WARHEAD and the Deploy As Drone button, which the
+    // map never has - so require one of those, or the panel button stack, as corroboration.
+    bool TeamBasePhraseUp(List<string[]> ws)
+    {
+        if (!PhraseIn("TEAM BASE", ws)) return false;
+        return PhraseIn("WARHEAD", ws) || PhraseIn("DEPLOY AS DRONE", ws) || BasePanelVisual();
+    }
 
     // the SELECT DRONE panel prints the current drone as "FPV Drone Customization" /
     // "MAVIC Drone Customization" - a white label the plain read sometimes misses, so try
@@ -3359,7 +3370,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         // "CHANGE TEAM" is a permanent NAV-BAR button, so it is on screen in the lobby AND on
         // the team-select screen. It therefore cannot be used to tell them apart - the big
         // "PLAYERS IN TEAM" panel is the team-select anchor and has to be checked first.
-        if (PhraseIn("TEAM BASE", ws)) return "team base";
+        if (TeamBasePhraseUp(ws)) return "team base";
         if (PhraseIn("SELECT DRONE", ws)) return "loadout";
         if (PhraseIn("POINT", ws) || PhraseIn("Base", ws)) return "map";
         if (PhraseIn("PLAYERS IN TEAM", ws)) return "team select";
@@ -4097,8 +4108,17 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
         if (h.Count == 0) h = FindPhraseAll("Deploy As", null, OcrWordsWhiten());
         if (h.Count == 0) h = FindPhraseAll("Drone", null, OcrWords());
         if (h.Count == 0) return false;
-        int best = 0;
-        for (int i = 1; i < h.Count; i++) if (h[i].Y > h[best].Y) best = i;   // lowest = the button
+        // The button sits INSIDE the panel, which is vertically centred. A hit up in the top strip
+        // is nav-bar or objective text ("DEPLOY", "...with AS Val") that the loose fallbacks above
+        // can match - and anchoring there fits the warhead grid to empty map and clicks nothing.
+        int Hs = Screen.PrimaryScreen.Bounds.Height;
+        int best = -1;
+        for (int i = 0; i < h.Count; i++)
+        {
+            if (h[i].Y < Hs * 20 / 100) continue;
+            if (best < 0 || h[i].Y > h[best].Y) best = i;   // lowest = the button
+        }
+        if (best < 0) return false;
         ax = h[best].X; ay = h[best].Y;
         return true;
     }
