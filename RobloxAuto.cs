@@ -8590,7 +8590,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // the filter a line that LOOKS valid, and the estimator then yanks hard on it even though
             // the confidence is low - because the outlier gate OPENS UP on the huge variance that
             // comes with it. That is the "it gets lost". Coast instead.
-            if (bestScore < 0.5f)
+            if (bestScore < 0.5f || (bestScore < 2.5f && (skyFrac2 > 0.90f || skyFrac2 < 0.05f)))
             {
                 _hudDetValid = false;
                 _hudNoSkyFrames++;
