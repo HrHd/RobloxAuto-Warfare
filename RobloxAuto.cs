@@ -259,6 +259,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     float _hudParserK = 0f;                       // last parser line (working px), log only
     float _hudTreeBelow = 0f;                     // parser vote: fraction of sections under the line that are canopy
     float _hudTreeBelowSm = 0f;                   // ...smoothed ~2s, drives the tree trim
+    int _lgRTot = 0, _lgPTot = 0;                 // stick fine-tune sample counts (per flight, log)
+    int _lgLogAt = 0;                             // fine-tune log throttle
     float _hudColK = 0f;                          // last 3-centre-column vote line (working px)
     int _hudColAgree = 0;                         // columns that agreed with the middle one
     bool _hudColOk = false;                       // the vote produced a usable line
@@ -6969,7 +6971,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             _hudPitchVel = 0f; _hudRollVel = 0f; _hudPitStickSm = 0f; _hudRollStickSm = 0f; _hudSkySm = 1f;   // start each flight clean
             _hudW = 0f; _hudSRoll = 0f; _hudSPitch = 0f; _hudSmSeeded = false; _hudClutter = 0f; _hudStairSm = 0f; _hudTreeBelowSm = 0f;           // reset the weighted average
             _kfSeeded = false; _kfRollV = 0f; _kfPitV = 0f; _kfRollOb = 0f; _kfPitOb = 0f; _kfMeasAt = 0;                 // reset the estimator
-            _kfRollGain = 1f; _kfPitGain = 1f; _kfRollP = 25f; _kfPitP = 25f; _kfRollZAt = 0; _kfPitZAt = 0;
+            _kfRollGain = 1f; _kfPitGain = 1f; _kfRollP = 25f; _kfPitP = 25f; _kfRollZAt = 0; _kfPitZAt = 0; _lgRTot = 0; _lgPTot = 0;
             _kfSmSeeded = false; _kfSmRoll = 0f; _kfSmPit = 0f;
             _hudSolid = 0; _hugSm = 0f; _hugDisR = 0; _hugDisP = 0; _hugSignR = 0; _hugSignP = 0; _hugLogged = false;
             _hudLockedOnce = false; _hudBigRn = 0; _hudBigPn = 0; _hudBigRat = 0; _hudBigPat = 0; _hudBigRsg = 0; _hudBigPsg = 0;
@@ -8348,7 +8350,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
     // gain toward it. Guarded hard: only while the stick is clearly commanding, ratio sanity-gated,
     // and clamped - so a single bad frame can never wind the gain away.
     void LearnGain(ref float gain, ref float lastZ, ref long lastAt, float z,
-                   float cmdRate, float stick, long now, float minStick, float trust)
+                   float cmdRate, float stick, long now, float minStick, float trust, ref int samples)
     {
         try
         {
@@ -8376,6 +8378,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                         gain += 0.050f * (ratio - gain);
                         if (gain < 0.15f) gain = 0.15f;
                         if (gain > 3.00f) gain = 3.00f;
+                        samples++;
                     }
                 }
             }
@@ -8694,8 +8697,19 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
             // pass the |stick| >= 0.30 test had already driven trust to ~0.03. The two conditions could
             // never both hold, which is why the gain never moved however long you flew.
             float mq = _hudMConf * (0.5f + 0.5f * skyT);
-            if (okR && _hugSm < 0.6f) LearnGain(ref _kfRollGain, ref _kfRollZ, ref _kfRollZAt, zr, -sxS * _hudRollRate, sxS, now, 0.30f, mq);
-            if (okP && _hugSm < 0.6f) LearnGain(ref _kfPitGain, ref _kfPitZ, ref _kfPitZAt, zp, -syS * HudPitchRateDeg(), syS, now, 0.30f, mq);
+            // STICK FINE-TUNE (field request): the system-ID learner now runs whenever the vision
+            // is trustworthy - even during a hug (the hug only scales how far the vision MOVES the
+            // state; it never touched the measurement this learner reads). The old gate made it
+            // stop exactly when the lock was good, i.e. barely ever. The learned gains and the
+            // sample counts are logged so the fine-tuning is visible.
+            if (okR) LearnGain(ref _kfRollGain, ref _kfRollZ, ref _kfRollZAt, zr, -sxS * _hudRollRate, sxS, now, 0.30f, mq, ref _lgRTot);
+            if (okP) LearnGain(ref _kfPitGain, ref _kfPitZ, ref _kfPitZAt, zp, -syS * HudPitchRateDeg(), syS, now, 0.30f, mq, ref _lgPTot);
+            if (Environment.TickCount - _lgLogAt >= 8000)
+            {
+                _lgLogAt = Environment.TickCount;
+                Log("sticks fine-tune: roll gain " + _kfRollGain.ToString("0.000") + " (" + _lgRTot + " samples), pitch gain " +
+                    _kfPitGain.ToString("0.000") + " (" + _lgPTot + " samples)");
+            }
         }
 
         // ---- OUTPUT (roll deg, pitch px for the ladder) ----
