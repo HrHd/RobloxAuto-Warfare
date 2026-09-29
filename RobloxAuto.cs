@@ -1104,7 +1104,7 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                 try
                 {
                     File.WriteAllText(Path.Combine(_appDir, "hudphys.csv"),
-                        "t_ms,sx,sy,lx,ly,vision,detRoll,detPitch,conf,fuseRoll,fusePitch,modelRollRate,modelPitchRate\r\n");
+                        "t_ms,sx,sy,lx,ly,vision,detRoll,detPitch,conf,fuseRoll,fusePitch,mRoll,mPitch,modelRollRate,modelPitchRate\r\n");
                 }
                 catch { }
                 Log("physics log ON - writing hudphys.csv (shaped stick + the horizon the detector measured)");
@@ -8340,6 +8340,8 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
              .Append(_hudDetConf.ToString("0.000", ci)).Append(',')
              .Append(_hudFRoll.ToString("0.00", ci)).Append(',')
              .Append(_hudFPitch.ToString("0.0", ci)).Append(',')
+             .Append(_hudMRoll.ToString("0.00", ci)).Append(',')
+             .Append(_hudMPitch.ToString("0.0", ci)).Append(',')
              .Append(_kfRollV.ToString("0.00", ci)).Append(',')
              .Append(_kfPitV.ToString("0.00", ci))
              .Append("\r\n");
