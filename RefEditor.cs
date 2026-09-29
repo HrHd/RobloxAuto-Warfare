@@ -19,6 +19,9 @@ class RefEditor : Form
     bool drag = false;
     int dragMode = 0;                       // 0 = anywhere translate, 1 = centre dot, 2 = side dot
     int h1x, h1y, h2x, h2y;                 // handle positions in display coords (set each paint)
+    TrackBar tbTrees;
+    Label lblTreeLevel;
+    bool loadingRef = false;                // guard: slider changes during a load must not rename
 
     public RefEditor()
     {
@@ -57,7 +60,7 @@ class RefEditor : Form
 
         // SAVED flag above the photo: green right after S, orange as soon as anything changes.
         lblSaved = new Label();
-        lblSaved.SetBounds(336, 6, Width - 372, 24);
+        lblSaved.SetBounds(336, 6, 352, 24);
         lblSaved.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         lblSaved.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
         lblSaved.ForeColor = Color.FromArgb(0, 220, 80);
@@ -86,8 +89,22 @@ class RefEditor : Form
         bd.Click += delegate { DeleteRef(); }; Controls.Add(bd);
         Button bg = new Button(); bg.Text = "GROUND (G)"; bg.SetBounds(1060, Height - 78, 112, 28);
         bg.Click += delegate { GroundRef(); }; Controls.Add(bg);
-        Button bt = new Button(); bt.Text = "TREES (T)"; bt.SetBounds(1178, Height - 78, 100, 28);
-        bt.Click += delegate { TreesRef(); }; Controls.Add(bt);
+
+        // TREE LEVEL SLIDER above the photo: AUTO / LOW / MED / HIGH - a bar, not a cycle.
+        Label lt = new Label(); lt.Text = "trees:"; lt.SetBounds(700, 6, 44, 20);
+        lt.Font = new Font("Segoe UI", 9F, FontStyle.Bold); Controls.Add(lt);
+        tbTrees = new TrackBar();
+        tbTrees.SetBounds(744, 2, 190, 30);
+        tbTrees.Minimum = 0; tbTrees.Maximum = 3; tbTrees.TickFrequency = 1;
+        tbTrees.SmallChange = 1; tbTrees.LargeChange = 1;
+        Controls.Add(tbTrees);
+        lblTreeLevel = new Label(); lblTreeLevel.SetBounds(938, 8, 70, 20);
+        lblTreeLevel.Font = new Font("Segoe UI", 9F, FontStyle.Bold); Controls.Add(lblTreeLevel);
+        tbTrees.ValueChanged += delegate
+        {
+            lblTreeLevel.Text = TreeName(tbTrees.Value);
+            if (!loadingRef) SetTreeLevel(tbTrees.Value);
+        };
 
         lblInfo = new Label(); lblInfo.SetBounds(1286, Height - 74, Width - 1306, 44);
         lblInfo.Anchor = AnchorStyles.Top | AnchorStyles.Right | AnchorStyles.Bottom;
@@ -103,7 +120,6 @@ class RefEditor : Form
             else if (e.KeyCode == Keys.S) SaveRef();
             else if (e.KeyCode == Keys.Delete) DeleteRef();
             else if (e.KeyCode == Keys.G) GroundRef();
-            else if (e.KeyCode == Keys.T) TreesRef();
             else if (e.KeyCode == Keys.A && list.SelectedIndex > 0) list.SelectedIndex--;
             else if (e.KeyCode == Keys.D && list.SelectedIndex < list.Items.Count - 1) list.SelectedIndex++;
             else if (e.KeyCode == Keys.PageDown && list.SelectedIndex < list.Items.Count - 1) list.SelectedIndex++;
@@ -118,7 +134,7 @@ class RefEditor : Form
     string Hint()
     {
         return "refs " + list.Items.Count + "/" + REF_CAP +
-            "  |  WHITE dot = height | CYAN dot = tilt | S save | G ground | T trees | Del delete | A/D prev/next";
+            "  |  WHITE dot = height | CYAN dot = tilt | trees slider | S save | G ground | Del delete | A/D prev/next";
     }
 
     void MarkDirty()
@@ -181,6 +197,12 @@ class RefEditor : Form
                 }
             }
             Refresh();
+            // reflect the tree level in the SLIDER (guarded so it does not rename during load)
+            int lv = TreeLevelOf(Path.GetFileName(f));
+            loadingRef = true;
+            tbTrees.Value = lv;
+            lblTreeLevel.Text = TreeName(lv);
+            loadingRef = false;
             dirty = false;
             if (lblSaved != null) { lblSaved.Text = "SAVED \u2713"; lblSaved.ForeColor = Color.FromArgb(0, 220, 80); }
         }
@@ -261,27 +283,44 @@ class RefEditor : Form
         }
     }
 
-    void TreesRef()
+    static int TreeLevelOf(string bn)
     {
-        // TRI-STATE tree marker: none -> "-trees" (this scene is forest, the app should DE-VALUE
-        // vision here) -> "-clear" (clean scene, no trees) -> none. The app turns the marker into
-        // the tree-belief the moment the ref matches.
+        string s = bn.ToLowerInvariant();
+        if (s.IndexOf("-trees-high") >= 0) return 3;
+        if (s.IndexOf("-trees-med") >= 0) return 2;
+        if (s.IndexOf("-trees-low") >= 0) return 1;
+        if (s.IndexOf("-trees") >= 0) return 3;      // legacy "-trees" = HIGH
+        if (s.IndexOf("-clear") >= 0) return 1;      // legacy "-clear" = LOW
+        return 0;
+    }
+
+    static string StripTree(string bn)
+    {
+        return bn.Replace("-trees-high", "").Replace("-trees-med", "").Replace("-trees-low", "")
+                 .Replace("-trees", "").Replace("-clear", "");
+    }
+
+    static string TreeName(int lv)
+    {
+        return lv == 0 ? "AUTO" : (lv == 1 ? "LOW" : (lv == 2 ? "MED" : "HIGH"));
+    }
+
+    void SetTreeLevel(int lv)
+    {
         string f = CurPath();
         if (f == null) return;
         try
         {
             string bn = Path.GetFileNameWithoutExtension(f);
-            string nb, msg;
-            if (bn.IndexOf("-trees") >= 0) { nb = bn.Replace("-trees", "-clear"); msg = "marked CLEAR (no trees)"; }
-            else if (bn.IndexOf("-clear") >= 0) { nb = bn.Replace("-clear", ""); msg = "tree marker removed"; }
-            else { nb = bn + "-trees"; msg = "marked TREES - app will de-value vision on this scene"; }
+            if (TreeLevelOf(bn) == lv) return;
+            string nb = StripTree(bn) + (lv == 0 ? "" : (lv == 1 ? "-trees-low" : (lv == 2 ? "-trees-med" : "-trees-high")));
             string nf = Path.Combine(dir, nb + ".png");
             if (img != null) { img.Dispose(); img = null; }
             File.Move(f, nf);
             string ohz = Path.ChangeExtension(f, ".hzn");
             if (File.Exists(ohz)) File.Move(ohz, Path.ChangeExtension(nf, ".hzn"));
             try { img = new Bitmap(nf); } catch { }
-            lblSaved.Text = msg;
+            lblSaved.Text = "trees = " + (lv == 0 ? "AUTO" : (lv == 1 ? "LOW" : (lv == 2 ? "MED" : "HIGH")));
             lblSaved.ForeColor = Color.FromArgb(255, 170, 60);
             string nowName = Path.GetFileName(nf);
             int i2 = list.SelectedIndex;

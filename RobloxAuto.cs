@@ -10257,18 +10257,17 @@ class RobloxAuto : Form, System.Windows.Forms.IMessageFilter
                     if (Math.Abs(c2) < 0.2f) c2 = 0.2f;
                     HudPublish(rl[0], rl[1] / c2, skyFrac2, 0.95f, 9f, 0.25f);
                     refHit = true;
-                    // HUMAN TREE MARKER: a "-trees" ref says this scene is forest (de-value the
-                    // vision HERE, now); a "-clear" ref says it is clean. Overrides the classifier.
-                    if (_refName.IndexOf("-trees") >= 0)
+                    // HUMAN TREE MARKER: the editor's LOW/MED/HIGH bar for this scene (legacy
+                    // "-trees" = HIGH, "-clear" = LOW). Sets the tree belief the moment it matches.
+                    string tmn = _refName;
+                    if (tmn.IndexOf("-trees-high") >= 0 || (tmn.IndexOf("-trees") >= 0 && tmn.IndexOf("-trees-") < 0))
                     {
-                        _hudTreeBelowSm = 0.7f;
+                        _hudTreeBelowSm = 0.75f;
                         if (Environment.TickCount - _hudLogAt >= 2000)
-                        { _hudLogAt = Environment.TickCount; Log("horizon det: matched TREES reference " + _refName + " - vision de-valued for this scene"); }
+                        { _hudLogAt = Environment.TickCount; Log("horizon det: matched TREES HIGH reference " + tmn + " - vision de-valued for this scene"); }
                     }
-                    else if (_refName.IndexOf("-clear") >= 0)
-                    {
-                        _hudTreeBelowSm = 0.05f;
-                    }
+                    else if (tmn.IndexOf("-trees-med") >= 0) { _hudTreeBelowSm = 0.45f; }
+                    else if (tmn.IndexOf("-trees-low") >= 0 || tmn.IndexOf("-clear") >= 0) { _hudTreeBelowSm = 0.20f; }
                 }
                 else if (refGood && _refGround && refD <= _refDist * 0.6f)
                 {
